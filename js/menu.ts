@@ -652,7 +652,7 @@ export class Menu {
     const pulse = Math.max(0, 1 - (beat % 1) * 2.4);
     const pillWidth = 224 + pulse * 6 + (this.hover === 'pill' ? 10 : 0);
     const pillCenterX = SX + SW / 2;
-    const pillCenterY = 564;
+    const pillCenterY = 580;
     ctx.save();
     ctx.globalAlpha = entry;
     UI.panel(ctx, pillCenterX - pillWidth / 2, pillCenterY - 23 - pulse * 2, pillWidth, 46, { radius: 23, fill: accent + (this.hover === 'pill' ? 'ff' : 'e6'), stroke: '#ffffff55' });
