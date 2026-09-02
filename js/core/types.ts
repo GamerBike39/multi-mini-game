@@ -78,6 +78,7 @@ export interface InputLike {
   setBlocked(blocked: boolean): void;
   down(action: Action): boolean;
   pressed(action: Action): boolean;
+  released(action: Action): boolean;
   key(code: string): boolean;
   keyPressed(code: string): boolean;
   clearEdges(): void;

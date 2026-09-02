@@ -53,7 +53,7 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **BLOB BEAT** | Rythme 4 couloirs, notes calées sur la batterie | ◀ ▼ ▲ ▶ ou X A Y B | Flèches ou X A Y B (Espace/J…) |
 | **SURVIBLOB** | Arène, esquive, dash qui traverse les chasseurs | Stick + A | ZQSD/Flèches + Espace |
 | **BLOBBLASTER** | Twin-stick shooter | Stick G bouge, stick D vise | ZQSD + Espace (auto-visée) |
-| **BLOB RUN** | Auto-runner : saut variable, duck, scies | A saute, B se baisse | Espace / K |
+| **BLOB RUN** | Auto-runner : sauts courts/hauts, double saut, fossés, plafonds, scies | A saute, A en l’air = double saut, B se baisse | Espace / K |
 | **CAVE RACER** | Tunnel procédural de plus en plus serré, boost, near-miss bonus | Stick + A (boost) | ZQSD/Flèches + Espace |
 | **BLOB SIMON** | Mémoire : regarde la séquence de blobs, rejoue-la | Y X A B | U L J K |
 | **BLOB SNAKE** | Serpent sur grille, lucioles, fruit doré, ça accélère | Stick / D-pad | Flèches / ZQSD |
@@ -106,7 +106,7 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 - **Musique générative** (kick/snare/hat/basse) synchronisée sur l'horloge audio —
   le jeu de rythme génère sa chart **depuis** le pattern de batterie
 - **Vibrations manette** dosées par intensité (parfait < dash < mort)
-- Coyote time + input buffer sur le saut du runner
+- Coyote time + input buffer sur le saut du runner, avec saut court au tap et saut haut au maintien
 
 ## Structure
 

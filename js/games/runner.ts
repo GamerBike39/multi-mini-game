@@ -3,18 +3,43 @@
 
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
-import type { EngineLike, GameMeta, InputLike } from '../core/types';
+import type { EngineLike, GameMeta } from '../core/types';
 
 const GY = 600;           // sol
 const PX = 320;           // x écran du joueur
+const JUMP_SPEED = 1080;
+const JUMP_HOLD_GRAVITY = 1700;
+const JUMP_RISE_GRAVITY = 3150;
+const JUMP_FALL_GRAVITY = 3600;
+const JUMP_FAST_FALL_GRAVITY = 4200;
+const JUMP_CUT_SPEED = 430;
+const JUMP_MIN_TIME = 0.07;
+const JUMP_HOLD_TIME = 0.18;
+const JUMP_POSE_RELAX_TIME = 0.27;
+const COYOTE_TIME = 0.11;
+const JUMP_BUFFER_TIME = 0.13;
+const MAX_JUMPS = 2;
+
+type RunnerObstacleType = 'spike' | 'block' | 'bar' | 'ceiling' | 'saw' | 'gap';
+
+interface RunnerObstacle {
+  type: RunnerObstacleType;
+  x: number;
+  y?: number;
+  w?: number;
+  h?: number;
+  r?: number;
+  base?: number;
+  ang?: number;
+}
 
 export class RunnerGame extends BaseGame {
   [key: string]: any;
   static meta: GameMeta = {
     id: 'run', name: 'BLOB RUN', accent: '#a3e635', mood: 'runner',
-    desc: 'Saute. Baisse-toi. Vite.', controls: 'A sauter · B duck',
+    desc: 'Saute. Baisse-toi. Vite.', controls: 'A sauter · A en l’air = double saut · B duck',
     keys: "Espace / K",
-    hint: 'A = sauter (maintiens pour monter plus haut) · B = se baisser',
+    hint: 'A = tapote pour un saut court, maintiens pour sauter haut · A en l’air = double saut · B = se baisser',
     unit: 'm', ranks: [900, 550, 320, 150, 0],
   };
 
@@ -29,9 +54,12 @@ export class RunnerGame extends BaseGame {
     this.duck = 0;           // 0..1
     this.speed = 380;
     this.dist = 0;
-    this.obs = [];
+    this.obs = [] as RunnerObstacle[];
     this.spawnGap = 500;
     this.milestone = 250;
+    this.jumpT = 0;
+    this.jumpReleased = false;
+    this.jumpCount = 0;
     this.bgDots = [];
     for (let i = 0; i < 40; i++) this.bgDots.push({ x: Math.random() * 1280, y: Math.random() * 560, z: 0.2 + Math.random() * 0.6 });
     this.tickOff = 0;
@@ -48,47 +76,72 @@ export class RunnerGame extends BaseGame {
     this.dist += this.speed * dt;
 
     // duck
-    const wantDuck = I.down('b') && this.onGround;
+    const wasGround = this.onGround;
+    const previousRadius = b.r;
+    const wantDuck = I.down('b') && wasGround;
     this.duck += ((wantDuck ? 1 : 0) - this.duck) * Math.min(1, dt * 18);
     b.r = this.r();
 
-    // saut : buffer + coyote + hauteur variable
-    if (I.pressed('a')) this.buffer = 0.12;
+    // Keep the feet on the same surface while the visual body changes size.
+    // Otherwise the smaller radius briefly floats above the floor, toggles
+    // onGround off, and makes the duck animation oscillate.
+    if (wasGround && this.vy === 0) b.y += previousRadius - b.r;
+
+    // Saut : le tap coupe la montée, le maintien prolonge la fenêtre de faible
+    // gravité. C'est plus lisible qu'un simple multiplicateur de gravité :
+    // chaque durée d'appui produit une hauteur clairement différente.
+    if (I.pressed('a')) this.buffer = JUMP_BUFFER_TIME;
     this.buffer = Math.max(0, this.buffer - dt);
     this.coyote = Math.max(0, this.coyote - dt);
+    let launched = false;
     if (this.buffer > 0 && (this.onGround || this.coyote > 0)) {
-      this.buffer = 0; this.coyote = 0;
-      this.onGround = false;
-      this.vy = -1060;
-      this.audio.jump();
-      this.input.rumble(0.18, 0.05);
-      this.fx.burst(PX, GY - this.duck * 9, { n: 6, speed: [40, 160], colors: ['#8fa3ad', '#d7e3ea'], size: [2, 4], life: 0.35, ang: Math.PI / 2, spread: 2.4 });
+      this.startJump(false);
+      launched = true;
+    } else if (this.buffer > 0 && !this.onGround && this.jumpCount < MAX_JUMPS) {
+      this.startJump(true);
+      launched = true;
     }
 
-    // gravité
+    if (!this.onGround) {
+      this.jumpT += dt;
+      if (I.released('a') || !I.down('a')) this.jumpReleased = true;
+    }
+
+    // Gravité en trois temps : montée retenue, montée relâchée, chute lourde.
+    // Le temps minimum évite qu'un appui très bref ne devienne un faux saut.
+    if (this.jumpReleased && this.jumpT >= JUMP_MIN_TIME && this.jumpT < JUMP_HOLD_TIME && this.vy < -JUMP_CUT_SPEED) {
+      this.vy = -JUMP_CUT_SPEED;
+    }
+    let g = this.vy < 0
+      ? (I.down('a') && !this.jumpReleased && this.jumpT < JUMP_HOLD_TIME ? JUMP_HOLD_GRAVITY : JUMP_RISE_GRAVITY)
+      : JUMP_FALL_GRAVITY;
+    if (I.down('b') && !this.onGround) g += JUMP_FAST_FALL_GRAVITY;
+
     const prevFeet = b.y + b.r;
-    let g = 2850;
-    if (this.vy < 0 && I.down('a')) g *= 0.52;          // maintien = saut plus haut
-    if (I.down('b') && !this.onGround) g += 5200;       // fast-fall
     this.vy += g * dt;
     b.y += this.vy * dt;
 
-    // supports : sol + blocs
-    const wasGround = this.onGround;
+    // Supports : sol, fossés et plateformes. On choisit la surface la plus
+    // haute traversée pendant cette frame pour rendre les retombées stables.
     this.onGround = false;
-    let supportY = GY;
-    if (b.y + b.r >= GY) { this.onGround = true; supportY = GY; }
-    for (const o of this.obs as any[]) {
+    let supportY = Number.POSITIVE_INFINITY;
+    if (this.floorOpenAtPlayer()) {
+      if (b.y + b.r >= GY) supportY = GY;
+    }
+    for (const o of this.obs) {
       if (o.type !== 'block') continue;
-      if (PX + b.r * 0.7 < o.x || PX - b.r * 0.7 > o.x + o.w) continue;
+      const oy = o.y ?? GY - (o.h ?? 0);
+      const ow = o.w ?? 0;
+      if (PX + b.r * 0.7 < o.x || PX - b.r * 0.7 > o.x + ow) continue;
       const feet = b.y + b.r;
-      if (this.vy >= 0 && prevFeet <= o.y + 6 && feet >= o.y) {
-        this.onGround = true; supportY = o.y;
+      if (this.vy >= 0 && prevFeet <= oy + 6 && feet >= oy && oy < supportY) {
+        supportY = oy;
       }
     }
+    this.onGround = Number.isFinite(supportY);
     if (this.onGround) {
       b.y = supportY - b.r;
-      if (this.vy > 260) {
+      if (!wasGround && !launched && this.vy > 260) {
         // atterrissage marqué
         b.punch(0.45);
         this.audio.land();
@@ -97,10 +150,16 @@ export class RunnerGame extends BaseGame {
         this.fx.burst(PX, supportY, { n: 8, speed: [50, 220], colors: ['#8fa3ad', '#d7e3ea'], size: [2, 4], life: 0.4, ang: -Math.PI / 2, spread: 2.6 });
       }
       this.vy = 0;
-      if (!wasGround) this.coyote = 0.09;
-    } else if (wasGround) {
-      this.coyote = 0.09;
+      this.jumpT = 0;
+      this.jumpReleased = false;
+      this.coyote = 0;
+      this.jumpCount = 0;
+    } else if (wasGround && !launched) {
+      this.coyote = COYOTE_TIME;
     }
+
+    // Un fossé se termine par une chute, pas par une collision artificielle.
+    if (b.y - b.r > this.H + 80) return this.die();
 
     // défilement obstacles
     for (const o of this.obs) {
@@ -143,38 +202,139 @@ export class RunnerGame extends BaseGame {
     b.vx = this.speed;
     b.vy = this.vy;
     b.scared = false;
+    this.updateBlobPose(dt);
     b.update(dt);
 
     this.fx.zoom = 1 - Math.min(0.11, Math.max(0, (this.speed - 400) * 0.00028));
   }
 
+  private startJump(doubleJump: boolean): void {
+    const b = this.blob;
+    const previousRadius = b.r;
+    const wasGround = this.onGround;
+
+    this.buffer = 0;
+    this.coyote = 0;
+    this.onGround = false;
+    this.jumpT = 0;
+    this.jumpReleased = false;
+    this.duck = 0;
+    b.r = this.r();
+    if (wasGround) b.y += previousRadius - b.r;
+
+    this.vy = -JUMP_SPEED;
+    this.jumpCount = doubleJump ? MAX_JUMPS : 1;
+    this.audio.jump();
+    this.input.rumble(doubleJump ? 0.24 : 0.18, 0.05);
+    this.fx.burst(PX, b.y + b.r, {
+      n: doubleJump ? 8 : 6,
+      speed: doubleJump ? [60, 210] : [40, 160],
+      colors: doubleJump ? ['#8ee3ff', '#d7f7ff'] : ['#8fa3ad', '#d7e3ea'],
+      size: [2, 4],
+      life: doubleJump ? 0.4 : 0.35,
+      ang: Math.PI / 2,
+      spread: 2.4,
+    });
+  }
+
+  floorOpenAtPlayer(): boolean {
+    const halfWidth = this.blob.r * 0.55;
+    return !this.obs.some((o: RunnerObstacle) => o.type === 'gap'
+      && PX + halfWidth > o.x
+      && PX - halfWidth < o.x + (o.w ?? 0));
+  }
+
+  updateBlobPose(dt = 0): void {
+    const duck = Math.min(1, this.duck * 1.12);
+    const duckEase = duck * duck * (3 - 2 * duck);
+    const jumpT = this.onGround ? JUMP_POSE_RELAX_TIME : Math.min(JUMP_POSE_RELAX_TIME, this.jumpT);
+    const jumpProgress = Math.max(0, Math.min(1, jumpT / JUMP_POSE_RELAX_TIME));
+    const jumpCompression = 1 - jumpProgress * jumpProgress * (3 - 2 * jumpProgress);
+
+    // Le duck devient une flaque compacte ; au décollage la même logique de
+    // squash est très brève puis se détend naturellement pendant la montée.
+    const scaleX = 1 + duckEase * 0.42 + jumpCompression * 0.32;
+    const scaleY = Math.max(0.42, 1 - duckEase * 0.48 - jumpCompression * 0.30);
+    const liquid = Math.min(1, duckEase * 0.95 + jumpCompression * 0.08);
+    // Quand il est au sol, on décale le centre visuel pour que la flaque reste
+    // collée à la ligne de sol malgré sa compression graphique.
+    // Blob ajoute aussi un squash lié à sa vitesse et à son impact. On en
+    // tient compte ici pour que le bas du contour reste réellement posé sur
+    // le support, même pendant le duck.
+    const motionK = Math.min(1, Math.hypot(this.blob.vx, this.blob.vy) / 620);
+    const renderJig = Math.max(0, this.blob.jig - dt * 4.5);
+    const motionScaleY = 1 - motionK * 0.18 - renderJig * 0.35;
+    const groundOffset = this.onGround ? this.blob.r * (1 - motionScaleY * scaleY) : 0;
+    this.blob.setPose(scaleX, scaleY, liquid, groundOffset);
+  }
+
   spawnPattern(): void {
     const m = this.meters();
-    const pool = [];
+    const pool: string[] = [];
     pool.push('s1');
     if (m > 90) pool.push('s2', 'block');
-    if (m > 200) pool.push('s3', 'bar', 'saw', 'blockSpike');
-    if (m > 380) pool.push('combo1', 'combo2', 'stairs');
+    if (m > 150) pool.push('shortHop', 'gapShort');
+    if (m > 230) pool.push('s3', 'bar', 'saw', 'blockSpike', 'gapLong');
+    if (m > 420) pool.push('combo1', 'combo2', 'stairs', 'ceilingGap', 'gapStep');
     const p = pool[(Math.random() * pool.length) | 0];
-    let x = 1340;
-    const push = (o: any) => { o.x = x; this.obs.push(o); x += o.w ?? 60; };
-    if (p === 's1') push({ type: 'spike', w: 36, h: 36 });
-    else if (p === 's2') { push({ type: 'spike', w: 36, h: 36 }); push({ type: 'spike', w: 36, h: 36 }); }
-    else if (p === 's3') { for (let i = 0; i < 3; i++) push({ type: 'spike', w: 36, h: 36 }); }
-    else if (p === 'block') push({ type: 'block', w: 60, h: 60 });
-    else if (p === 'stairs') { push({ type: 'block', w: 60, h: 60 }); x += 30; push({ type: 'block', w: 60, h: 120 }); }
-    else if (p === 'blockSpike') { push({ type: 'block', w: 70, h: 60 }); push({ type: 'spike', w: 36, h: 36, base: 60 }); }
-    else if (p === 'bar') this.obs.push({ type: 'bar', x: 1340, y: GY - 66, w: 92, h: 30 });
-    else if (p === 'saw') this.obs.push({ type: 'saw', x: 1340, y: GY - 17, r: 17, ang: 0 });
-    else if (p === 'combo1') { push({ type: 'spike', w: 36, h: 36 }); x += 190; push({ type: 'spike', w: 36, h: 36 }); }
-    else if (p === 'combo2') { this.obs.push({ type: 'bar', x: 1340, y: GY - 66, w: 92, h: 30 }); x = 1340 + 92 + 260; push({ type: 'spike', w: 36, h: 36 }); }
-    const width = x - 1340;
+    const startX = 1340;
+    let endX = startX;
+    const place = (o: Omit<RunnerObstacle, 'x'>, at = endX): void => {
+      const obstacle = { ...o, x: at } as RunnerObstacle;
+      if (obstacle.type === 'block') obstacle.y = GY - (obstacle.h ?? 0);
+      this.obs.push(obstacle);
+      endX = Math.max(endX, at + (obstacle.w ?? (obstacle.r ? obstacle.r * 2 : 60)));
+    };
+    const placeSaw = (at: number): void => {
+      this.obs.push({ type: 'saw', x: at, y: GY - 17, r: 17, ang: 0 });
+      endX = Math.max(endX, at + 17);
+    };
+
+    if (p === 's1') place({ type: 'spike', w: 36, h: 36 });
+    else if (p === 's2') { place({ type: 'spike', w: 36, h: 36 }); place({ type: 'spike', w: 36, h: 36 }); }
+    else if (p === 's3') { for (let i = 0; i < 3; i++) place({ type: 'spike', w: 36, h: 36 }); }
+    else if (p === 'block') place({ type: 'block', w: 60, h: 60 });
+    else if (p === 'stairs') {
+      place({ type: 'block', w: 60, h: 60 });
+      place({ type: 'block', w: 60, h: 120 }, startX + 90);
+    } else if (p === 'blockSpike') {
+      place({ type: 'block', w: 70, h: 60 });
+      place({ type: 'spike', w: 36, h: 36, base: 60 });
+    } else if (p === 'bar') {
+      place({ type: 'bar', y: GY - 66, w: 92, h: 30 });
+    } else if (p === 'ceiling' || p === 'shortHop') {
+      place({ type: 'ceiling', y: GY - 180, w: 190, h: 24 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + 78);
+      endX = Math.max(endX, startX + 190);
+    } else if (p === 'gapShort') {
+      place({ type: 'gap', w: 190 });
+    } else if (p === 'gapLong') {
+      place({ type: 'gap', w: 330 });
+    } else if (p === 'gapStep') {
+      place({ type: 'gap', w: 230 });
+      place({ type: 'block', w: 90, h: 60 }, startX + 230);
+    } else if (p === 'saw') {
+      placeSaw(startX + 17);
+    } else if (p === 'combo1') {
+      place({ type: 'spike', w: 36, h: 36 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + 226);
+    } else if (p === 'combo2') {
+      place({ type: 'bar', y: GY - 66, w: 92, h: 30 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + 352);
+    } else if (p === 'ceilingGap') {
+      place({ type: 'ceiling', y: GY - 180, w: 190, h: 24 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + 78);
+      place({ type: 'gap', w: 300 }, startX + 240);
+    }
+    const width = endX - startX;
     this.spawnGap = width + this.speed * (0.55 + Math.random() * 0.5) + 90;
   }
 
   nextObstacleLabel(o: any): string {
     if (o.type === 'spike') return o.base ? 'PIQUE EN HAUTEUR' : 'PIQUES';
     if (o.type === 'block') return 'BLOC';
+    if (o.type === 'ceiling') return 'PLAFOND · TAPOTE';
+    if (o.type === 'gap') return (o.w ?? 0) >= 280 ? 'GOUFFRE · SAUT LONG' : 'GOUFFRE · SAUT';
     if (o.type === 'bar') return 'BARRE · BAISSE-TOI';
     return 'SCIE · SAUTE';
   }
@@ -184,19 +344,23 @@ export class RunnerGame extends BaseGame {
     for (const o of this.obs) {
       if (o.type === 'spike') {
         const base = o.base || 0;
-        const cx = o.x + o.w / 2;
-        const bx = cx - o.w * 0.22, by = GY - base - o.h * 0.62, bw = o.w * 0.44, bh = o.h * 0.62;
+        const ow = o.w ?? 36, oh = o.h ?? 36;
+        const cx = o.x + ow / 2;
+        const bx = cx - ow * 0.22, by = GY - base - oh * 0.62, bw = ow * 0.44, bh = oh * 0.62;
         if (this.circleRect(PX, b.y, r * 0.82, bx, by, bw, bh)) return this.die();
       } else if (o.type === 'block') {
+        const oy = o.y ?? GY - (o.h ?? 0);
+        const ow = o.w ?? 0, oh = o.h ?? 0;
         const feet = b.y + r;
-        const overlapping = PX + r * 0.7 > o.x && PX - r * 0.7 < o.x + o.w;
-        if (overlapping && feet > o.y + 8 && b.y - r < o.y + o.h) {
-          if (!(this.vy >= 0 && feet - this.vy * (1 / 60) <= o.y + 8)) return this.die();
+        const overlapping = PX + r * 0.7 > o.x && PX - r * 0.7 < o.x + ow;
+        const landed = this.onGround && Math.abs(feet - oy) < 1.5;
+        if (overlapping && feet > oy + 8 && b.y - r < oy + oh) {
+          if (!landed) return this.die();
         }
-      } else if (o.type === 'bar') {
-        if (this.circleRect(PX, b.y, r * 0.9, o.x, o.y, o.w, o.h)) return this.die();
+      } else if (o.type === 'bar' || o.type === 'ceiling') {
+        if (this.circleRect(PX, b.y, r * 0.9, o.x, o.y ?? GY, o.w ?? 0, o.h ?? 0)) return this.die();
       } else if (o.type === 'saw') {
-        if (Math.hypot(PX - o.x, b.y - o.y) < r * 0.9 + o.r * 0.85) return this.die();
+        if (Math.hypot(PX - o.x, b.y - (o.y ?? GY)) < r * 0.9 + (o.r ?? 17) * 0.85) return this.die();
       }
     }
   }
@@ -295,43 +459,66 @@ export class RunnerGame extends BaseGame {
       ctx.restore();
     }
 
-    // obstacles
+    // Obstacles et fossés. Le fossé est dessiné par-dessus le sol pour que
+    // l'absence de support soit lisible avant même la collision.
     for (const o of this.obs) {
-      if (o.type === 'spike') {
+      if (o.type === 'gap') {
+        const w = o.w ?? 0;
+        ctx.fillStyle = '#020307';
+        ctx.fillRect(o.x, GY - 1, w, this.H - GY + 1);
+        ctx.strokeStyle = '#ff5470aa';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.moveTo(o.x, GY); ctx.lineTo(o.x + 18, GY + 18);
+        ctx.moveTo(o.x + w, GY); ctx.lineTo(o.x + w - 18, GY + 18);
+        ctx.stroke();
+        ctx.strokeStyle = '#ff547044';
+        ctx.lineWidth = 1;
+        for (let x = o.x + 42; x < o.x + w - 12; x += 42) {
+          ctx.beginPath(); ctx.moveTo(x, GY + 12); ctx.lineTo(x - 12, this.H); ctx.stroke();
+        }
+      } else if (o.type === 'spike') {
         const base = o.base || 0;
+        const ow = o.w ?? 36;
+        const oh = o.h ?? 36;
         ctx.fillStyle = '#ff5470';
         ctx.beginPath();
         ctx.moveTo(o.x, GY - base);
-        ctx.lineTo(o.x + o.w / 2, GY - base - o.h);
-        ctx.lineTo(o.x + o.w, GY - base);
+        ctx.lineTo(o.x + ow / 2, GY - base - oh);
+        ctx.lineTo(o.x + ow, GY - base);
         ctx.closePath();
         ctx.fill();
       } else if (o.type === 'block') {
+        const oh = o.h ?? 0;
         ctx.fillStyle = '#1a2612';
         ctx.strokeStyle = this.accent;
         ctx.lineWidth = 2;
-        UI.roundRect(ctx, o.x, GY - o.h, o.w, o.h, 6);
+        UI.roundRect(ctx, o.x, o.y ?? GY - oh, o.w ?? 0, oh, 6);
         ctx.fill(); ctx.stroke();
-      } else if (o.type === 'bar') {
+      } else if (o.type === 'bar' || o.type === 'ceiling') {
         ctx.fillStyle = '#ff5470';
         ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 12;
-        UI.roundRect(ctx, o.x, o.y, o.w, o.h, 8);
+        UI.roundRect(ctx, o.x, o.y ?? GY, o.w ?? 0, o.h ?? 0, 8);
         ctx.fill();
         ctx.shadowBlur = 0;
         ctx.strokeStyle = '#ffffff55';
         ctx.beginPath();
-        ctx.moveTo(o.x + 10, o.y + o.h); ctx.lineTo(o.x + 10, o.y + o.h + 14);
-        ctx.moveTo(o.x + o.w - 10, o.y + o.h); ctx.lineTo(o.x + o.w - 10, o.y + o.h + 14);
+        const oy = o.y ?? GY;
+        const ow = o.w ?? 0;
+        const oh = o.h ?? 0;
+        ctx.moveTo(o.x + 10, oy + oh); ctx.lineTo(o.x + 10, oy + oh + 14);
+        ctx.moveTo(o.x + ow - 10, oy + oh); ctx.lineTo(o.x + ow - 10, oy + oh + 14);
         ctx.stroke();
       } else if (o.type === 'saw') {
         ctx.save();
-        ctx.translate(o.x, o.y);
-        ctx.rotate(o.ang);
+        ctx.translate(o.x, o.y ?? GY - 17);
+        ctx.rotate(o.ang ?? 0);
         ctx.fillStyle = '#ff5470';
         ctx.beginPath();
         for (let i = 0; i < 10; i++) {
           const a = (i / 10) * 6.2832;
-          const rr = i % 2 === 0 ? o.r : o.r * 0.72;
+          const rr0 = o.r ?? 17;
+          const rr = i % 2 === 0 ? rr0 : rr0 * 0.72;
           i === 0 ? ctx.moveTo(Math.cos(a) * rr, Math.sin(a) * rr) : ctx.lineTo(Math.cos(a) * rr, Math.sin(a) * rr);
         }
         ctx.closePath(); ctx.fill();
