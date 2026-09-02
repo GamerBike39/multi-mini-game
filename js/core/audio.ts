@@ -4,6 +4,7 @@
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
 import type { AudioLike, VolumeKey } from './types';
+import { MusicTransport } from './music/transport';
 
 type HatMode = 'off' | '8ths' | '16ths';
 type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
@@ -91,6 +92,8 @@ export class AudioSys implements AudioLike {
   pendingMood: [string, MusicOptions] | null = null;
   musicStart = 0;
   step = 0;
+  /** Horloge musicale commune ; aucune création de node n'est déléguée ici. */
+  readonly transport = new MusicTransport();
 
   master!: GainNode;
   comp!: DynamicsCompressorNode;
@@ -309,6 +312,7 @@ export class AudioSys implements AudioLike {
     this.mood = mood;
     this.musicStart = context.currentTime + 0.12;
     this.step = 0;
+    this.transport.start(mood.bpm, this.musicStart);
     this.chart = options.chart || null;
     this.chartPtr = 0;
     this.musicOn = true;
@@ -322,6 +326,7 @@ export class AudioSys implements AudioLike {
       this.timer = null;
     }
     this.musicOn = false;
+    this.transport.stop();
     this.chart = null;
     this.trackMode = false;
     this.stopTrack();
@@ -378,6 +383,7 @@ export class AudioSys implements AudioLike {
     if (!this.ensure() || !this.ctx) return;
     this.stopMusic();
     this.musicStart = this.ctx.currentTime + 0.15;
+    this.transport.start(bpm, this.musicStart);
     this.playBuffer(buffer, this.musicStart + countIn, 0);
     this.musicOn = true;
     this.trackMode = true;
@@ -418,7 +424,6 @@ export class AudioSys implements AudioLike {
     if (!this.ctx || !this.musicOn || !this.mood) return;
     const context = this.ctx;
     const mood = this.mood;
-    const stepDuration = (60 / mood.bpm) / 4;
     const horizon = context.currentTime + 0.2;
 
     if (this.chart) {
@@ -431,33 +436,29 @@ export class AudioSys implements AudioLike {
       }
     }
 
-    while (true) {
-      const time = this.musicStart + this.step * stepDuration;
-      if (time >= horizon) break;
-      if (time >= context.currentTime - 0.02) {
-        const step = this.step % 16;
-        if (mood.kick.includes(step)) this.drum('kick', time);
-        if (mood.snare.includes(step)) this.drum('snare', time);
-        if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(time, step % 4 === 2 ? 0.05 : 0.09);
-        else if (mood.hat === '16ths') this.hatAt(time, step % 4 === 0 ? 0.09 : 0.045);
-        if (mood.bass && step % (mood.bassDiv ?? 2) === 0) {
-          const note = mood.bass[(step / (mood.bassDiv ?? 2)) % mood.bass.length];
-          if (note !== null && note !== undefined) this.bassAt(time, mood.root + note);
-        }
-        if (mood.pad && step === 0) this.padAt(time, mood.root, (60 / mood.bpm) * 4);
+    this.transport.scheduleAhead(context.currentTime, horizon - context.currentTime, ({ time, absoluteStep }) => {
+      const step = absoluteStep % 16;
+      if (mood.kick.includes(step)) this.drum('kick', time);
+      if (mood.snare.includes(step)) this.drum('snare', time);
+      if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(time, step % 4 === 2 ? 0.05 : 0.09);
+      else if (mood.hat === '16ths') this.hatAt(time, step % 4 === 0 ? 0.09 : 0.045);
+      if (mood.bass && step % (mood.bassDiv ?? 2) === 0) {
+        const note = mood.bass[(step / (mood.bassDiv ?? 2)) % mood.bass.length];
+        if (note !== null && note !== undefined) this.bassAt(time, mood.root + note);
       }
-      this.step++;
-    }
+      if (mood.pad && step === 0) this.padAt(time, mood.root, (60 / mood.bpm) * 4);
+    });
+    this.step = this.transport.absoluteStep;
   }
 
   // Temps musical : beat flottant depuis le début de la musique, 0 si pas de musique.
   beat(): number {
     if (!this.ctx || !this.musicOn || !this.mood) return 0;
-    return (this.ctx.currentTime - this.musicStart) / (60 / this.mood.bpm);
+    return this.transport.beatAt(this.ctx.currentTime);
   }
 
   songTime(): number {
     if (!this.ctx || !this.musicOn) return 0;
-    return this.ctx.currentTime - this.musicStart;
+    return this.transport.transportTime(this.ctx.currentTime);
   }
 }
