@@ -29,12 +29,12 @@ const TH_X0 = (1280 - (10 * TH_W + 9 * TH_GAP)) / 2;
 const TH_Y = 626;
 
 // Bouton lancer (fiche) : zone de clic fixe, le dessin pulse autour.
-const PILL = { x: 878 - 116, y: 566, w: 232, h: 46 } as const;
+const PILL = { x: 890 - 116, y: 564 - 23, w: 232, h: 46 } as const;
 
 const SWAP_T = 0.38;
 const VIEW_T = 0.4;
 const VIEW_NOTICE_T = 1.2;
-const VIEW_BUTTON = { x: 510, y: 16, w: 260, h: 34 } as const;
+const VIEW_BUTTON = { x: 552, y: 18, w: 176, h: 26 } as const;
 const SETTINGS_BUTTON = { x: 1112, y: 16, w: 140, h: 34 } as const;
 
 type MenuView = 'detail' | 'grid';
@@ -435,19 +435,19 @@ export class Menu {
     const accent = this.games[this.sel].meta.accent;
     const viewFill = this.hover === 'view' ? accent + 'dd' : 'rgba(9,12,19,0.88)';
     UI.panel(ctx, VIEW_BUTTON.x, VIEW_BUTTON.y, VIEW_BUTTON.w, VIEW_BUTTON.h, {
-      radius: 17,
+      radius: 13,
       fill: viewFill,
       stroke: this.hover === 'view' ? '#ffffff88' : accent + '55',
-      lineWidth: 1.5,
+      lineWidth: 1,
     });
-    UI.txt(ctx, this.view === 'detail' ? '▣  FICHE' : '▦  ENSEMBLE', VIEW_BUTTON.x + 82, VIEW_BUTTON.y + 22, {
-      size: 13,
+    UI.txt(ctx, this.view === 'detail' ? '▣  FICHE' : '▦  ENSEMBLE', VIEW_BUTTON.x + 58, VIEW_BUTTON.y + 17, {
+      size: 10.5,
       align: 'center',
       color: this.hover === 'view' ? '#06121c' : '#dfe6f0',
       weight: 900,
     });
-    UI.txt(ctx, 'V  ·  LT / RT', VIEW_BUTTON.x + 202, VIEW_BUTTON.y + 21, {
-      size: 10,
+    UI.txt(ctx, 'V · LT / RT', VIEW_BUTTON.x + 137, VIEW_BUTTON.y + 17, {
+      size: 8,
       align: 'center',
       mono: true,
       color: this.hover === 'view' ? '#06121caa' : '#7c8698',
@@ -492,17 +492,20 @@ export class Menu {
   drawViewNotice(ctx: CanvasRenderingContext2D): void {
     if (this.viewNoticeT <= 0) return;
     const accent = this.games[this.sel].meta.accent;
-    const alpha = Math.min(1, this.viewNoticeT / 0.28);
+    const alpha = Math.min(0.82, this.viewNoticeT / 0.28);
     const y = this.view === 'grid' ? 142 : 56;
+    const noticeW = 190;
+    const noticeH = 22;
+    const noticeX = (1280 - noticeW) / 2;
     ctx.save();
     ctx.globalAlpha = alpha;
-    UI.panel(ctx, 510, y, 260, 28, { radius: 14, fill: accent + '22', stroke: accent + '88', lineWidth: 1.5 });
-    UI.txt(ctx, (this.view === 'detail' ? '→  ' : '←  ') + this.viewNoticeLabel + '   ·   V / LT·RT', 640, y + 19, {
-      size: 10.5,
+    UI.panel(ctx, noticeX, y, noticeW, noticeH, { radius: 11, fill: accent + '12', stroke: accent + '55', lineWidth: 1 });
+    UI.txt(ctx, (this.view === 'detail' ? '→  ' : '←  ') + this.viewNoticeLabel, 640, y + 15, {
+      size: 8.5,
       align: 'center',
       mono: true,
       color: '#dfe6f0',
-      weight: 800,
+      weight: 700,
     });
     ctx.restore();
   }
@@ -516,10 +519,10 @@ export class Menu {
     const slide = (1 - entry) * 34;
 
     // ----- écran dédié de la démo (à droite) -----
-    const SX = 540;
-    const SY = 88;
-    const SW = 676;
-    const SH = 472;
+    const SX = 570;
+    const SY = 104;
+    const SW = 640;
+    const SH = 430;
     const IX = SX + 12;
     const IY = SY + 38;
     const IW = SW - 24;
@@ -544,8 +547,8 @@ export class Menu {
     ctx.fillRect(IX, IY, IW, IH);
     UI.grid(ctx, { gap: 56, off: this.t * 6, alpha: 0.05, color: accent });
     ctx.save();
-    ctx.translate(878, 343);
-    ctx.scale(0.886, 0.886);
+    ctx.translate(SX + SW / 2, IY + IH / 2);
+    ctx.scale(0.82, 0.82);
     ctx.translate(-695, -385);
     this.demo.draw(ctx);
     ctx.restore();
@@ -649,7 +652,7 @@ export class Menu {
     const pulse = Math.max(0, 1 - (beat % 1) * 2.4);
     const pillWidth = 224 + pulse * 6 + (this.hover === 'pill' ? 10 : 0);
     const pillCenterX = SX + SW / 2;
-    const pillCenterY = 589;
+    const pillCenterY = 564;
     ctx.save();
     ctx.globalAlpha = entry;
     UI.panel(ctx, pillCenterX - pillWidth / 2, pillCenterY - 23 - pulse * 2, pillWidth, 46, { radius: 23, fill: accent + (this.hover === 'pill' ? 'ff' : 'e6'), stroke: '#ffffff55' });

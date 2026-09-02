@@ -3,7 +3,7 @@
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, VolumeKey } from './types';
+import type { AudioLike, VolumeKey } from '../../js/core/types';
 
 type HatMode = 'off' | '8ths' | '16ths';
 type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';

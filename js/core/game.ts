@@ -89,8 +89,8 @@ export class BaseGame {
       return true;
     }
 
-    // Start (Entrée/manette) ou Échap : bascule pause ↔ jeu.
-    if (I.pressed('start') || I.pressed('back')) {
+    // Start (Entrée/manette), Select ou Échap : bascule pause ↔ jeu.
+    if (I.pressed('start') || I.pressed('back') || I.pressed('select')) {
       this.paused = !this.paused;
       this.pauseSel = 0;
       this.audio.uiMove();
@@ -100,7 +100,7 @@ export class BaseGame {
 
     if (this.paused) {
       // Navigation pause : dpad/flèches/WASD + stick vertical, A valide,
-      // B/Échap reprend, Select quitte.
+      // B reprend ; Start, Select et Échap sont traités au-dessus.
       const U = I.down('up') || I.moveY < -0.5;
       const D = I.down('down') || I.moveY > 0.5;
       if (I.pressed('up') || (U && !this.pvU)) {
@@ -136,17 +136,6 @@ export class BaseGame {
         this.audio.uiBack();
         return true;
       }
-      if (I.pressed('select')) {
-        this.audio.uiBack();
-        this.quit();
-        return true;
-      }
-      return true;
-    }
-
-    if (I.pressed('select')) {
-      this.audio.uiBack();
-      this.quit();
       return true;
     }
 
@@ -155,7 +144,7 @@ export class BaseGame {
       this.fx.timeScale = Math.min(1, this.fx.timeScale + dt * 1.1);
       if (this.overT > 0.7) {
         if (I.pressed('a')) this.restart();
-        else if (I.pressed('b') || I.pressed('back') || I.pressed('select')) {
+        else if (I.pressed('b') || I.pressed('back')) {
           this.audio.uiBack();
           this.quit();
         }

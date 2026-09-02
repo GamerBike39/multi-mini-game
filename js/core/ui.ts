@@ -273,7 +273,7 @@ export function drawPause(ctx: CanvasRenderingContext2D, accent: string, sel = 0
       weight: isSel ? 900 : 700,
     });
   }
-  txt(ctx, '↑ ↓  choisir      A  valider      B / Échap  reprendre      Backspace  quitter', 640, 560, {
+  txt(ctx, '↑ ↓  choisir      A  valider      B / Échap / Select  reprendre', 640, 560, {
     size: 14,
     align: 'center',
     color: '#6a7488',

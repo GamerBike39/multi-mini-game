@@ -79,6 +79,9 @@ manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la ré
 (`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160) et aux filtres CRT
 et bruit avec intensités réglables.
 
+Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en pause ou la
+reprennent ; l'item « Quitter » permet de revenir au hub.
+
 Souris : active uniquement dans les interfaces (hub, pause, réglages) — survol et clic
 sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effet.
 
