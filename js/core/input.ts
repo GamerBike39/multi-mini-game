@@ -1,13 +1,15 @@
 // Input unifié : manette (Gamepad API) + clavier + souris.
 // Une seule source de vérité : des actions abstraites (a, b, x, y, up/down/left/right, start, select, back, lb, rb)
 // plus deux sticks virtuels (moveX/moveY, aimX/aimY).
-// 'back' (Échap) est volontairement séparé de 'start' : Échap doit toujours
-// signifier "revenir en arrière / annuler", jamais valider ni lancer.
+// 'back' (Échap) est volontairement séparé de 'start' : Échap annule ou ouvre
+// les options selon le contexte, jamais valider ni lancer.
 
 import { ACTIONS, type Action, type ActionMap, type InputTap } from './types';
 
 const PAD_MAP: Partial<Record<number, Action>> = {
   0: 'a', 1: 'b', 2: 'x', 3: 'y', 4: 'lb', 5: 'rb',
+  // Les gâchettes analogiques apparaissent comme les boutons 6/7 dans Gamepad API.
+  6: 'lb', 7: 'rb',
   8: 'select', 9: 'start', 12: 'up', 13: 'down', 14: 'left', 15: 'right',
 };
 
@@ -46,6 +48,8 @@ export class Input {
   padConnected = false;
   padName = '';
   readonly keys = new Set<string>();
+  readonly keyEdges = new Set<string>();
+  blocked = false;
   gestureDone = false;
   readonly taps: InputTap[] = [];
   readonly padPrev: Partial<Record<number, boolean>> = {};
@@ -67,6 +71,7 @@ export class Input {
       if (PREVENT.has(event.code)) event.preventDefault();
       if (event.repeat) return;
       this.keys.add(event.code);
+      this.keyEdges.add(event.code);
 
       // Frappe posée dès l'événement (collante) : un appui plus court qu'une frame
       // est quand même vu par la simulation.
@@ -101,6 +106,21 @@ export class Input {
   }
 
   poll(): void {
+    if (this.blocked) {
+      this.moveX = 0;
+      this.moveY = 0;
+      this.aimX = 0;
+      this.aimY = 0;
+      for (const action of ACTIONS) {
+        this.actions[action].down = false;
+        this.actions[action].pressed = false;
+        this.actions[action].released = false;
+      }
+      this.keyEdges.clear();
+      this.taps.length = 0;
+      return;
+    }
+
     const buttons: Partial<Record<Action, boolean>> = {};
     let mx = 0;
     let my = 0;
@@ -179,6 +199,7 @@ export class Input {
       this.actions[action].pressed = false;
       this.actions[action].released = false;
     }
+    this.keyEdges.clear();
   }
 
   // Neutralise les frappes en cours (ex. la touche/le clic qui ferme la modale d'intro
@@ -190,6 +211,24 @@ export class Input {
     }
     for (const code of Object.keys(KEY_MAP)) {
       if (this.keys.has(code)) this.actions[KEY_MAP[code]].down = true;
+    }
+    this.taps.length = 0;
+  }
+
+  setBlocked(blocked: boolean): void {
+    this.blocked = blocked;
+    if (!blocked) return;
+
+    this.moveX = 0;
+    this.moveY = 0;
+    this.aimX = 0;
+    this.aimY = 0;
+    this.keyEdges.clear();
+    this.taps.length = 0;
+    for (const action of ACTIONS) {
+      this.actions[action].down = false;
+      this.actions[action].pressed = false;
+      this.actions[action].released = false;
     }
   }
 
@@ -203,6 +242,10 @@ export class Input {
 
   key(code: string): boolean {
     return this.keys.has(code);
+  }
+
+  keyPressed(code: string): boolean {
+    return this.keyEdges.has(code);
   }
 
   rumble(strength = 0.5, duration = 0.15): void {

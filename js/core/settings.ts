@@ -1,17 +1,23 @@
-// Overlay "Réglages" : volumes (général / musique / effets), muet, plein écran, vibrations.
+// Overlay "Réglages" : volumes, résolution, muet, plein écran, vibrations.
 // Navigable clavier + manette (↑↓ ←→ A B/Échap) et à la souris (clic sur les sliders).
 // L'engine le dessine au-dessus de tout ; menu et jeux le manipulent via open()/update().
 
 import type { AudioLike, EngineLike, InputLike, VolumeKey } from './types';
+import * as UI from './ui';
 
 const W = 660;
-const H = 452;
+const H = 520;
 const VOLUME_KEYS: readonly VolumeKey[] = ['master', 'music', 'sfx'];
+const RESOLUTION_INDEX = 3;
+const MUTE_INDEX = 4;
+const FULLSCREEN_INDEX = 5;
+const VIBRATION_INDEX = 6;
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 type SettingRow =
   | { label: string; kind: 'slider'; key: VolumeKey }
+  | { label: string; kind: 'choice'; value: string; hint?: string }
   | { label: string; kind: 'toggle'; on: boolean; hint?: string };
 
 interface SettingRect {
@@ -20,7 +26,7 @@ interface SettingRect {
   w: number;
   h: number;
   i: number;
-  type: 'slider' | 'toggle';
+  type: 'slider' | 'choice' | 'toggle';
   bx?: number;
   bw?: number;
 }
@@ -69,7 +75,7 @@ export class Settings {
   }
 
   count(): number {
-    return 6;
+    return 7;
   }
 
   update(dt: number): boolean {
@@ -114,14 +120,18 @@ export class Settings {
       if (key) {
         this.audio.setVol(key, clamp01(this.audio.vols[key] + dir * 0.05));
         this.audio.uiMove();
+      } else if (this.sel === RESOLUTION_INDEX) {
+        this.eng.cycleResolution(dir);
+        this.audio.uiMove();
       }
     }
 
     if (I.pressed('a')) {
       this.audio.uiOk();
-      if (this.sel === 3) this.audio.setMuted(!this.audio.muted);
-      else if (this.sel === 4) this.toggleFullscreen();
-      else if (this.sel === 5) this.toggleVibration();
+      if (this.sel === RESOLUTION_INDEX) this.eng.cycleResolution(1);
+      else if (this.sel === MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
+      else if (this.sel === FULLSCREEN_INDEX) this.toggleFullscreen();
+      else if (this.sel === VIBRATION_INDEX) this.toggleVibration();
     }
     if (I.pressed('b') || I.pressed('back') || I.pressed('select')) this.close();
     return true;
@@ -155,10 +165,15 @@ export class Settings {
         this.audio.setVol(key, clamp01((x - (rect.bx ?? 0)) / (rect.bw ?? 1)));
         this.drag = rect.i;
         this.audio.uiMove();
+      } else if (rect.type === 'choice') {
+        const bx = rect.bx ?? rect.x;
+        const bw = rect.bw ?? rect.w;
+        this.eng.cycleResolution(x < bx + bw / 2 ? -1 : 1);
+        this.audio.uiMove();
       } else {
-        if (rect.i === 3) this.audio.setMuted(!this.audio.muted);
-        else if (rect.i === 4) this.toggleFullscreen();
-        else if (rect.i === 5) this.toggleVibration();
+        if (rect.i === MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
+        else if (rect.i === FULLSCREEN_INDEX) this.toggleFullscreen();
+        else if (rect.i === VIBRATION_INDEX) this.toggleVibration();
         this.audio.uiOk();
       }
       return true;
@@ -224,6 +239,7 @@ export class Settings {
       { label: 'Volume général', kind: 'slider', key: 'master' },
       { label: 'Volume musique', kind: 'slider', key: 'music' },
       { label: 'Volume effets', kind: 'slider', key: 'sfx' },
+      { label: 'Résolution', kind: 'choice', value: this.eng.resolutionLabel, hint: '← → pour choisir' },
       { label: 'Muet', kind: 'toggle', on: this.audio.muted, hint: 'raccourci : M' },
       { label: 'Plein écran', kind: 'toggle', on: this.fullscreen, hint: 'raccourci : F' },
       { label: 'Vibrations manette', kind: 'toggle', on: this.input.vibration },
@@ -276,6 +292,27 @@ export class Settings {
         ctx.fillStyle = isSel ? '#eaf6ff' : '#7c8698';
         ctx.fillText(Math.round(value * 100) + ' %', px + W - 34, y + 20);
         this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'slider', bx, bw });
+      } else if (row.kind === 'choice') {
+        const choiceW = 226;
+        const choiceX = bx;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(choiceX, y + 2, choiceW, 26, 13);
+        else ctx.rect(choiceX, y + 2, choiceW, 26);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fill();
+        ctx.strokeStyle = isSel ? accent + 'bb' : '#ffffff1f';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        UI.txt(ctx, '‹', choiceX + 18, y + 21, { size: 23, align: 'center', color: isSel ? accent : '#8b95a8', weight: 900 });
+        UI.txt(ctx, row.value, choiceX + choiceW / 2, y + 20, { size: 13, align: 'center', color: isSel ? '#eaf6ff' : '#b9c2d0', mono: true, weight: 800 });
+        UI.txt(ctx, '›', choiceX + choiceW - 18, y + 21, { size: 23, align: 'center', color: isSel ? accent : '#8b95a8', weight: 900 });
+        if (row.hint) {
+          ctx.font = '700 11px Consolas, monospace';
+          ctx.textAlign = 'right';
+          ctx.fillStyle = '#5d6480';
+          ctx.fillText(row.hint, px + W - 34, y + 20);
+        }
+        this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'choice', bx: choiceX, bw: choiceW });
       } else {
         const tw = 96;
         ctx.beginPath();

@@ -44,6 +44,7 @@ function element<T extends HTMLElement>(id: string): T {
 }
 
 const engine = new Engine(element<HTMLCanvasElement>('game'));
+engine.input.setBlocked(true);
 engine.menuFactory = () => new Menu(engine, GAMES) as AppLike;
 engine.setApp(engine.menuFactory());
 engine.start();
@@ -76,6 +77,7 @@ const start = (): void => {
   launched = true;
   window.clearInterval(padPoll);
   engine.audio.unlock();
+  engine.input.setBlocked(false);
   engine.input.absorb(); // la frappe qui ferme la modale ne doit rien déclencher dans le menu
   gate.classList.add('hidden');
   window.setTimeout(() => gate.remove(), 450);

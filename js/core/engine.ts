@@ -5,9 +5,10 @@ import { Input } from './input';
 import { AudioSys } from './audio';
 import { Settings } from './settings';
 import { vignette, txt, panel } from './ui';
-import type { AppLike, AudioLike, EngineLike } from './types';
+import { RESOLUTION_OPTIONS, type AppLike, type AudioLike, type EngineLike, type ResolutionId } from './types';
 
 const STEP = 1 / 60;
+const RESOLUTION_STORAGE_KEY = 'blobArcade.resolution';
 
 interface Point {
   x: number;
@@ -20,6 +21,16 @@ function errorMessage(error: unknown): string {
     return String((error as { message: unknown }).message);
   }
   return String(error);
+}
+
+function loadResolution(): ResolutionId {
+  try {
+    const saved = localStorage.getItem(RESOLUTION_STORAGE_KEY);
+    if (RESOLUTION_OPTIONS.some((option) => option.id === saved)) return saved as ResolutionId;
+  } catch {
+    // Préférence indisponible : AUTO reste le meilleur défaut.
+  }
+  return 'auto';
 }
 
 export class Engine implements EngineLike {
@@ -44,7 +55,13 @@ export class Engine implements EngineLike {
   toastT = 0;
   view = 1;
   dpr = 1;
+  renderScale = 1;
+  resolution: ResolutionId = loadResolution();
   readonly menuBack: () => void;
+
+  get resolutionLabel(): string {
+    return RESOLUTION_OPTIONS.find((option) => option.id === this.resolution)?.label || 'AUTO';
+  }
 
   constructor(canvas: HTMLCanvasElement) {
     const context = canvas.getContext('2d');
@@ -92,6 +109,7 @@ export class Engine implements EngineLike {
     // La souris ne pilote que les interfaces (hub, pause, réglages) via les
     // handlers des apps ; en gameplay elle n'a aucun effet.
     canvas.addEventListener('pointerdown', (event: PointerEvent) => {
+      if (this.input.blocked) return;
       this.input.gesture();
       const point = this.gameCoords(event);
       if (point) this.app?.onPointer?.(point.x, point.y);
@@ -108,6 +126,7 @@ export class Engine implements EngineLike {
     });
     canvas.addEventListener('contextmenu', (event: MouseEvent) => event.preventDefault());
     addEventListener('keydown', (event: KeyboardEvent) => {
+      if (this.input.blocked) return;
       // e.key plutôt que e.code : les lettres doivent marcher sur AZERTY comme QWERTY
       // (sur AZERTY, la touche M du clavier renvoie e.code 'Semicolon' — d'où l'ancien bug).
       const key = typeof event.key === 'string' ? event.key.toLowerCase() : '';
@@ -149,6 +168,26 @@ export class Engine implements EngineLike {
     }
   }
 
+  setResolution(resolution: ResolutionId): void {
+    if (!RESOLUTION_OPTIONS.some((option) => option.id === resolution)) return;
+    if (this.resolution === resolution) return;
+    this.resolution = resolution;
+    try {
+      localStorage.setItem(RESOLUTION_STORAGE_KEY, resolution);
+    } catch {
+      // La préférence reste active pour la session courante.
+    }
+    this.resize();
+    this.toast('Résolution : ' + this.resolutionLabel);
+  }
+
+  cycleResolution(direction: number): void {
+    if (!direction) return;
+    const current = Math.max(0, RESOLUTION_OPTIONS.findIndex((option) => option.id === this.resolution));
+    const next = (current + (direction < 0 ? -1 : 1) + RESOLUTION_OPTIONS.length) % RESOLUTION_OPTIONS.length;
+    this.setResolution(RESOLUTION_OPTIONS[next].id);
+  }
+
   showError(message: unknown): void {
     this.errorMsg = errorMessage(message).slice(0, 200);
     this.errorT = 8;
@@ -158,12 +197,14 @@ export class Engine implements EngineLike {
   resize(): void {
     const pixelRatio = devicePixelRatio || 1;
     const scale = Math.min(innerWidth / this.W, innerHeight / this.H);
+    const resolution = RESOLUTION_OPTIONS.find((option) => option.id === this.resolution) || RESOLUTION_OPTIONS[0];
     this.view = scale;
-    this.dpr = pixelRatio;
+    this.renderScale = resolution.id === 'auto' ? scale * pixelRatio : resolution.scale;
+    this.dpr = this.renderScale / Math.max(scale, 1e-6);
     this.canvas.style.width = Math.floor(this.W * scale) + 'px';
     this.canvas.style.height = Math.floor(this.H * scale) + 'px';
-    this.canvas.width = Math.round(this.W * scale * pixelRatio);
-    this.canvas.height = Math.round(this.H * scale * pixelRatio);
+    this.canvas.width = Math.max(1, Math.round(this.W * this.renderScale));
+    this.canvas.height = Math.max(1, Math.round(this.H * this.renderScale));
   }
 
   setApp(app: AppLike): void {
@@ -242,7 +283,7 @@ export class Engine implements EngineLike {
 
   render(): void {
     const ctx = this.ctx;
-    ctx.setTransform(this.view * this.dpr, 0, 0, this.view * this.dpr, 0, 0);
+    ctx.setTransform(this.renderScale, 0, 0, this.renderScale, 0, 0);
     ctx.fillStyle = '#05060b';
     ctx.fillRect(0, 0, this.W, this.H);
 
@@ -265,11 +306,6 @@ export class Engine implements EngineLike {
 
     // Réglages par-dessus tout (dessinés par l'engine pour rester au sommet).
     this.settings.draw(ctx, app?.accent || '#7dd3fc');
-
-    if (this.muted) {
-      panel(ctx, 1128, 16, 124, 34, { radius: 17, fill: 'rgba(8,11,18,0.7)' });
-      txt(ctx, 'MUET (M)', 1190, 39, { size: 13, align: 'center', color: '#8b95a8' });
-    }
 
     if (this.toastT > 0 && this.toastMsg) {
       this.toastT -= 1 / 60;

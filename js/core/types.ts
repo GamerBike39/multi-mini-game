@@ -9,6 +9,21 @@ export type Action = (typeof ACTIONS)[number];
 export const VOLUME_KEYS = ['master', 'music', 'sfx'] as const;
 export type VolumeKey = (typeof VOLUME_KEYS)[number];
 
+export type ResolutionId = 'auto' | '720p' | '540p' | '360p';
+
+export interface ResolutionOption {
+  id: ResolutionId;
+  label: string;
+  scale: number;
+}
+
+export const RESOLUTION_OPTIONS: readonly ResolutionOption[] = [
+  { id: 'auto', label: 'AUTO', scale: 1 },
+  { id: '720p', label: '1280 × 720', scale: 1 },
+  { id: '540p', label: '960 × 540', scale: 0.75 },
+  { id: '360p', label: '640 × 360', scale: 0.5 },
+];
+
 export interface ActionState {
   down: boolean;
   pressed: boolean;
@@ -43,9 +58,11 @@ export interface InputLike {
   padConnected: boolean;
   vibration: boolean;
   gesture(): void;
+  setBlocked(blocked: boolean): void;
   down(action: Action): boolean;
   pressed(action: Action): boolean;
   key(code: string): boolean;
+  keyPressed(code: string): boolean;
   clearEdges(): void;
   absorb(): void;
   rumble(strength?: number, duration?: number): void;
@@ -171,7 +188,11 @@ export interface EngineLike {
   input: InputLike;
   audio: AudioLike;
   settings: SettingsLike;
+  resolution: ResolutionId;
+  readonly resolutionLabel: string;
   setApp(app: AppLike): void;
   menuBack(): void;
   toggleFullscreen(): void;
+  setResolution(resolution: ResolutionId): void;
+  cycleResolution(direction: number): void;
 }

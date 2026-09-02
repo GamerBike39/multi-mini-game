@@ -1,0 +1,29 @@
+{
+  "package": "arcade_music_orientation_final",
+  "version": "1.0",
+  "purpose": "Orientation consolidée pour migration d'AudioSys vers moteur musical adaptatif WebAudio",
+  "source_snapshot": "legacy/AudioSys.current.ts",
+  "golden_references": [
+    "shooter",
+    "survival",
+    "fish"
+  ],
+  "technical_decision": "WebAudio native first; Tone.js optional only if justified",
+  "files": [
+    "00_README.md",
+    "01_CURRENT_AUDIO_ANALYSIS.md",
+    "02_TARGET_ARCHITECTURE.md",
+    "03_MUSICAL_BIBLE.md",
+    "04_LOGICAL_SCORES_ALL_GAMES.md",
+    "05_REFERENCE_V1_EXACT.md",
+    "06_ADAPTIVE_SYSTEM.md",
+    "07_MIGRATION_PLAN.md",
+    "08_CODEX_MASTER_PROMPT.md",
+    "09_VALIDATION_MATRIX.md",
+    "10_API_CONTRACT.ts",
+    "11_REFERENCE_TYPES.ts",
+    "12_EVENT_MAPPING.md",
+    "13_AUDIO_ENGINE_RULES.md",
+    "legacy/AudioSys.current.ts"
+  ]
+}

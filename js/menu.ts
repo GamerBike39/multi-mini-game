@@ -3,7 +3,7 @@
 //                      détails (contrôles, astuce), statistiques, rangs, et en bas le
 //                      bandeau de vignettes pour naviguer de jeu en jeu.
 //  - GRILLE (globale): la grille de cartes d'origine, conservée pour la vue d'ensemble.
-// A lance depuis les deux vues ; X / clic ouvre la fiche ; B/Échap revient à la grille.
+// A lance depuis les deux vues ; V (ou LT/RT) alterne les vues ; Échap ouvre les options.
 
 import { Fx } from './core/fx';
 import { Blob } from './core/blob';
@@ -33,9 +33,12 @@ const PILL = { x: 878 - 116, y: 566, w: 232, h: 46 } as const;
 
 const SWAP_T = 0.38;
 const VIEW_T = 0.4;
+const VIEW_NOTICE_T = 1.2;
+const VIEW_BUTTON = { x: 510, y: 16, w: 260, h: 34 } as const;
+const SETTINGS_BUTTON = { x: 1112, y: 16, w: 140, h: 34 } as const;
 
 type MenuView = 'detail' | 'grid';
-type HoverTarget = number | 'pill' | -1;
+type HoverTarget = number | 'pill' | 'view' | 'settings' | -1;
 
 interface Point {
   x: number;
@@ -78,6 +81,8 @@ export class Menu {
   pendingDemo: number | null = null;
   hover: HoverTarget = -1;
   cursor = 'default';
+  viewNoticeT = 0;
+  viewNoticeLabel = '';
   readonly demo: DemoLike;
   readonly blob: Blob;
   readonly dots: Dot[] = [];
@@ -116,6 +121,7 @@ export class Menu {
     if (this.view === 'detail') return;
     this.view = 'detail';
     this.viewT = 0;
+    this.showViewNotice();
     this.audio.uiOk();
   }
 
@@ -123,7 +129,23 @@ export class Menu {
     if (this.view === 'grid') return;
     this.view = 'grid';
     this.viewT = 0;
+    this.showViewNotice();
     this.audio.uiBack();
+  }
+
+  toggleView(): void {
+    if (this.view === 'detail') this.openGrid();
+    else this.openDetail();
+  }
+
+  showViewNotice(): void {
+    this.viewNoticeT = VIEW_NOTICE_T;
+    this.viewNoticeLabel = this.view === 'detail' ? 'FICHE DÉTAILLÉE' : "VUE D'ENSEMBLE";
+  }
+
+  openSettings(): void {
+    this.audio.uiOk();
+    this.eng.settings.open();
   }
 
   launch(): void {
@@ -164,11 +186,27 @@ export class Menu {
     return x >= PILL.x && x <= PILL.x + PILL.w && y >= PILL.y && y <= PILL.y + PILL.h;
   }
 
+  hitViewButton(x: number, y: number): boolean {
+    return x >= VIEW_BUTTON.x && x <= VIEW_BUTTON.x + VIEW_BUTTON.w && y >= VIEW_BUTTON.y && y <= VIEW_BUTTON.y + VIEW_BUTTON.h;
+  }
+
+  hitSettingsButton(x: number, y: number): boolean {
+    return x >= SETTINGS_BUTTON.x && x <= SETTINGS_BUTTON.x + SETTINGS_BUTTON.w && y >= SETTINGS_BUTTON.y && y <= SETTINGS_BUTTON.y + SETTINGS_BUTTON.h;
+  }
+
   // Clic : vignette/carte = sélectionner (relancer le clic sur l'élément déjà
   // actif ou sur le bouton = lancer) ; ailleurs, aucun effet.
   onPointer(x: number, y: number): void {
     if (this.eng.settings.active) {
       this.eng.settings.onPointer(x, y);
+      return;
+    }
+    if (this.hitSettingsButton(x, y)) {
+      this.openSettings();
+      return;
+    }
+    if (this.hitViewButton(x, y)) {
+      this.toggleView();
       return;
     }
     if (this.view === 'detail') {
@@ -199,6 +237,16 @@ export class Menu {
       if (this.eng.settings.onPointerMove(x, y)) this.cursor = 'pointer';
       return;
     }
+    if (this.hitSettingsButton(x, y)) {
+      this.hover = 'settings';
+      this.cursor = 'pointer';
+      return;
+    }
+    if (this.hitViewButton(x, y)) {
+      this.hover = 'view';
+      this.cursor = 'pointer';
+      return;
+    }
     if (this.view === 'detail') {
       this.hover = this.hitThumb(x, y);
       if (this.hover < 0 && this.hitPill(x, y)) this.hover = 'pill';
@@ -222,6 +270,7 @@ export class Menu {
   update(dt: number): void {
     this.t += dt;
     this.viewT = Math.min(1, this.viewT + dt / VIEW_T);
+    this.viewNoticeT = Math.max(0, this.viewNoticeT - dt);
     const input = this.input;
 
     if (this.eng.settings.active) this.eng.settings.update(dt);
@@ -272,6 +321,10 @@ export class Menu {
   }
 
   updateDetail(dt: number, input: InputLike): void {
+    if (input.pressed('lb')) this.openGrid();
+    else if (input.pressed('rb')) this.openDetail();
+    else if (input.keyPressed('KeyV')) this.toggleView();
+
     const left = input.down('left') || input.moveX < -0.5;
     const right = input.down('right') || input.moveX > 0.5;
     if (input.pressed('left') || (left && !this.wasL)) {
@@ -291,11 +344,7 @@ export class Menu {
     this.wasR = right;
 
     if (input.pressed('a') || input.pressed('start')) this.launch();
-    if (input.pressed('b') || input.pressed('back')) this.openGrid();
-    if (input.pressed('select')) {
-      this.audio.uiOk();
-      this.eng.settings.open();
-    }
+    if (input.pressed('back') || input.pressed('select')) this.openSettings();
     for (let i = 0; i < DIGIT_KEYS.length && i < this.games.length; i++) {
       if (input.key(DIGIT_KEYS[i])) {
         this.sel = i;
@@ -306,6 +355,10 @@ export class Menu {
   }
 
   updateGrid(dt: number, input: InputLike): void {
+    if (input.pressed('lb')) this.openGrid();
+    else if (input.pressed('rb')) this.openDetail();
+    else if (input.keyPressed('KeyV')) this.toggleView();
+
     const left = input.down('left') || input.moveX < -0.5;
     const right = input.down('right') || input.moveX > 0.5;
     if (input.pressed('left') || (left && !this.wasL)) {
@@ -333,12 +386,7 @@ export class Menu {
     this.wasD = down;
 
     if (input.pressed('a') || input.pressed('start')) this.launch();
-    // Fiche détaillée : bouton X (manette) ou touche X (clavier).
-    if (input.pressed('x') || input.key('KeyX')) this.openDetail();
-    if (input.pressed('select') || input.pressed('back')) {
-      this.audio.uiOk();
-      this.eng.settings.open();
-    }
+    if (input.pressed('back') || input.pressed('select')) this.openSettings();
     for (let i = 0; i < DIGIT_KEYS.length && i < this.games.length; i++) {
       if (input.key(DIGIT_KEYS[i])) {
         this.sel = i;
@@ -375,9 +423,88 @@ export class Menu {
     this.fx.drawWorld(ctx);
     this.fx.endWorld(ctx);
 
+    this.drawTopControls(ctx);
+    this.drawViewNotice(ctx);
+
     if (!this.audio.ctx) {
       UI.txt(ctx, 'Appuie sur une touche pour activer le son', 640, 610, { size: 12, align: 'center', color: '#5d6480' });
     }
+  }
+
+  drawTopControls(ctx: CanvasRenderingContext2D): void {
+    const accent = this.games[this.sel].meta.accent;
+    const viewFill = this.hover === 'view' ? accent + 'dd' : 'rgba(9,12,19,0.88)';
+    UI.panel(ctx, VIEW_BUTTON.x, VIEW_BUTTON.y, VIEW_BUTTON.w, VIEW_BUTTON.h, {
+      radius: 17,
+      fill: viewFill,
+      stroke: this.hover === 'view' ? '#ffffff88' : accent + '55',
+      lineWidth: 1.5,
+    });
+    UI.txt(ctx, this.view === 'detail' ? '▣  FICHE' : '▦  ENSEMBLE', VIEW_BUTTON.x + 82, VIEW_BUTTON.y + 22, {
+      size: 13,
+      align: 'center',
+      color: this.hover === 'view' ? '#06121c' : '#dfe6f0',
+      weight: 900,
+    });
+    UI.txt(ctx, 'V  ·  LT / RT', VIEW_BUTTON.x + 202, VIEW_BUTTON.y + 21, {
+      size: 10,
+      align: 'center',
+      mono: true,
+      color: this.hover === 'view' ? '#06121caa' : '#7c8698',
+    });
+
+    const settingsFill = this.hover === 'settings' ? accent + 'dd' : 'rgba(9,12,19,0.88)';
+    UI.panel(ctx, SETTINGS_BUTTON.x, SETTINGS_BUTTON.y, SETTINGS_BUTTON.w, SETTINGS_BUTTON.h, {
+      radius: 17,
+      fill: settingsFill,
+      stroke: this.hover === 'settings' ? '#ffffff88' : accent + '55',
+      lineWidth: 1.5,
+    });
+    const gx = SETTINGS_BUTTON.x + 22;
+    const gy = SETTINGS_BUTTON.y + SETTINGS_BUTTON.h / 2;
+    ctx.save();
+    ctx.translate(gx, gy);
+    ctx.strokeStyle = this.hover === 'settings' ? '#06121c' : accent;
+    ctx.fillStyle = this.hover === 'settings' ? '#06121c' : accent;
+    ctx.lineWidth = 2.2;
+    ctx.beginPath();
+    ctx.arc(0, 0, 7, 0, 6.2832);
+    ctx.stroke();
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * 8, Math.sin(a) * 8);
+      ctx.lineTo(Math.cos(a) * 11, Math.sin(a) * 11);
+      ctx.stroke();
+    }
+    ctx.fillStyle = this.hover === 'settings' ? '#06121c' : accent;
+    ctx.beginPath(); ctx.arc(0, 0, 2.5, 0, 6.2832); ctx.fill();
+    ctx.restore();
+    UI.txt(ctx, 'OPTIONS', SETTINGS_BUTTON.x + 84, SETTINGS_BUTTON.y + 22, {
+      size: 11,
+      align: 'center',
+      mono: true,
+      color: this.hover === 'settings' ? '#06121c' : '#dfe6f0',
+      weight: 900,
+    });
+  }
+
+  drawViewNotice(ctx: CanvasRenderingContext2D): void {
+    if (this.viewNoticeT <= 0) return;
+    const accent = this.games[this.sel].meta.accent;
+    const alpha = Math.min(1, this.viewNoticeT / 0.28);
+    const y = this.view === 'grid' ? 142 : 56;
+    ctx.save();
+    ctx.globalAlpha = alpha;
+    UI.panel(ctx, 510, y, 260, 28, { radius: 14, fill: accent + '22', stroke: accent + '88', lineWidth: 1.5 });
+    UI.txt(ctx, (this.view === 'detail' ? '→  ' : '←  ') + this.viewNoticeLabel + '   ·   V / LT·RT', 640, y + 19, {
+      size: 10.5,
+      align: 'center',
+      mono: true,
+      color: '#dfe6f0',
+      weight: 800,
+    });
+    ctx.restore();
   }
 
   // ----- vue fiche : plein écran pour le jeu sélectionné -----
@@ -567,7 +694,7 @@ export class Menu {
     // Pied de page.
     ctx.save();
     ctx.globalAlpha = entry;
-    UI.txt(ctx, '← →  changer de jeu      A  lancer      B / Échap  vue d\'ensemble      Sélect  réglages', 640, 716, {
+    UI.txt(ctx, '← →  changer de jeu      A  lancer      V / LT·RT  changer de vue      Échap  options', 640, 716, {
       size: 12.5, align: 'center', color: '#7c8698',
     });
     const padConnected = this.input.padConnected;
@@ -645,7 +772,7 @@ export class Menu {
     UI.txt(ctx, meta.controls, 640, descY + 25, { size: 13, align: 'center', color: meta.accent });
     ctx.restore();
 
-    UI.txt(ctx, '← → ↑ ↓  choisir      A  lancer      X  fiche détaillée      Sélect  réglages      F  plein écran      M  son', 640, 700, { size: 13, align: 'center', color: '#7c8698' });
+    UI.txt(ctx, '← → ↑ ↓  choisir      A  lancer      V / LT·RT  changer de vue      ⚙  options', 640, 700, { size: 13, align: 'center', color: '#7c8698' });
     const padConnected = this.input.padConnected;
     UI.txt(ctx, padConnected ? '● MANETTE OK' : '○ CLAVIER (flèches / ZQSD)', 1252, 700, {
       size: 12, align: 'right', color: padConnected ? '#34d399' : '#5d6480', mono: true,

@@ -63,16 +63,19 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **BLOB GOLF** | 9 trous faits main, visée + puissance, sable et banques | Stick viser + A (charge) | Flèches + Espace |
 | **BLOB PÊCHE** | Lance l'hameçon, ferrade, remorge sous tension | A + Stick G | Espace + ZQSD |
 
-Menu : `← → ↑ ↓` choisir, `A` lancer (raccourcis `1`–`9`, `0`), `X` fiche détaillée,
-`Sélect/Backspace` réglages, `B` retour, `M` muet, `F` plein écran.
+Menu : `← → ↑ ↓` choisir, `A` lancer (raccourcis `1`–`9`, `0`), `V` alterner entre
+fiche et vue d'ensemble, `Échap` ou l'icône ⚙ ouvrir les options. À la manette,
+`LT/RT` changent de vue ; `Sélect` ouvre également les options.
 
 La **fiche jeu** (vue par défaut) affiche chaque jeu en plein écran : une mini-démo
 simulée tourne en fond, avec les contrôles, l'astuce, les statistiques (parties, temps
 de jeu, record, dernier score, moyenne, victoires), l'échelle de rangs, et en bas le
-bandeau de vignettes pour naviguer (`← →`). `B`/`Échap` ramène à la grille (vue globale).
+bandeau de vignettes pour naviguer (`← →`). Une indication de transition apparaît
+à chaque changement de vue.
 
-Réglages (Sélect ou Échap depuis le menu, ou item « Réglages » de la pause) : volumes
-général / musique / effets avec sliders, muet, plein écran, vibrations manette.
+Réglages (⚙, Sélect ou Échap depuis le menu, ou item « Réglages » de la pause) :
+résolution, volumes général / musique / effets avec sliders, muet, plein écran,
+vibrations manette.
 
 Souris : active uniquement dans les interfaces (hub, pause, réglages) — survol et clic
 sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effet.
