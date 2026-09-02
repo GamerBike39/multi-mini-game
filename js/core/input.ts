@@ -240,6 +240,10 @@ export class Input {
     return this.actions[action].pressed;
   }
 
+  released(action: Action): boolean {
+    return this.actions[action].released;
+  }
+
   key(code: string): boolean {
     return this.keys.has(code);
   }

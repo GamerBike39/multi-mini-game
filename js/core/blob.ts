@@ -32,6 +32,10 @@ export class Blob {
   scared = false;
   dead = false;
   hideTrail = false;
+  poseX = 1;
+  poseY = 1;
+  liquid = 0;
+  poseOffsetY = 0;
 
   constructor({ x = 640, y = 360, r = 22, color = '#7dd3fc', trailOn = false }: BlobOptions = {}) {
     this.x = x;
@@ -43,6 +47,15 @@ export class Blob {
 
   punch(amount = 0.3): void {
     this.jig = Math.min(0.6, this.jig + amount);
+  }
+
+  // Déformation pilotée par un jeu (saut, duck, charge...). Elle reste
+  // indépendante de la hitbox `r`, qui appartient toujours à la physique.
+  setPose(scaleX = 1, scaleY = 1, liquid = 0, offsetY = 0): void {
+    this.poseX = Math.max(0.2, scaleX);
+    this.poseY = Math.max(0.2, scaleY);
+    this.liquid = Math.max(0, Math.min(1, liquid));
+    this.poseOffsetY = offsetY;
   }
 
   update(dt: number): void {
@@ -96,13 +109,16 @@ export class Blob {
     const sy = 1 - k * 0.18 - this.jig * 0.35;
 
     ctx.save();
-    ctx.translate(this.x, this.y);
+    ctx.translate(this.x, this.y + (this.dead ? 0 : this.poseOffsetY));
     if (this.dead) {
       ctx.scale(1.5, 0.18);
     } else {
       ctx.rotate(angle);
       ctx.scale(sx, sy);
       ctx.rotate(-angle);
+      // La pose de gameplay agit dans l'espace du monde : le saut s'écrase
+      // verticalement même si la vitesse entraîne le blob en diagonale.
+      ctx.scale(this.poseX, this.poseY);
     }
 
     // Contour tremblant.
@@ -110,10 +126,16 @@ export class Blob {
     const N = 16;
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * 6.2832;
-      const wob = 0.07 * Math.sin(this.t * 6 + i * 2.1) + this.jig * 0.6 * Math.sin(this.t * 32 + i * 1.7);
+      const liquidWave = this.liquid * (
+        0.09 * Math.sin(this.t * 10 + i * 2.6)
+        + 0.045 * Math.sin(this.t * 21 - i * 1.4)
+      );
+      const wob = 0.07 * Math.sin(this.t * 6 + i * 2.1)
+        + this.jig * 0.6 * Math.sin(this.t * 32 + i * 1.7)
+        + liquidWave;
       const rr = r * (1 + wob);
-      const px = Math.cos(a) * rr;
-      const py = Math.sin(a) * rr;
+      const px = Math.cos(a) * rr * (1 + this.liquid * 0.035 * Math.sin(this.t * 8 + i));
+      const py = Math.sin(a) * rr * (1 + this.liquid * 0.025 * Math.cos(this.t * 9 - i));
       if (i === 0) ctx.moveTo(px, py);
       else ctx.lineTo(px, py);
     }

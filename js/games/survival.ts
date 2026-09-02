@@ -11,6 +11,7 @@ const AW = 1280 - M * 2;
 const AH = 720 - M * 2;
 const PI2 = Math.PI * 2;
 const ARENA_CENTER: [number, number] = [640, 360];
+const ROTOR_ARENA_RADIUS = 238;
 
 type WavePhase = 'prep' | 'active';
 type EnemyKind = 'chaser' | 'mine' | 'gunner' | 'boss';
@@ -35,6 +36,8 @@ interface WavePlan {
   bonusChance: number;
   special: boolean;
   boss: boolean;
+  confined: boolean;
+  confinedRadius: number;
   enemyInterval: number;
 }
 
@@ -47,12 +50,16 @@ interface Telegraph {
 }
 
 interface MovingBar {
+  orientation: 'horizontal' | 'vertical';
   x: number;
   y: number;
   w: number;
   h: number;
   vx: number;
   vy: number;
+  gapCenter: number;
+  gapSize: number;
+  gapSpeed: number;
   warn: number;
   phase: number;
 }
@@ -67,6 +74,7 @@ interface RotorTrap {
   speed: number;
   width: number;
   warn: number;
+  tickT: number;
 }
 
 interface SurvivalOrb {
@@ -136,6 +144,27 @@ function circleHitsRect(px: number, py: number, radius: number, x: number, y: nu
   return distanceToRect(px, py, x, y, w, h) < radius;
 }
 
+function circleHitsMovingBar(px: number, py: number, radius: number, bar: MovingBar): boolean {
+  const left = M;
+  const right = M + AW;
+  const top = M;
+  const bottom = M + AH;
+  const gapStart = bar.gapCenter - bar.gapSize / 2;
+  const gapEnd = bar.gapCenter + bar.gapSize / 2;
+
+  if (bar.orientation === 'horizontal') {
+    const leftWidth = Math.max(0, gapStart - left);
+    const rightWidth = Math.max(0, right - gapEnd);
+    return (leftWidth > 0 && circleHitsRect(px, py, radius, left + leftWidth / 2, bar.y, leftWidth, bar.h))
+      || (rightWidth > 0 && circleHitsRect(px, py, radius, gapEnd + rightWidth / 2, bar.y, rightWidth, bar.h));
+  }
+
+  const topHeight = Math.max(0, gapStart - top);
+  const bottomHeight = Math.max(0, bottom - gapEnd);
+  return (topHeight > 0 && circleHitsRect(px, py, radius, bar.x, top + topHeight / 2, bar.w, topHeight))
+    || (bottomHeight > 0 && circleHitsRect(px, py, radius, bar.x, gapEnd + bottomHeight / 2, bar.w, bottomHeight));
+}
+
 export class SurvivalGame extends BaseGame {
   [key: string]: any;
 
@@ -177,6 +206,7 @@ export class SurvivalGame extends BaseGame {
     this.specialWasActive = false;
     this.bonusT = 0;
     this.nearCueT = 0;
+    this.boundaryCueT = 0;
 
     this.enemies = [] as SurvivalEnemy[];
     this.bullets = [] as SurvivalBullet[];
@@ -214,6 +244,8 @@ export class SurvivalGame extends BaseGame {
       bonusChance: 0,
       special: false,
       boss: false,
+      confined: false,
+      confinedRadius: ROTOR_ARENA_RADIUS,
       enemyInterval: 1.55,
       ...overrides,
     });
@@ -243,6 +275,8 @@ export class SurvivalGame extends BaseGame {
         color: '#fb923c',
         rotor: true,
         rotorCount: 1,
+        confined: true,
+        confinedRadius: ROTOR_ARENA_RADIUS,
       });
     }
     if (wave === 4) {
@@ -464,6 +498,7 @@ export class SurvivalGame extends BaseGame {
     this.bonusT = Math.max(0, this.bonusT - dt);
     this.orbChainT = Math.max(0, this.orbChainT - dt);
     this.nearCueT = Math.max(0, this.nearCueT - dt);
+    this.boundaryCueT = Math.max(0, this.boundaryCueT - dt);
     if (this.orbChainT <= 0) this.coinStep = 0;
 
     if (this.wavePhase === 'prep') {
@@ -540,7 +575,34 @@ export class SurvivalGame extends BaseGame {
     b.y += b.vy * dt;
     b.x = clamp(b.x, M + b.r, 1280 - M - b.r);
     b.y = clamp(b.y, M + b.r, 720 - M - b.r);
+    this.applyConfinedBounds();
     b.update(dt);
+  }
+
+  applyConfinedBounds(): void {
+    if (!this.wavePlan.confined || this.wavePhase !== 'active') return;
+    const [cx, cy] = this.rotors[0] ? [this.rotors[0].cx, this.rotors[0].cy] : ARENA_CENTER;
+    const maxDistance = this.wavePlan.confinedRadius - this.blob.r;
+    const dx = this.blob.x - cx;
+    const dy = this.blob.y - cy;
+    const distance = Math.hypot(dx, dy);
+    if (distance <= maxDistance) return;
+
+    const nx = dx / (distance || 1);
+    const ny = dy / (distance || 1);
+    this.blob.x = cx + nx * maxDistance;
+    this.blob.y = cy + ny * maxDistance;
+    const outwardSpeed = this.blob.vx * nx + this.blob.vy * ny;
+    if (outwardSpeed > 0) {
+      this.blob.vx -= outwardSpeed * nx;
+      this.blob.vy -= outwardSpeed * ny;
+    }
+    if (this.boundaryCueT <= 0) {
+      this.boundaryCueT = 0.28;
+      this.audio.tone({ f: 150, f1: 92, type: 'sine', dur: 0.08, vol: 0.045 });
+      this.input.rumble(0.14, 0.06);
+      this.fx.ring(this.blob.x, this.blob.y, { r0: 8, r1: 28, color: '#fb923c', life: 0.16, width: 2 });
+    }
   }
 
   updateSpecial(dt: number): void {
@@ -628,51 +690,82 @@ export class SurvivalGame extends BaseGame {
 
   createBars(): void {
     const count = this.wavePlan.barCount;
+    const arenaRight = M + AW;
+    const arenaBottom = M + AH;
+    const difficulty = this.wavePlan.difficulty;
     for (let i = 0; i < count; i++) {
       const horizontal = i % 2 === 0;
-      const speed = 105 + this.wavePlan.difficulty * 70 + (i % 2) * 24;
-      const width = horizontal ? 175 + this.wavePlan.difficulty * 30 : 18;
-      const height = horizontal ? 18 : 175 + this.wavePlan.difficulty * 30;
-      const x = horizontal ? M + 120 : M + 235 + (i % 3) * 330;
-      const y = horizontal ? M + 145 + (i % 3) * 175 : M + 110;
+      const thickness = 24;
+      const speed = 146 + difficulty * 42 + (i % 2) * 18;
+      const gapSize = 232 - difficulty * 26 - (this.wave > 6 ? 10 : 0);
+      const direction = i % 4 < 2 ? 1 : -1;
+      const gapMin = (horizontal ? M : M) + gapSize / 2 + 18;
+      const gapMax = (horizontal ? arenaRight : arenaBottom) - gapSize / 2 - 18;
+      const gapCenter = gapMin + (gapMax - gapMin) * (horizontal ? 0.42 : 0.62);
+      const gapSpeed = direction * (38 + difficulty * 18) * (i % 2 ? -1 : 1);
+      const x = horizontal ? ARENA_CENTER[0] : direction > 0 ? arenaRight + thickness : M - thickness;
+      const y = horizontal ? direction > 0 ? M - thickness : arenaBottom + thickness : ARENA_CENTER[1];
       this.bars.push({
+        orientation: horizontal ? 'horizontal' : 'vertical',
         x,
         y,
-        w: width,
-        h: height,
-        vx: horizontal ? (i % 4 < 2 ? speed : -speed) : 0,
-        vy: horizontal ? 0 : (i % 4 < 2 ? speed : -speed),
-        warn: 0.85,
+        w: horizontal ? AW + thickness * 2 : thickness,
+        h: horizontal ? thickness : AH + thickness * 2,
+        vx: horizontal ? 0 : direction * -speed,
+        vy: horizontal ? direction * speed : 0,
+        gapCenter,
+        gapSize,
+        gapSpeed,
+        warn: 1.15,
         phase: Math.random() * PI2,
       });
       this.audio.tone({ f: 180 + i * 70, f1: 90, type: 'sine', dur: 0.12, vol: 0.06 });
-      this.fx.ring(x, y, { r0: 12, r1: 48, color: '#38bdf8', life: 0.32, width: 2 });
+      this.fx.ring(horizontal ? ARENA_CENTER[0] : x, horizontal ? y : ARENA_CENTER[1], { r0: 12, r1: 48, color: '#38bdf8', life: 0.32, width: 2 });
     }
   }
 
   updateBars(dt: number): void {
     for (const bar of this.bars) {
-      bar.phase += dt * 3;
+      bar.phase += dt * 4;
       if (bar.warn > 0) {
         bar.warn = Math.max(0, bar.warn - dt);
         continue;
       }
       bar.x += bar.vx * dt;
       bar.y += bar.vy * dt;
-      const minX = M + bar.w / 2 + 8;
-      const maxX = 1280 - M - bar.w / 2 - 8;
-      const minY = M + bar.h / 2 + 8;
-      const maxY = 720 - M - bar.h / 2 - 8;
-      if (bar.vx && (bar.x < minX || bar.x > maxX)) {
-        bar.x = clamp(bar.x, minX, maxX);
-        bar.vx *= -1;
+      const gapMin = (bar.orientation === 'horizontal' ? M : M) + bar.gapSize / 2 + 18;
+      const gapMax = (bar.orientation === 'horizontal' ? M + AW : M + AH) - bar.gapSize / 2 - 18;
+      bar.gapCenter += bar.gapSpeed * dt;
+      if (bar.gapCenter < gapMin || bar.gapCenter > gapMax) {
+        bar.gapCenter = clamp(bar.gapCenter, gapMin, gapMax);
+        bar.gapSpeed *= -1;
+        this.audio.tone({ f: 270, f1: 190, type: 'triangle', dur: 0.06, vol: 0.035 });
       }
-      if (bar.vy && (bar.y < minY || bar.y > maxY)) {
-        bar.y = clamp(bar.y, minY, maxY);
-        bar.vy *= -1;
+
+      if (bar.orientation === 'horizontal') {
+        const minY = M + bar.h / 2;
+        const maxY = M + AH - bar.h / 2;
+        if (bar.y < minY || bar.y > maxY) {
+          bar.y = clamp(bar.y, minY, maxY);
+          bar.vy *= -1;
+          this.audio.tone({ f: 120, f1: 80, type: 'sine', dur: 0.08, vol: 0.045 });
+          this.input.rumble(0.12, 0.05);
+        }
+      } else {
+        const minX = M + bar.w / 2;
+        const maxX = M + AW - bar.w / 2;
+        if (bar.x < minX || bar.x > maxX) {
+          bar.x = clamp(bar.x, minX, maxX);
+          bar.vx *= -1;
+          this.audio.tone({ f: 120, f1: 80, type: 'sine', dur: 0.08, vol: 0.045 });
+          this.input.rumble(0.12, 0.05);
+        }
       }
-      if (circleHitsRect(this.blob.x, this.blob.y, this.blob.r + 2, bar.x, bar.y, bar.w, bar.h)) {
+
+      if (circleHitsMovingBar(this.blob.x, this.blob.y, this.blob.r + 2, bar)) {
         this.blob.punch(0.38);
+        this.audio.tone({ f: 85, f1: 48, type: 'sawtooth', dur: 0.16, vol: 0.11 });
+        this.input.rumble(0.7, 0.16);
         this.die();
         return;
       }
@@ -687,13 +780,14 @@ export class SurvivalGame extends BaseGame {
       this.rotors.push({
         cx,
         cy,
-        inner: i === 0 ? 55 : 42,
-        length: i === 0 ? 168 + this.wavePlan.difficulty * 22 : 122,
+        inner: i === 0 ? 18 : 42,
+        length: i === 0 ? 222 + this.wavePlan.difficulty * 8 : 122,
         arms: i === 0 ? 4 : 3,
         angle: i * 0.9,
-        speed: (i % 2 ? -1 : 1) * (0.78 + this.wavePlan.difficulty * 0.34),
+        speed: (i % 2 ? -1 : 1) * (1.42 + this.wavePlan.difficulty * 0.28),
         width: i === 0 ? 15 : 13,
-        warn: 0.95,
+        warn: 1.15,
+        tickT: 0.25,
       });
     }
     this.audio.tone({ f: 130, f1: 230, type: 'sine', dur: 0.32, vol: 0.1 });
@@ -703,9 +797,14 @@ export class SurvivalGame extends BaseGame {
   updateRotors(dt: number): void {
     for (const rotor of this.rotors) {
       rotor.angle += rotor.speed * dt;
+      rotor.tickT = Math.max(0, rotor.tickT - dt);
       if (rotor.warn > 0) {
         rotor.warn = Math.max(0, rotor.warn - dt);
         continue;
+      }
+      if (rotor.tickT <= 0) {
+        rotor.tickT = 0.46;
+        this.audio.tone({ f: 290, f1: 210, type: 'triangle', dur: 0.045, vol: 0.028 });
       }
       for (let arm = 0; arm < rotor.arms; arm++) {
         const angle = rotor.angle + arm * PI2 / rotor.arms;
@@ -1060,43 +1159,141 @@ export class SurvivalGame extends BaseGame {
     for (const bar of this.bars) {
       const warning = bar.warn > 0;
       const pulse = 0.5 + 0.5 * Math.sin(bar.phase * 3);
+      const horizontal = bar.orientation === 'horizontal';
+      const left = M;
+      const right = M + AW;
+      const top = M;
+      const bottom = M + AH;
+      const gapStart = bar.gapCenter - bar.gapSize / 2;
+      const gapEnd = bar.gapCenter + bar.gapSize / 2;
       ctx.save();
-      if (warning) {
-        ctx.globalAlpha = 0.25 + pulse * 0.22;
-        ctx.strokeStyle = '#38bdf8';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([10, 9]);
-        ctx.beginPath();
-        ctx.moveTo(bar.x - (bar.vx ? 330 : 0), bar.y - (bar.vy ? 250 : 0));
-        ctx.lineTo(bar.x + (bar.vx ? 330 : 0), bar.y + (bar.vy ? 250 : 0));
-        ctx.stroke();
-        ctx.setLineDash([]);
+      ctx.globalAlpha = warning ? 0.2 + pulse * 0.12 : 0.16;
+      ctx.strokeStyle = '#38bdf8';
+      ctx.lineWidth = warning ? 2 : 1;
+      ctx.setLineDash([12, 12]);
+      ctx.beginPath();
+      if (horizontal) {
+        ctx.moveTo(left, bar.y);
+        ctx.lineTo(right, bar.y);
+      } else {
+        ctx.moveTo(bar.x, top);
+        ctx.lineTo(bar.x, bottom);
       }
-      ctx.globalAlpha = warning ? 0.38 : 0.82;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
       ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = warning ? 10 : 16;
-      ctx.fillStyle = '#087aa5';
-      ctx.fillRect(bar.x - bar.w / 2, bar.y - bar.h / 2, bar.w, bar.h);
+      ctx.shadowBlur = warning ? 10 : 18;
+      ctx.globalAlpha = warning ? 0.42 : 0.9;
+      const gradient = horizontal
+        ? ctx.createLinearGradient(0, bar.y - bar.h / 2, 0, bar.y + bar.h / 2)
+        : ctx.createLinearGradient(bar.x - bar.w / 2, 0, bar.x + bar.w / 2, 0);
+      gradient.addColorStop(0, '#075b7c');
+      gradient.addColorStop(0.5, '#1298c4');
+      gradient.addColorStop(1, '#075b7c');
+      ctx.fillStyle = gradient;
       ctx.shadowBlur = 0;
       ctx.strokeStyle = warning ? '#bfe9ff' : '#38bdf8';
       ctx.lineWidth = 2;
-      ctx.strokeRect(bar.x - bar.w / 2, bar.y - bar.h / 2, bar.w, bar.h);
-      ctx.globalAlpha = warning ? 0.5 : 0.78;
-      ctx.strokeStyle = '#bfe9ff';
-      ctx.lineWidth = 2;
-      for (let offset = -Math.max(bar.w, bar.h); offset < Math.max(bar.w, bar.h); offset += 24) {
-        ctx.beginPath();
-        if (bar.w > bar.h) {
-          ctx.moveTo(bar.x - bar.w / 2 + offset, bar.y - bar.h / 2);
-          ctx.lineTo(bar.x - bar.w / 2 + offset + 16, bar.y + bar.h / 2);
-        } else {
-          ctx.moveTo(bar.x - bar.w / 2, bar.y - bar.h / 2 + offset);
-          ctx.lineTo(bar.x + bar.w / 2, bar.y - bar.h / 2 + offset + 16);
+
+      const drawSegment = (x: number, y: number, w: number, h: number): void => {
+        if (w <= 0 || h <= 0) return;
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        ctx.globalAlpha = warning ? 0.48 : 0.72;
+        ctx.strokeStyle = '#bfe9ff';
+        ctx.lineWidth = 2;
+        const length = horizontal ? w : h;
+        for (let offset = -24; offset < length; offset += 26) {
+          ctx.beginPath();
+          if (horizontal) {
+            ctx.moveTo(x + offset, y);
+            ctx.lineTo(x + offset + 16, y + h);
+          } else {
+            ctx.moveTo(x, y + offset);
+            ctx.lineTo(x + w, y + offset + 16);
+          }
+          ctx.stroke();
         }
-        ctx.stroke();
+        ctx.globalAlpha = warning ? 0.42 : 0.9;
+        ctx.strokeStyle = warning ? '#bfe9ff' : '#38bdf8';
+        ctx.lineWidth = 2;
+      };
+
+      if (horizontal) {
+        drawSegment(left, bar.y - bar.h / 2, gapStart - left, bar.h);
+        drawSegment(gapEnd, bar.y - bar.h / 2, right - gapEnd, bar.h);
+      } else {
+        drawSegment(bar.x - bar.w / 2, top, bar.w, gapStart - top);
+        drawSegment(bar.x - bar.w / 2, gapEnd, bar.w, bottom - gapEnd);
       }
+
+      ctx.globalAlpha = warning ? 0.3 + pulse * 0.16 : 0.22;
+      ctx.fillStyle = '#bfe9ff';
+      if (horizontal) ctx.fillRect(gapStart, bar.y - bar.h / 2 - 9, bar.gapSize, bar.h + 18);
+      else ctx.fillRect(bar.x - bar.w / 2 - 9, gapStart, bar.w + 18, bar.gapSize);
+
+      ctx.globalAlpha = warning ? 0.66 : 0.88;
+      ctx.strokeStyle = '#e5f7ff';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([6, 8]);
+      ctx.beginPath();
+      if (horizontal) {
+        ctx.moveTo(gapStart, bar.y - bar.h / 2 - 11);
+        ctx.lineTo(gapStart, bar.y + bar.h / 2 + 11);
+        ctx.moveTo(gapEnd, bar.y - bar.h / 2 - 11);
+        ctx.lineTo(gapEnd, bar.y + bar.h / 2 + 11);
+      } else {
+        ctx.moveTo(bar.x - bar.w / 2 - 11, gapStart);
+        ctx.lineTo(bar.x + bar.w / 2 + 11, gapStart);
+        ctx.moveTo(bar.x - bar.w / 2 - 11, gapEnd);
+        ctx.lineTo(bar.x + bar.w / 2 + 11, gapEnd);
+      }
+      ctx.stroke();
+      ctx.setLineDash([]);
+      UI.txt(ctx, 'TROU', horizontal ? bar.gapCenter : bar.x + 18, horizontal ? bar.y - 18 : bar.gapCenter, {
+        size: 9,
+        align: horizontal ? 'center' : 'left',
+        mono: true,
+        color: '#e5f7ff',
+        weight: 900,
+      });
       ctx.restore();
     }
+  }
+
+  drawConfinement(ctx: CanvasRenderingContext2D): void {
+    if (!this.wavePlan.confined || this.wavePhase !== 'active') return;
+    const [cx, cy] = this.rotors[0] ? [this.rotors[0].cx, this.rotors[0].cy] : ARENA_CENTER;
+    const radius = this.wavePlan.confinedRadius;
+    const pulse = 0.5 + 0.5 * Math.sin(this.time * 5.5);
+    ctx.save();
+    ctx.globalAlpha = 0.045;
+    ctx.fillStyle = '#fb923c';
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, PI2);
+    ctx.fill();
+    ctx.globalAlpha = 0.04;
+    ctx.beginPath();
+    ctx.rect(M, M, AW, AH);
+    ctx.arc(cx, cy, radius + 6, 0, PI2, true);
+    ctx.fill('evenodd');
+    ctx.globalAlpha = 0.54 + pulse * 0.12;
+    ctx.strokeStyle = '#fb923c';
+    ctx.lineWidth = 3;
+    ctx.setLineDash([10, 9]);
+    ctx.beginPath();
+    ctx.arc(cx, cy, radius, 0, PI2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    UI.txt(ctx, 'ZONE RESTREINTE', cx, cy + radius + 25, {
+      size: 10,
+      align: 'center',
+      mono: true,
+      color: '#fdba74',
+      weight: 900,
+    });
+    ctx.restore();
   }
 
   drawRotors(ctx: CanvasRenderingContext2D): void {
@@ -1133,6 +1330,15 @@ export class SurvivalGame extends BaseGame {
       ctx.beginPath();
       ctx.arc(0, 0, 10, 0, PI2);
       ctx.fill();
+      ctx.globalAlpha = warning ? 0.35 : 0.68;
+      ctx.strokeStyle = '#ffd6a5';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5, 8]);
+      const spinStart = rotor.speed >= 0 ? -0.72 : Math.PI + 0.72;
+      ctx.beginPath();
+      ctx.arc(0, 0, rotor.length + 17, spinStart, spinStart + Math.PI * 0.72 * (rotor.speed >= 0 ? 1 : -1), rotor.speed < 0);
+      ctx.stroke();
+      ctx.setLineDash([]);
       ctx.restore();
     }
   }
@@ -1256,6 +1462,7 @@ export class SurvivalGame extends BaseGame {
 
     this.drawSpecialField(ctx);
     this.drawBars(ctx);
+    this.drawConfinement(ctx);
     this.drawRotors(ctx);
     this.drawTelegraphs(ctx);
     this.drawResources(ctx);
