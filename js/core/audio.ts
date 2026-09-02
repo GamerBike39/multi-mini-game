@@ -4,6 +4,7 @@
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
 import type { AudioLike, VolumeKey } from './types';
+import { InstrumentRack } from './music/instrument-rack';
 import { MusicTransport } from './music/transport';
 
 type HatMode = 'off' | '8ths' | '16ths';
@@ -76,8 +77,6 @@ const MOODS: Record<string, Mood> = {
   simon: { bpm: 84, root: 45, kick: [], snare: [], hat: 'off', bass: null, pad: true },
 };
 
-const midiHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
-
 export class AudioSys implements AudioLike {
   ctx: AudioContext | null = null;
   muted = false;
@@ -107,6 +106,7 @@ export class AudioSys implements AudioLike {
   sfxBus!: GainNode;
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
+  instrumentRack: InstrumentRack | null = null;
 
   trackMode = false;
   trackCountIn = 0;
@@ -176,6 +176,18 @@ export class AudioSys implements AudioLike {
     this.noiseBuf = context.createBuffer(1, length, context.sampleRate);
     const data = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    this.instrumentRack = new InstrumentRack({
+      context,
+      noiseBuffer: this.noiseBuf,
+      buses: {
+        drums: this.drumBus,
+        bass: this.bassBus,
+        harmony: this.harmonyBus,
+        arp: this.arpBus,
+        lead: this.leadBus,
+        fx: this.musicFxBus,
+      },
+    });
     return true;
   }
 
@@ -409,31 +421,17 @@ export class AudioSys implements AudioLike {
   }
 
   drum(kind: DrumKind, t: number): void {
-    if (kind === 'kick') {
-      this.tone({ f: 150, f1: 42, type: 'sine', t, dur: 0.17, vol: 0.85, dest: this.drumBus });
-      this.noise({ t, dur: 0.03, f: 3000, vol: 0.1, dest: this.drumBus });
-    } else if (kind === 'snare') {
-      this.noise({ t, dur: 0.13, f: 1800, type: 'bandpass', q: 0.8, vol: 0.3, dest: this.drumBus });
-      this.tone({ f: 190, type: 'triangle', t, dur: 0.05, vol: 0.15, dest: this.drumBus });
-    } else if (kind === 'tick') {
-      // Métronome du décompte du jeu de rythme.
-      this.tone({ f: 1175, type: 'square', t, dur: 0.05, vol: 0.1, dest: this.drumBus });
-    } else {
-      this.hatAt(t, 0.15);
-    }
+    this.instrumentRack?.triggerDrum(kind, t);
   }
 
-  hatAt(t: number, vol: number): void { this.noise({ t, dur: 0.04, f: 7500, type: 'highpass', vol, dest: this.drumBus }); }
+  hatAt(t: number, vol: number): void { this.instrumentRack?.triggerHat(t, vol); }
 
   bassAt(t: number, midi: number): void {
-    this.tone({ f: midiHz(midi), type: 'triangle', t, dur: 0.2, vol: 0.22, dest: this.bassBus });
-    this.tone({ f: midiHz(midi + 12), type: 'square', t, dur: 0.1, vol: 0.05, dest: this.bassBus });
+    this.instrumentRack?.triggerBass(t, midi);
   }
 
   padAt(t: number, root: number, dur: number): void {
-    for (const interval of [0, 3, 7, 12]) {
-      this.tone({ f: midiHz(root + interval), type: 'sawtooth', t, dur: dur * 0.95, vol: 0.028, attack: 0.4, dest: this.harmonyBus });
-    }
+    this.instrumentRack?.triggerPad(t, root, dur);
   }
 
   scheduleAhead(): void {
