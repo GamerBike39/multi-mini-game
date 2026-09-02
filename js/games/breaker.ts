@@ -9,12 +9,61 @@ import type { EngineLike, GameMeta } from '../core/types';
 
 const WALL = 20;             // marge de jeu (murs latéraux + plafond)
 const PAD_Y = 660;           // y du paddle
+const BUMPER_BOOST = 1.22;
+const BUMPER_BOOST_TIME = 0.45;
 const PTS = [50, 40, 30, 20, 15, 10];
 const PAL = ['#fb7185', '#f472b6', '#c084fc', '#818cf8', '#38bdf8', '#34d399'];
 const PALD = ['#6b2434', '#66284a', '#4a2a63', '#333a6b', '#1c4a66', '#1a5a42']; // teintes sombres (brique abîmée)
 type DropKind = 'MULTI' | 'LARGE' | 'SLOW' | 'LASER' | 'GLUE' | 'FLAME' | 'GIANT' | 'SMALL';
 type BrickKind = 'normal' | 'reinforced' | 'gravity' | 'explosive';
 type PatternKind = 'grid' | 'diamond' | 'cross' | 'flower' | 'wave' | 'ring' | 'checker';
+type ObstacleKind = 'wall' | 'bumper';
+type BreakerLabMode = 'readability' | 'wall' | 'corridor' | 'bumper' | 'billiard' | 'chain';
+
+interface CollisionHit {
+  nx: number;
+  ny: number;
+  penetration: number;
+  contactX: number;
+  contactY: number;
+}
+
+interface BreakerWall {
+  id: number;
+  kind: 'wall';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface BreakerBumper {
+  id: number;
+  kind: 'bumper';
+  x: number;
+  y: number;
+  r: number;
+  boost: number;
+  pulseT: number;
+}
+
+type BreakerObstacle = BreakerWall | BreakerBumper;
+
+interface BreakerLabStats {
+  wallHits: number;
+  bumperHits: number;
+  bumperToBrick: number;
+  bumperToExplosive: number;
+  maxCombo: number;
+}
+
+interface LabContact {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+  t: number;
+}
 
 interface LevelSpec {
   name: string;
@@ -48,7 +97,9 @@ interface BreakerBrick {
   hitT: number;
   hitX: number;
   hitY: number;
+  animPhase: number;
   falling?: boolean;
+  detachT?: number;
   vy?: number;
   rot?: number;
   queued?: boolean;
@@ -69,6 +120,7 @@ interface ExplosionPulse {
 interface PendingExplosion {
   brick: BreakerBrick;
   delay: number;
+  initialDelay: number;
   depth: number;
 }
 
@@ -103,6 +155,62 @@ const motifOn = (spec: LevelSpec, row: number, col: number, level: number): bool
   if (!on || spec.density >= 0.999) return on;
   return cellNoise(level + 41, row, col) < spec.density;
 };
+
+const clampValue = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
+
+const circleVsAabb = (
+  cx: number, cy: number, r: number,
+  boxX: number, boxY: number, boxW: number, boxH: number,
+): CollisionHit | null => {
+  const contactX = clampValue(cx, boxX, boxX + boxW);
+  const contactY = clampValue(cy, boxY, boxY + boxH);
+  const dx = cx - contactX, dy = cy - contactY;
+  const distanceSq = dx * dx + dy * dy;
+  if (distanceSq > r * r) return null;
+
+  if (distanceSq > 0.000001) {
+    const distance = Math.sqrt(distanceSq);
+    return { nx: dx / distance, ny: dy / distance, penetration: r - distance, contactX, contactY };
+  }
+
+  // Le centre est dans la boîte : on choisit la face la plus proche et on
+  // sort la balle de la géométrie avant de décider d'une réflexion.
+  const left = cx - boxX, right = boxX + boxW - cx;
+  const top = cy - boxY, bottom = boxY + boxH - cy;
+  const nearest = Math.min(left, right, top, bottom);
+  if (nearest === left) return { nx: -1, ny: 0, penetration: r + left, contactX: boxX, contactY: cy };
+  if (nearest === right) return { nx: 1, ny: 0, penetration: r + right, contactX: boxX + boxW, contactY: cy };
+  if (nearest === top) return { nx: 0, ny: -1, penetration: r + top, contactX: cx, contactY: boxY };
+  return { nx: 0, ny: 1, penetration: r + bottom, contactX: cx, contactY: boxY + boxH };
+};
+
+const circleVsCircle = (
+  ax: number, ay: number, ar: number,
+  bx: number, by: number, br: number,
+): CollisionHit | null => {
+  const dx = ax - bx, dy = ay - by;
+  const distanceSq = dx * dx + dy * dy;
+  const sum = ar + br;
+  if (distanceSq > sum * sum) return null;
+  if (distanceSq > 0.000001) {
+    const distance = Math.sqrt(distanceSq);
+    return {
+      nx: dx / distance, ny: dy / distance, penetration: sum - distance,
+      contactX: bx + dx / distance * br, contactY: by + dy / distance * br,
+    };
+  }
+  return { nx: 0, ny: -1, penetration: sum, contactX: bx, contactY: by - br };
+};
+
+const reflectVelocity = (ball: any, hit: CollisionHit): number => {
+  const dot = ball.vx * hit.nx + ball.vy * hit.ny;
+  if (dot < 0) {
+    ball.vx -= 2 * dot * hit.nx;
+    ball.vy -= 2 * dot * hit.ny;
+  }
+  return dot;
+};
+
 const DCOL: Record<DropKind, string> = {
   MULTI: '#7dd3fc', LARGE: '#34d399', SLOW: '#c084fc',
   LASER: '#ff4d9d', GLUE: '#a78bfa', FLAME: '#ff8a34',
@@ -169,7 +277,25 @@ export class BreakerGame extends BaseGame {
     this.explosionQueue = [] as PendingExplosion[];
     this.explosions = [] as ExplosionPulse[];
     this.bricks = [];
+    this.obstacles = [] as BreakerObstacle[];
+    this.lab = this.readLabMode();
+    this.labStats = { wallHits: 0, bumperHits: 0, bumperToBrick: 0, bumperToExplosive: 0, maxCombo: 0 } as BreakerLabStats;
+    this.labContact = null as LabContact | null;
+    this.buildLevel();
+  }
+
+  readLabMode(): BreakerLabMode | null {
+    const isDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
+    if (!isDev || typeof window === 'undefined') return null;
+    const raw = new URLSearchParams(window.location.search).get('breakerLab');
+    const modes: BreakerLabMode[] = ['readability', 'wall', 'corridor', 'bumper', 'billiard', 'chain'];
+    return modes.includes(raw as BreakerLabMode) ? raw as BreakerLabMode : null;
+  }
+
+  buildLevel(): void {
     this.buildBricks();
+    this.buildObstacles();
+    this.labContact = null;
   }
 
   levelSpecFor(level: number): LevelSpec {
@@ -206,6 +332,20 @@ export class BreakerGame extends BaseGame {
     };
   }
 
+  createBrick(
+    x: number, y: number, w: number, h: number, row: number,
+    kind: BrickKind = 'normal', hp = 1, blast = 0, phase = 0,
+  ): BreakerBrick {
+    const colorIndex = Math.max(0, Math.min(PAL.length - 1, row | 0));
+    return {
+      x, y, w, h, hp, maxHp: hp,
+      pts: PTS[Math.min(PTS.length - 1, colorIndex)] + (kind === 'explosive' ? 15 : kind === 'gravity' ? 10 : 0),
+      color: PAL[colorIndex], dark: PALD[colorIndex], kind, blast,
+      fl: 0, hitT: 0, hitX: x + w / 2, hitY: y + h / 2,
+      animPhase: clampValue(phase, 0, 1),
+    };
+  }
+
   buildBricks(): void {
     const spec = this.levelSpec = this.levelSpecFor(this.level);
     this.bricks = [];
@@ -214,6 +354,11 @@ export class BreakerGame extends BaseGame {
     const totalW = spec.cols * spec.tileW + (spec.cols - 1) * spec.gapX;
     const startX = (1280 - totalW) / 2;
     const startY = 82;
+
+    if (this.lab) {
+      this.buildLabBricks(this.lab);
+      return;
+    }
 
     for (let r = 0; r < spec.rows; r++) {
       for (let c = 0; c < spec.cols; c++) {
@@ -237,34 +382,104 @@ export class BreakerGame extends BaseGame {
         }
 
         const rowProgress = r / Math.max(1, spec.rows - 1);
-        const pts = PTS[Math.min(PTS.length - 1, Math.floor(rowProgress * PTS.length))];
-        this.bricks.push({
-          x: startX + c * (spec.tileW + spec.gapX),
-          y: startY + r * (spec.tileH + spec.gapY),
-          w: spec.tileW,
-          h: spec.tileH,
-          hp,
-          maxHp: hp,
-          pts: pts + (kind === 'explosive' ? 15 : kind === 'gravity' ? 10 : 0),
-          color: PAL[Math.min(PAL.length - 1, Math.floor(rowProgress * PAL.length))],
-          dark: PALD[Math.min(PALD.length - 1, Math.floor(rowProgress * PALD.length))],
-          kind,
-          blast,
-          fl: 0,
-          hitT: 0,
-          hitX: startX + c * (spec.tileW + spec.gapX) + spec.tileW / 2,
-          hitY: startY + r * (spec.tileH + spec.gapY) + spec.tileH / 2,
-        } as BreakerBrick);
+        this.bricks.push(this.createBrick(
+          startX + c * (spec.tileW + spec.gapX), startY + r * (spec.tileH + spec.gapY),
+          spec.tileW, spec.tileH, Math.floor(rowProgress * PAL.length), kind, hp, blast,
+          cellNoise(this.level + 311, r, c),
+        ));
       }
     }
   }
 
+  buildLabBricks(mode: BreakerLabMode): void {
+    const labNames: Record<BreakerLabMode, string> = {
+      readability: 'TYPES', wall: 'WALL', corridor: 'CORRIDOR', bumper: 'BUMPER', billiard: 'BILLIARD', chain: 'CHAIN',
+    };
+    this.levelSpec = {
+      name: 'LAB · ' + labNames[mode], motif: 'grid', cols: 12, rows: 4,
+      tileW: 80, tileH: 22, gapX: 10, gapY: 8, density: 1,
+      reinforcedChance: 0, gravityChance: 0, explosiveChance: 0, maxBlast: 0,
+    };
+    const add = (x: number, y: number, row: number, kind: BrickKind = 'normal', hp = 1, blast = 0, phase = 0): void => {
+      this.bricks.push(this.createBrick(x, y, 80, 22, row, kind, hp, blast, phase));
+    };
+
+    if (mode === 'readability') {
+      const kinds: Array<[BrickKind, number, number]> = [
+        ['normal', 1, 0], ['reinforced', 2, 0], ['explosive', 1, 2], ['gravity', 1, 0],
+      ];
+      kinds.forEach(([kind, hp, blast], i) => {
+        const x = 155 + i * 250;
+        this.bricks.push(this.createBrick(x, 220, 190, 48, i + 1, kind, hp, blast, cellNoise(17, i, 3)));
+      });
+      return;
+    }
+
+    if (mode === 'chain') {
+      for (let c = 0; c < 12; c++) add(150 + c * 90, 110, 0, c % 4 === 0 ? 'reinforced' : 'normal', c % 4 === 0 ? 2 : 1, 0, cellNoise(23, 0, c));
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 6; c++) {
+          const explosive = r > 0;
+          add(420 + c * 90, 230 + r * 30, 2 + r, explosive ? 'explosive' : 'normal', 1, explosive ? 2 : 0, cellNoise(29, r, c));
+        }
+      }
+      return;
+    }
+
+    const rows = mode === 'corridor' ? 4 : 3;
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < 12; c++) {
+        const kind: BrickKind = mode === 'bumper' && r === 1 && c % 4 === 1 ? 'reinforced' : 'normal';
+        add(150 + c * 90, 110 + r * 30, r, kind, kind === 'reinforced' ? 2 : 1, 0, cellNoise(37, r, c));
+      }
+    }
+  }
+
+  buildObstacles(): void {
+    this.obstacles = [];
+    if (!this.lab || this.lab === 'readability') return;
+    let nextId = 1;
+    const addWall = (x: number, y: number, w: number, h: number): void => {
+      this.obstacles.push({ id: nextId++, kind: 'wall', x, y, w, h });
+    };
+    const addBumper = (x: number, y: number, r = 30): void => {
+      this.obstacles.push({ id: nextId++, kind: 'bumper', x, y, r, boost: 1.22, pulseT: 0 });
+    };
+
+    if (this.lab === 'wall') {
+      addWall(420, 360, 440, 20);
+    } else if (this.lab === 'corridor') {
+      addWall(390, 230, 20, 350);
+      addWall(870, 230, 20, 350);
+    } else if (this.lab === 'bumper') {
+      addBumper(640, 380, 34);
+    } else if (this.lab === 'billiard') {
+      addWall(350, 250, 20, 285);
+      addWall(910, 250, 20, 285);
+      addBumper(500, 390, 30);
+      addBumper(780, 390, 30);
+    } else if (this.lab === 'chain') {
+      addWall(355, 205, 20, 330);
+      addWall(905, 205, 20, 330);
+      addWall(480, 410, 320, 18);
+      addBumper(640, 500, 32);
+    }
+  }
+
   // renormalise la vitesse de toutes les balles actives (après +10 / changement de niveau)
+  targetBallSpeed(bl: any): number {
+    const boostT = clampValue(bl.bumperBoostT || 0, 0, BUMPER_BOOST_TIME);
+    const boost = Math.max(1, bl.bumperBoost || BUMPER_BOOST);
+    const boostK = boostT / BUMPER_BOOST_TIME;
+    return this.speed * (1 + (boost - 1) * boostK);
+  }
+
   normSpeed(): void {
     for (const b of this.balls) {
       if (this.stuck && b === this.balls[0]) continue;
       const l = Math.hypot(b.vx, b.vy) || 1;
-      b.vx *= this.speed / l; b.vy *= this.speed / l;
+      const target = this.targetBallSpeed(b);
+      b.vx *= target / l; b.vy *= target / l;
     }
   }
 
@@ -281,8 +496,9 @@ export class BreakerGame extends BaseGame {
     bl.glueWait = 0;
     bl.lastBrick = null;
     bl.lastBrickT = 0;
-    bl.vx = Math.sin(angle) * this.speed;
-    bl.vy = -Math.cos(angle) * this.speed;
+    const launchSpeed = this.targetBallSpeed(bl);
+    bl.vx = Math.sin(angle) * launchSpeed;
+    bl.vy = -Math.cos(angle) * launchSpeed;
     this.audio.jump();
     this.input.rumble(0.12, 0.05);
     this.fx.burst(bl.x, bl.y, { n: 8, speed: [40, 200], colors: [this.accent, '#ffffff'], life: 0.35 });
@@ -291,7 +507,10 @@ export class BreakerGame extends BaseGame {
   launch(): void {
     const b = this.balls[0];
     if (!b) return;
-    this.launchBall(b);
+    // Les scènes B-LAB commencent sur un axe fixe pour rendre les mesures et
+    // les captures comparables d'une tentative à l'autre.
+    const angle = this.lab ? 0 : (Math.random() * 2 - 1) * (Math.PI / 9);
+    this.launchBall(b, angle);
     this.stuck = false;
   }
 
@@ -328,6 +547,7 @@ export class BreakerGame extends BaseGame {
     this.normSpeed();
     this.score += br.pts + chainBonus;
     this.comboStep++; this.comboT = 1.2;
+    if (this.lab) this.labStats.maxCombo = Math.max(this.labStats.maxCombo, this.comboStep);
     this.musicEvent('brickCombo', Math.min(1.4, 0.45 + this.comboStep * 0.04));
     if (this.comboStep >= 4) this.musicEvent('combo', Math.min(1.5, this.comboStep / 10));
     this.audio.coin(this.comboStep);
@@ -356,7 +576,8 @@ export class BreakerGame extends BaseGame {
     if (br.falling || br.exploded) return;
     this.setBrickImpact(br, source);
     br.hp = 0;
-    br.falling = true;
+    br.detachT = 0.08;
+    br.falling = false;
     br.vy = 75 + cellNoise(this.level + 91, Math.round(br.y), Math.round(br.x)) * 85;
     br.rot = (cellNoise(this.level + 101, Math.round(br.y), Math.round(br.x)) - 0.5) * 0.18;
     this.registerBrickBreak(br, source, !fromExplosion, chainDepth);
@@ -369,7 +590,7 @@ export class BreakerGame extends BaseGame {
   queueExplosion(br: BreakerBrick, depth = 0, delay = 0.05): void {
     if (br.exploded || br.queued) return;
     br.queued = true;
-    this.explosionQueue.push({ brick: br, delay, depth });
+    this.explosionQueue.push({ brick: br, delay, initialDelay: Math.max(0.001, delay), depth });
   }
 
   detonateExplosion(item: PendingExplosion): void {
@@ -403,7 +624,8 @@ export class BreakerGame extends BaseGame {
       if (other.kind === 'explosive') {
         this.setBrickImpact(other, { x: cx, y: cy });
         other.queued = true;
-        this.explosionQueue.push({ brick: other, delay: 0.07 + Math.min(0.2, distance / radius * 0.18), depth: item.depth + 1 });
+        const delay = 0.07 + Math.min(0.2, distance / radius * 0.18);
+        this.explosionQueue.push({ brick: other, delay, initialDelay: delay, depth: item.depth + 1 });
       } else if (other.kind === 'gravity') {
         this.startGravityFall(other, { x: cx, y: cy }, true, item.depth + 1);
       } else {
@@ -430,11 +652,22 @@ export class BreakerGame extends BaseGame {
 
   updateFallingTiles(dt: number): void {
     for (const br of this.bricks as BreakerBrick[]) {
+      if ((br.detachT || 0) > 0) {
+        br.detachT = Math.max(0, (br.detachT || 0) - dt);
+        if (br.detachT <= 0) {
+          br.detachT = undefined;
+          br.falling = true;
+        } else {
+          continue;
+        }
+      }
       if (!br.falling) continue;
       const previousBottom = br.y + br.h;
       br.vy = (br.vy || 0) + 920 * dt;
       br.y += br.vy * dt;
-      br.rot = (br.rot || 0) + (br.vy * 0.0008 + 0.012) * dt;
+      // La chute reste lisible : la tuile peut basculer, mais ne part jamais
+      // dans une rotation incontrôlable (±15°).
+      br.rot = clampValue((br.rot || 0) + (br.vy * 0.0008 + 0.012) * dt, -Math.PI / 12, Math.PI / 12);
       const overlapsPad = br.x < this.pad.x + this.padW / 2 && br.x + br.w > this.pad.x - this.padW / 2;
       const crossedPad = previousBottom < PAD_Y + 10 && br.y + br.h >= PAD_Y - 10;
       if (overlapsPad && crossedPad) {
@@ -447,9 +680,10 @@ export class BreakerGame extends BaseGame {
   }
 
   levelCleared(): boolean {
-    return (this.bricks as BreakerBrick[]).every((br) => br.hp <= 0 && !br.falling && !br.queued)
+    return (this.bricks as BreakerBrick[]).every((br) => br.hp <= 0 && !br.falling && !(br.detachT && br.detachT > 0) && !br.queued)
       && (this.explosionQueue as PendingExplosion[]).length === 0
-      && (this.explosions as ExplosionPulse[]).length === 0;
+      && (this.explosions as ExplosionPulse[]).length === 0
+      && this.freezeT <= 0;
   }
 
   triggerFreeze(br: BreakerBrick): void {
@@ -469,6 +703,11 @@ export class BreakerGame extends BaseGame {
 
   hitBrick(br: BreakerBrick, bl: any): void {
     if (br.hp <= 0 || br.falling || br.exploded) return;
+    if (this.lab && bl?.lastBumperActionT > 0) {
+      if (br.kind === 'explosive') this.labStats.bumperToExplosive++;
+      else this.labStats.bumperToBrick++;
+      bl.lastBumperActionT = 0;
+    }
     this.setBrickImpact(br, bl);
     if (br.kind === 'gravity') {
       this.startGravityFall(br, bl);
@@ -497,11 +736,20 @@ export class BreakerGame extends BaseGame {
   }
 
   nextLevel(): void {
+    if (this.lab) {
+      this.musicEvent('waveComplete', 0.8);
+      this.audio.milestone();
+      this.fx.flash(this.accent, 0.15);
+      this.buildLevel();
+      this.resetBall();
+      this.fx.text(640, 330, 'RESET · ' + this.levelSpec.name, { color: this.accent, size: 38, life: 1.1 });
+      return;
+    }
     this.level++;
     this.musicEvent('waveComplete', 0.8);
     this.audio.milestone();
     this.fx.flash(this.accent, 0.15);
-    this.buildBricks();
+    this.buildLevel();
     this.fx.text(640, 330, 'NIVEAU ' + this.level + ' · ' + this.levelSpec.name, { color: this.accent, size: 38, life: 1.4 });
     this.baseSpd += 30;
     this.speed = this.baseSpd;
@@ -520,18 +768,21 @@ export class BreakerGame extends BaseGame {
     if (kind === 'MULTI') {
       for (const b of [...this.balls]) {
         if (this.balls.length >= 4) break;
-        const nb = new Blob({ x: b.x, y: b.y, r: this.giantT > 0 ? 17 : 9, color: this.flameT > 0 ? '#ff8a34' : this.accent });
+        const nb: any = new Blob({ x: b.x, y: b.y, r: this.giantT > 0 ? 17 : 9, color: this.flameT > 0 ? '#ff8a34' : this.accent });
         nb.trailOn = true;
+        const splitSpeed = this.targetBallSpeed(b);
         if (this.stuck && b === this.balls[0]) {
           const a = (Math.random() - 0.5) * 0.7;
-          nb.vx = Math.sin(a) * this.speed; nb.vy = -Math.cos(a) * this.speed;
+          nb.vx = Math.sin(a) * splitSpeed; nb.vy = -Math.cos(a) * splitSpeed;
         } else if (b.glued) {
           const a = b.glueAngle ?? (Math.random() - 0.5) * 0.7;
-          nb.vx = Math.sin(a) * this.speed; nb.vy = -Math.cos(a) * this.speed;
+          nb.vx = Math.sin(a) * splitSpeed; nb.vy = -Math.cos(a) * splitSpeed;
         } else {
           const a = Math.atan2(b.vy, b.vx) + 0.45;
-          nb.vx = Math.cos(a) * this.speed; nb.vy = Math.sin(a) * this.speed;
+          nb.vx = Math.cos(a) * splitSpeed; nb.vy = Math.sin(a) * splitSpeed;
         }
+        nb.bumperBoost = b.bumperBoost;
+        nb.bumperBoostT = b.bumperBoostT;
         this.balls.push(nb);
       }
     } else if (kind === 'LARGE') {
@@ -560,6 +811,75 @@ export class BreakerGame extends BaseGame {
     this.audio.tone({ f: 190, dur: 0.03, vol: 0.05, type: 'sine' });
   }
 
+  resolveWall(bl: any, wall: BreakerWall): boolean {
+    const hit = circleVsAabb(bl.x, bl.y, bl.r, wall.x, wall.y, wall.w, wall.h);
+    if (!hit) return false;
+    const dot = reflectVelocity(bl, hit);
+    bl.x += hit.nx * Math.max(hit.penetration, 0.5);
+    bl.y += hit.ny * Math.max(hit.penetration, 0.5);
+    if (dot < 0) {
+      this.wallHit(bl);
+      this.fx.ring(hit.contactX, hit.contactY, { r0: 3, r1: 18, color: '#94a3b8', life: 0.18, width: 1.5 });
+      this.fx.burst(hit.contactX, hit.contactY, { n: 3, speed: [30, 100], colors: ['#cbd5e1', '#ffffff'], size: [1, 2], life: 0.2, shape: 'sq' });
+      if (this.lab) this.labStats.wallHits++;
+    }
+    if (this.lab) this.labContact = { x: hit.contactX, y: hit.contactY, nx: hit.nx, ny: hit.ny, t: 0.35 };
+    return true;
+  }
+
+  resolveBumper(bl: any, bumper: BreakerBumper): boolean {
+    const hit = circleVsCircle(bl.x, bl.y, bl.r, bumper.x, bumper.y, bumper.r);
+    if (!hit) return false;
+    bl.x += hit.nx * Math.max(hit.penetration, 0.5);
+    bl.y += hit.ny * Math.max(hit.penetration, 0.5);
+    const sameBumper = bl.lastBumperId === bumper.id && (bl.lastBumperT || 0) > 0;
+    const dot = bl.vx * hit.nx + bl.vy * hit.ny;
+    // Une balle qui quitte déjà le bumper peut encore recouvrir sa hitbox
+    // pendant une frame : on la sépare, mais ce n'est pas un nouveau contact.
+    if (sameBumper || dot >= 0) return true;
+    reflectVelocity(bl, hit);
+    let currentSpeed = Math.hypot(bl.vx, bl.vy);
+    if (currentSpeed < 1) {
+      bl.vx = hit.nx; bl.vy = hit.ny; currentSpeed = 1;
+    }
+    const target = this.speed * bumper.boost;
+    bl.vx *= target / currentSpeed;
+    bl.vy *= target / currentSpeed;
+    bl.bumperBoost = bumper.boost;
+    bl.bumperBoostT = BUMPER_BOOST_TIME;
+    bl.lastBumperId = bumper.id;
+    bl.lastBumperT = 0.08;
+    bl.lastBumperActionT = 1.5;
+    bumper.pulseT = 0.25;
+    bl.punch(0.28);
+    this.audio.tone({ f: 430, f1: 860, type: 'triangle', dur: 0.11, vol: 0.1 });
+    this.input.rumble(0.2, 0.07);
+    this.fx.ring(bumper.x, bumper.y, { r0: bumper.r * 0.75, r1: bumper.r + 42, color: '#ffd166', life: 0.28, width: 3 });
+    this.fx.burst(hit.contactX, hit.contactY, { n: 8, speed: [50, 220], colors: ['#ffd166', '#ffffff', '#fef3c7'], size: [1.5, 3], life: 0.35, shape: 'spark' });
+    if (this.lab) {
+      this.labStats.bumperHits++;
+      this.labContact = { x: hit.contactX, y: hit.contactY, nx: hit.nx, ny: hit.ny, t: 0.35 };
+    }
+    return true;
+  }
+
+  updateObstacles(dt: number): void {
+    for (const obstacle of this.obstacles as BreakerObstacle[]) {
+      if (obstacle.kind === 'bumper') obstacle.pulseT = Math.max(0, obstacle.pulseT - dt);
+    }
+    if (this.labContact) {
+      this.labContact.t -= dt;
+      if (this.labContact.t <= 0) this.labContact = null;
+    }
+  }
+
+  resolveObstacles(bl: any): void {
+    for (const obstacle of this.obstacles as BreakerObstacle[]) {
+      if (obstacle.kind === 'wall') this.resolveWall(bl, obstacle);
+      else this.resolveBumper(bl, obstacle);
+    }
+  }
+
   fireLasers(): void {
     const spread = Math.max(18, this.padW * 0.3);
     for (const side of [-1, 1]) {
@@ -577,7 +897,17 @@ export class BreakerGame extends BaseGame {
         laser.dead = true;
         continue;
       }
-      for (const br of this.bricks) {
+      for (const obstacle of this.obstacles as BreakerObstacle[]) {
+        if (obstacle.kind !== 'wall') continue;
+        const hit = circleVsAabb(laser.x, laser.y, laser.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+        if (!hit) continue;
+        laser.dead = true;
+        this.audio.tone({ f: 260, f1: 150, type: 'square', dur: 0.045, vol: 0.045 });
+        this.fx.burst(hit.contactX, hit.contactY, { n: 4, speed: [30, 120], colors: ['#cbd5e1', '#ffb6de'], size: [1, 2.2], life: 0.22, shape: 'spark' });
+        break;
+      }
+      if (laser.dead) continue;
+      for (const br of this.bricks as BreakerBrick[]) {
         if (br.hp <= 0 || laser.x < br.x - laser.r || laser.x > br.x + br.w + laser.r ||
             laser.y < br.y - laser.r || laser.y > br.y + br.h + laser.r) continue;
         this.hitBrick(br, laser);
@@ -596,6 +926,7 @@ export class BreakerGame extends BaseGame {
 
     // Les réactions de niveau sont indépendantes de la trajectoire de la balle :
     // une explosion peut donc continuer sa propagation pendant un rebond.
+    this.updateObstacles(dt);
     this.updateExplosions(dt);
     this.updateFallingTiles(dt);
     this.freezeT = Math.max(0, this.freezeT - rdt);
@@ -646,6 +977,9 @@ export class BreakerGame extends BaseGame {
       bl.r += (targetRadius - bl.r) * Math.min(1, dt * 12);
       bl.color = this.flameT > 0 ? '#ff8a34' : this.accent;
       bl.lastBrickT = Math.max(0, (bl.lastBrickT || 0) - dt);
+      bl.lastBumperT = Math.max(0, (bl.lastBumperT || 0) - dt);
+      bl.lastBumperActionT = Math.max(0, (bl.lastBumperActionT || 0) - dt);
+      bl.bumperBoostT = Math.max(0, (bl.bumperBoostT || 0) - dt);
       if (this.stuck && bl === this.balls[0]) {
         bl.x = pad.x; bl.y = PAD_Y - 9 - bl.r - 4;
         bl.vx = pad.vx * 0.5; bl.vy = 0;
@@ -682,18 +1016,29 @@ export class BreakerGame extends BaseGame {
             this.input.rumble(0.16, 0.08);
             this.fx.ring(bl.x, PAD_Y - 10, { r0: 7, r1: 32, color: DCOL.GLUE, life: 0.28, width: 2 });
           } else {
-            bl.vx = Math.sin(a) * this.speed;
-            bl.vy = -Math.cos(a) * this.speed;
+            const paddleSpeed = this.targetBallSpeed(bl);
+            bl.vx = Math.sin(a) * paddleSpeed;
+            bl.vy = -Math.cos(a) * paddleSpeed;
             bl.punch(0.25);
             this.audio.land();
             this.fx.burst(bl.x, PAD_Y - 10, { n: 6, speed: [40, 180], colors: [this.accent, '#ffffff'], size: [1.5, 3], life: 0.3, ang: -Math.PI / 2, spread: 1.4 });
           }
         }
 
+        // Géométrie de niveau : les obstacles sont résolus avant les briques.
+        this.resolveObstacles(bl);
+        const currentSpeed = Math.hypot(bl.vx, bl.vy);
+        const targetSpeed = this.targetBallSpeed(bl);
+        if (currentSpeed > 1) {
+          const smoothedSpeed = currentSpeed + (targetSpeed - currentSpeed) * Math.min(1, dt * 10);
+          bl.vx *= smoothedSpeed / currentSpeed;
+          bl.vy *= smoothedSpeed / currentSpeed;
+        }
+
         // briques : cercle vs AABB. Une balle enflammée traverse les briques
         // et peut en toucher plusieurs sur la même trajectoire.
         const flaming = this.flameT > 0;
-        for (const br of this.bricks) {
+        for (const br of this.bricks as BreakerBrick[]) {
           if (br.hp <= 0) continue;
           const nx = Math.max(br.x, Math.min(bl.x, br.x + br.w));
           const ny = Math.max(br.y, Math.min(bl.y, br.y + br.h));
@@ -763,10 +1108,26 @@ export class BreakerGame extends BaseGame {
   drawBrick(ctx: CanvasRenderingContext2D, br: BreakerBrick): void {
     const cx = br.x + br.w / 2, cy = br.y + br.h / 2;
     const isFalling = !!br.falling;
+    const isDetaching = !isFalling && (br.detachT || 0) > 0;
     const isGravity = br.kind === 'gravity';
     const isExplosive = br.kind === 'explosive';
     const body = isGravity ? '#38bdf8' : isExplosive ? '#fb923c' : br.color;
     const damaged = br.maxHp > 1 && br.hp < br.maxHp;
+    const queuedItem = isExplosive
+      ? (this.explosionQueue as PendingExplosion[]).find((item) => item.brick === br)
+      : undefined;
+    const queued = !!queuedItem;
+    const queuedProgress = queuedItem ? 1 - clampValue(queuedItem.delay / Math.max(0.001, queuedItem.initialDelay), 0, 1) : 0;
+    const idleRate = isExplosive ? (queued ? 5.2 : 6.2832 / 1.65) : isGravity ? 6.2832 / 1.4 : 0;
+    const idlePhase = this.time * idleRate + br.animPhase * 6.2832;
+    const pulse = isExplosive
+      ? (queued ? 0.88 + 0.22 * (0.5 + 0.5 * Math.sin(idlePhase)) : 1 + 0.1 * Math.sin(idlePhase))
+      : 1;
+    const visualOffset = isDetaching ? 2 * (1 - (br.detachT || 0) / 0.08) : 0;
+    const localCx = isFalling ? 0 : cx;
+    const localCy = isFalling ? 0 : cy + visualOffset;
+    const ox = isFalling ? -br.w / 2 : br.x;
+    const oy = isFalling ? -br.h / 2 : br.y + visualOffset;
 
     ctx.save();
     if (isFalling) {
@@ -776,56 +1137,73 @@ export class BreakerGame extends BaseGame {
       ctx.shadowColor = '#38bdf8';
       ctx.shadowBlur = 16;
     }
-    UI.roundRect(ctx, isFalling ? -br.w / 2 : br.x, isFalling ? -br.h / 2 : br.y, br.w, br.h, Math.min(7, br.h * 0.3));
+    UI.roundRect(ctx, ox, oy, br.w, br.h, Math.min(7, br.h * 0.3));
     ctx.fillStyle = br.fl > 0 ? '#ffffff' : damaged ? br.dark : body;
     ctx.fill();
     ctx.shadowBlur = 0;
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
-    UI.roundRect(ctx, isFalling ? -br.w / 2 + 5 : br.x + 5, isFalling ? -br.h / 2 + 4 : br.y + 4, Math.max(4, br.w - 10), Math.max(2, Math.min(5, br.h * 0.25)), 2.5);
+    UI.roundRect(ctx, ox + 5, oy + 4, Math.max(4, br.w - 10), Math.max(2, Math.min(5, br.h * 0.25)), 2.5);
     ctx.fill();
 
-    const ox = isFalling ? -br.w / 2 : br.x;
-    const oy = isFalling ? -br.h / 2 : br.y;
     if (isGravity) {
       ctx.strokeStyle = '#dbeafe';
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = 0.72 + Math.sin(idlePhase) * 0.1;
       ctx.lineWidth = 1.5;
+      const flow = (Math.sin(idlePhase) * 0.5 + 0.5) * 2.5;
       ctx.beginPath();
-      ctx.moveTo(ox + br.w * 0.34, oy + br.h * 0.35);
-      ctx.lineTo(ox + br.w * 0.34, oy + br.h * 0.68);
-      ctx.moveTo(ox + br.w * 0.5, oy + br.h * 0.35);
-      ctx.lineTo(ox + br.w * 0.5, oy + br.h * 0.68);
-      ctx.moveTo(ox + br.w * 0.66, oy + br.h * 0.35);
-      ctx.lineTo(ox + br.w * 0.66, oy + br.h * 0.68);
-      ctx.moveTo(ox + br.w * 0.27, oy + br.h * 0.58);
-      ctx.lineTo(ox + br.w * 0.5, oy + br.h * 0.8);
-      ctx.lineTo(ox + br.w * 0.73, oy + br.h * 0.58);
+      for (const x of [0.34, 0.5, 0.66]) {
+        ctx.moveTo(ox + br.w * x, oy + br.h * 0.3 + flow);
+        ctx.lineTo(ox + br.w * x, oy + br.h * 0.62 + flow);
+      }
+      ctx.moveTo(ox + br.w * 0.27, oy + br.h * 0.54 + flow);
+      ctx.lineTo(ox + br.w * 0.5, oy + br.h * 0.79 + flow);
+      ctx.lineTo(ox + br.w * 0.73, oy + br.h * 0.54 + flow);
       ctx.stroke();
     } else if (isExplosive) {
       ctx.globalCompositeOperation = 'lighter';
       ctx.strokeStyle = '#fff7ed';
-      ctx.fillStyle = '#fff7ed';
-      ctx.lineWidth = 1.4;
+      ctx.fillStyle = queued ? '#fff7ed' : '#ffe4c7';
+      ctx.globalAlpha = queued ? 0.95 : 0.88;
+      ctx.lineWidth = queued ? 1.8 : 1.4;
+      const coreR = Math.max(4, Math.min(br.w, br.h) * 0.34 * pulse);
       ctx.beginPath();
-      ctx.arc(cx - (isFalling ? cx : 0), cy - (isFalling ? cy : 0), Math.max(3, Math.min(br.w, br.h) * 0.25), 0, 6.2832);
+      ctx.arc(localCx, localCy, coreR, 0, 6.2832);
+      ctx.fill();
       ctx.stroke();
       ctx.beginPath();
-      ctx.moveTo((isFalling ? 0 : cx) - 5, (isFalling ? 0 : cy));
-      ctx.lineTo((isFalling ? 0 : cx) + 5, (isFalling ? 0 : cy));
-      ctx.moveTo((isFalling ? 0 : cx), (isFalling ? 0 : cy) - 5);
-      ctx.lineTo((isFalling ? 0 : cx), (isFalling ? 0 : cy) + 5);
+      ctx.moveTo(localCx - coreR * 1.7, localCy);
+      ctx.lineTo(localCx + coreR * 1.7, localCy);
+      ctx.moveTo(localCx, localCy - coreR * 1.35);
+      ctx.lineTo(localCx, localCy + coreR * 1.35);
       ctx.stroke();
       for (let i = 0; i < Math.min(3, br.blast || 1); i++) {
         const a = -Math.PI / 2 + i * Math.PI * 2 / Math.min(3, br.blast || 1);
-        const px = (isFalling ? 0 : cx) + Math.cos(a) * Math.max(5, br.w * 0.27);
-        const py = (isFalling ? 0 : cy) + Math.sin(a) * Math.max(4, br.h * 0.33);
+        const px = localCx + Math.cos(a) * Math.max(5, br.w * 0.27);
+        const py = localCy + Math.sin(a) * Math.max(4, br.h * 0.33);
         ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 6.2832); ctx.fill();
       }
+      if (queued) {
+        ctx.globalAlpha = 0.45 + queuedProgress * 0.45;
+        ctx.setLineDash([2, 3]);
+        ctx.beginPath(); ctx.arc(localCx, localCy, coreR + 5 + (1 - queuedProgress) * 7, 0, 6.2832); ctx.stroke();
+        ctx.setLineDash([]);
+      }
     } else if (br.maxHp > 1) {
-      ctx.strokeStyle = 'rgba(255,255,255,0.58)';
-      ctx.lineWidth = 1.2;
+      // Deux coques + rivets : la masse reste reconnaissable même sans sa couleur.
+      ctx.strokeStyle = 'rgba(255,255,255,0.72)';
+      ctx.lineWidth = 1.5;
       UI.roundRect(ctx, ox + 2, oy + 2, br.w - 4, br.h - 4, Math.min(5, br.h * 0.25));
       ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.32)';
+      ctx.lineWidth = 1;
+      UI.roundRect(ctx, ox + 6, oy + 5, br.w - 12, br.h - 10, Math.min(4, br.h * 0.2));
+      ctx.stroke();
+      ctx.fillStyle = '#ffffffaa';
+      for (const px of [ox + 8, ox + br.w - 8]) {
+        for (const py of [oy + 8, oy + br.h - 8]) {
+          ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 6.2832); ctx.fill();
+        }
+      }
       for (let i = 0; i < br.maxHp; i++) {
         ctx.fillStyle = i < br.hp ? '#ffffffcc' : '#0b0e1466';
         ctx.beginPath(); ctx.arc(ox + br.w - 8 - i * 6, oy + br.h - 6, 1.7, 0, 6.2832); ctx.fill();
@@ -847,7 +1225,7 @@ export class BreakerGame extends BaseGame {
     }
     if (br.hitT > 0) {
       const k = Math.min(1, br.hitT / 0.3);
-      const ix = isFalling ? 0 : br.hitX, iy = isFalling ? 0 : br.hitY;
+      const ix = isFalling ? 0 : br.hitX, iy = isFalling ? 0 : br.hitY + visualOffset;
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = k;
       ctx.strokeStyle = '#ffffff';
@@ -908,6 +1286,172 @@ export class BreakerGame extends BaseGame {
         ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(5, radius * 0.72), 0, 6.2832); ctx.stroke();
         ctx.setLineDash([]);
       }
+    }
+    ctx.restore();
+  }
+
+  drawWall(ctx: CanvasRenderingContext2D, wall: BreakerWall): void {
+    ctx.save();
+    UI.roundRect(ctx, wall.x, wall.y, wall.w, wall.h, Math.min(7, Math.min(wall.w, wall.h) * 0.3));
+    ctx.fillStyle = '#263244';
+    ctx.fill();
+    ctx.strokeStyle = '#94a3b888';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.globalAlpha = 0.38;
+    ctx.strokeStyle = '#cbd5e1';
+    ctx.lineWidth = 1;
+    const vertical = wall.h > wall.w;
+    const step = Math.max(12, Math.min(28, (vertical ? wall.h : wall.w) / 8));
+    ctx.beginPath();
+    if (vertical) {
+      for (let y = wall.y + step; y < wall.y + wall.h - 2; y += step) {
+        ctx.moveTo(wall.x + 3, y); ctx.lineTo(wall.x + wall.w - 3, y);
+      }
+      ctx.moveTo(wall.x + wall.w * 0.5, wall.y + 3);
+      ctx.lineTo(wall.x + wall.w * 0.5, wall.y + wall.h - 3);
+    } else {
+      for (let x = wall.x + step; x < wall.x + wall.w - 2; x += step) {
+        ctx.moveTo(x, wall.y + 3); ctx.lineTo(x, wall.y + wall.h - 3);
+      }
+      ctx.moveTo(wall.x + 3, wall.y + wall.h * 0.5);
+      ctx.lineTo(wall.x + wall.w - 3, wall.y + wall.h * 0.5);
+    }
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  drawBumper(ctx: CanvasRenderingContext2D, bumper: BreakerBumper): void {
+    const breath = 1 + Math.sin(this.time * 3.14 + bumper.id * 1.7) * 0.025;
+    const pulse = clampValue(bumper.pulseT / 0.25, 0, 1);
+    const squash = breath + pulse * 0.1;
+    ctx.save();
+    ctx.translate(bumper.x, bumper.y);
+    ctx.scale(squash, 1 - pulse * 0.08);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.shadowColor = '#ffd166';
+    ctx.shadowBlur = 10 + pulse * 12;
+    ctx.fillStyle = '#4a3b20';
+    ctx.beginPath(); ctx.arc(0, 0, bumper.r, 0, 6.2832); ctx.fill();
+    ctx.shadowBlur = 0;
+    ctx.strokeStyle = '#ffd166';
+    ctx.lineWidth = 2 + pulse * 2;
+    ctx.beginPath(); ctx.arc(0, 0, bumper.r - 2, 0, 6.2832); ctx.stroke();
+    ctx.strokeStyle = '#fff7ccaa';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.arc(0, 0, bumper.r * 0.56, 0, 6.2832); ctx.stroke();
+    ctx.fillStyle = '#ffd166';
+    ctx.beginPath(); ctx.arc(0, 0, bumper.r * 0.2 + pulse * 2, 0, 6.2832); ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      const a = i * Math.PI / 2 + Math.PI / 4;
+      ctx.beginPath();
+      ctx.moveTo(Math.cos(a) * bumper.r * 0.62, Math.sin(a) * bumper.r * 0.62);
+      ctx.lineTo(Math.cos(a) * bumper.r * 0.84, Math.sin(a) * bumper.r * 0.84);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  drawObstacles(ctx: CanvasRenderingContext2D): void {
+    for (const obstacle of this.obstacles as BreakerObstacle[]) {
+      if (obstacle.kind === 'wall') this.drawWall(ctx, obstacle);
+      else this.drawBumper(ctx, obstacle);
+    }
+  }
+
+  drawTrajectoryPredictor(ctx: CanvasRenderingContext2D): void {
+    const ball = (this.balls as any[]).find((candidate) => !candidate.dead && !candidate.glued && !(this.stuck && candidate === this.balls[0]));
+    if (!ball) return;
+    let x = ball.x, y = ball.y, vx = ball.vx, vy = ball.vy;
+    const step = 1 / 120;
+    const maxSteps = Math.round(2 / step);
+    let bounces = 0;
+    ctx.save();
+    ctx.strokeStyle = '#facc15aa';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 6]);
+    ctx.beginPath(); ctx.moveTo(x, y);
+    for (let i = 0; i < maxSteps && bounces < 6; i++) {
+      x += vx * step; y += vy * step;
+      if (x - ball.r < WALL) { x = WALL + ball.r; vx = Math.abs(vx); bounces++; }
+      else if (x + ball.r > 1280 - WALL) { x = 1280 - WALL - ball.r; vx = -Math.abs(vx); bounces++; }
+      if (y - ball.r < WALL) { y = WALL + ball.r; vy = Math.abs(vy); bounces++; }
+      for (const obstacle of this.obstacles as BreakerObstacle[]) {
+        const hit = obstacle.kind === 'wall'
+          ? circleVsAabb(x, y, ball.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h)
+          : circleVsCircle(x, y, ball.r, obstacle.x, obstacle.y, obstacle.r);
+        if (!hit) continue;
+        const temp = { vx, vy };
+        reflectVelocity(temp, hit);
+        vx = temp.vx; vy = temp.vy;
+        x += hit.nx * Math.max(hit.penetration, 0.5);
+        y += hit.ny * Math.max(hit.penetration, 0.5);
+        bounces++;
+        break;
+      }
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.restore();
+  }
+
+  drawLabOverlay(ctx: CanvasRenderingContext2D): void {
+    if (!this.lab) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = '#ffffffaa';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 4]);
+    for (const obstacle of this.obstacles as BreakerObstacle[]) {
+      if (obstacle.kind === 'wall') {
+        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+      } else {
+        ctx.beginPath(); ctx.arc(obstacle.x, obstacle.y, obstacle.r, 0, 6.2832); ctx.stroke();
+      }
+    }
+    for (const ball of this.balls as any[]) {
+      if (ball.dead) continue;
+      ctx.beginPath(); ctx.arc(ball.x, ball.y, ball.r, 0, 6.2832); ctx.stroke();
+      if (!ball.glued && !(this.stuck && ball === this.balls[0])) {
+        ctx.strokeStyle = '#7dd3fcaa';
+        ctx.beginPath(); ctx.moveTo(ball.x, ball.y); ctx.lineTo(ball.x + clampValue(ball.vx * 0.08, -90, 90), ball.y + clampValue(ball.vy * 0.08, -90, 90)); ctx.stroke();
+        ctx.strokeStyle = '#ffffffaa';
+      }
+    }
+    if (this.labContact) {
+      const c = this.labContact;
+      ctx.setLineDash([]);
+      ctx.strokeStyle = '#facc15';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(c.x - 7, c.y); ctx.lineTo(c.x + 7, c.y);
+      ctx.moveTo(c.x, c.y - 7); ctx.lineTo(c.x, c.y + 7);
+      ctx.moveTo(c.x, c.y); ctx.lineTo(c.x + c.nx * 34, c.y + c.ny * 34);
+      ctx.stroke();
+    }
+    ctx.setLineDash([]);
+    this.drawTrajectoryPredictor(ctx);
+
+    const x = 930, y = 42, w = 320, h = 170;
+    UI.panel(ctx, x, y, w, h, { radius: 12, fill: '#0b0e14e8', stroke: '#facc1544', lineWidth: 1 });
+    UI.txt(ctx, 'B-LAB · ' + this.lab.toUpperCase(), x + 14, y + 22, { size: 13, mono: true, color: '#facc15', weight: 900 });
+    const stats: Array<[string, string]> = [
+      ['BALLS', String(this.balls.length)],
+      ['WALL HITS', String(this.labStats.wallHits)],
+      ['BUMPER HITS', String(this.labStats.bumperHits)],
+      ['BUMPER → BRICK', String(this.labStats.bumperToBrick)],
+      ['BUMPER → EXPLOSIVE', String(this.labStats.bumperToExplosive)],
+      ['MAX COMBO', String(this.labStats.maxCombo)],
+    ];
+    stats.forEach(([label, value], index) => {
+      const py = y + 47 + index * 19;
+      UI.txt(ctx, label, x + 14, py, { size: 11, mono: true, color: '#aab4c4', weight: 800 });
+      UI.txt(ctx, value, x + w - 14, py, { size: 11, mono: true, color: '#ffffff', align: 'right', weight: 900 });
+    });
+    if (this.lab === 'readability') {
+      const labels: Array<[string, string]> = [['NORMAL', '#ffffff'], ['REINFORCED', '#ffffff'], ['EXPLOSIVE', '#fff7ed'], ['GRAVITY', '#dbeafe']];
+      labels.forEach(([label, color], index) => UI.txt(ctx, label, 250 + index * 250, 292, { size: 12, mono: true, align: 'center', color, weight: 900 }));
     }
     ctx.restore();
   }
@@ -1083,9 +1627,10 @@ export class BreakerGame extends BaseGame {
 
     // briques
     for (const br of this.bricks as BreakerBrick[]) {
-      if (br.hp <= 0 && !br.falling && !br.queued) continue;
+      if (br.hp <= 0 && !br.falling && !(br.detachT && br.detachT > 0) && !br.queued) continue;
       this.drawBrick(ctx, br);
     }
+    this.drawObstacles(ctx);
     this.drawExplosions(ctx);
 
     // drops
@@ -1139,6 +1684,8 @@ export class BreakerGame extends BaseGame {
       this.drawBallPower(ctx, bl);
       bl.render(ctx);
     }
+
+    this.drawLabOverlay(ctx);
 
     this.fx.drawWorld(ctx);
     this.fx.endWorld(ctx);

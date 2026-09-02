@@ -1,0 +1,49 @@
+BLOB BREAKER — MASTER ASSET SHEET WIREFRAME
+
+CANVAS RECOMMENDED: landscape 16:10 or 3:2, dark neutral background.
+
+TOP BAND (full width)
+01 / VISUAL LANGUAGE
+- hierarchy chips: silhouette > structure > glyph > animation > color > FX
+- monochrome test swatches
+- scale test: 100x24 / 64x20 / 48x18
+
+MAIN GRID (left ~70%)
+02 / BRICKS
+Columns: NORMAL | REINFORCED | EXPLOSIVE | GRAVITY
+Rows: IDLE | SIGNAL | HIT | ACTIVE | DESTROY
+Large clean specimens, generous spacing.
+
+RIGHT COLUMN (~30%)
+03 / ARCHITECTURE
+- WALL short horizontal
+- WALL long horizontal
+- WALL vertical
+- impact ball / laser
+
+04 / MECHANISMS
+- BUMPER idle
+- compressed
+- rebound
+- return
+
+LOWER BAND
+05 / GLYPH LIBRARY
+isolated icons/overlays:
+shell, rivets, explosive core, queued ring, gravity chevrons,
+detach mark, bumper core, wall motif.
+
+06 / DROPS + HUD
+8 powerup icons + compact HUD status icons.
+
+BOTTOM BAND (full width)
+07 / VALIDATION SCENES
+four thumbnails:
+- monochrome recognition
+- normal gameplay
+- Wall+Bumper level
+- stress test (clearly labelled TEST ONLY)
+
+STYLE:
+technical design board, clean, dark UI, no decorative AI brush effects,
+no characters, no fake 3D mockup, no huge explosions dominating the board.

@@ -25,6 +25,9 @@ export class Blob {
   jig = 0;
   trailOn = false;
   trail: TrailPoint[] = [];
+  // Intensité du squash & stretch lié à la vitesse. Les jeux rapides peuvent
+  // le réduire sans modifier la physique ni les autres déformations.
+  speedMorph = 1;
   lookX = 0;
   lookY = 0;
   blink = 0;
@@ -103,7 +106,7 @@ export class Blob {
     }
 
     const sp = Math.hypot(this.vx, this.vy);
-    const k = this.dead ? 0 : Math.min(1, sp / 620);
+    const k = this.dead ? 0 : Math.min(1, (sp / 620) * this.speedMorph);
     const angle = sp > 10 ? Math.atan2(this.vy, this.vx) : 0;
     const sx = 1 + k * 0.30 + this.jig * 0.4;
     const sy = 1 - k * 0.18 - this.jig * 0.35;
