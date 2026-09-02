@@ -25,10 +25,8 @@ la tester localement.
 
 `npm run typecheck` vérifie l'ensemble des modules TypeScript sans générer de
 fichiers. La migration applicative est terminée : le moteur, l'audio, les
-réglages, l'UI commune, les démos et les mini-jeux sont en TypeScript. Exception
-volontaire : `js/games/rhythm.js` reste temporairement en JavaScript pour sa
-prochaine refonte ; son contrat d'intégration est documenté dans
-`js/games/rhythm.d.ts`.
+réglages, l'UI commune, les démos et les mini-jeux, y compris Rhythm, sont en
+TypeScript.
 
 ## Héberger sur Vercel
 
@@ -101,8 +99,8 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
-js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish (TypeScript)
-js/games/   rhythm.js + rhythm.d.ts (exception temporaire, refonte à venir)
+js/core/music/ transport musical et primitives d'architecture audio (TypeScript)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm (TypeScript)
 js/main.ts  point d'entrée navigateur
 js/menu.ts  hub (fiche plein écran + grille globale)
 js/demos.ts démos simulées (attract mode) de la fiche

@@ -8,12 +8,22 @@ export const STEPS_PER_BAR = STEPS_PER_BEAT * BEATS_PER_BAR;
 export const DEFAULT_LOOKAHEAD = 0.2;
 export const DEFAULT_EVENT_EPSILON = 0.02;
 
+export type Quantization = 'step' | 'beat' | 'bar' | '2bars' | '4bars' | 'phrase';
+
+export interface TransportStartOptions {
+  /** Nombre de mesures de la boucle ; 0 signifie boucle libre. */
+  loopBars?: number;
+}
+
 export interface ScheduledStep {
   time: number;
   absoluteStep: number;
   stepInBar: number;
   bar: number;
   phrase: number;
+  /** Position dans la boucle, identique à la position absolue si aucune boucle. */
+  loopStep: number;
+  loopBar: number;
 }
 
 export type StepCallback = (step: ScheduledStep) => void;
@@ -41,10 +51,13 @@ export class MusicTransport {
   bpm = 120;
   startTime = 0;
   absoluteStep = 0;
+  loopBars = 0;
   paused = false;
   running = false;
 
   private pausedTime = 0;
+  private readonly beatListeners = new Set<StepCallback>();
+  private readonly barListeners = new Set<StepCallback>();
 
   get beatDuration(): number {
     return 60 / positive(this.bpm, 120);
@@ -54,10 +67,13 @@ export class MusicTransport {
     return this.beatDuration / STEPS_PER_BEAT;
   }
 
-  start(bpm: number, startTime: number): void {
+  start(bpm: number, startTime: number, options: TransportStartOptions = {}): void {
     this.bpm = positive(bpm, 120);
     this.startTime = Number.isFinite(startTime) ? startTime : 0;
     this.absoluteStep = 0;
+    this.loopBars = Number.isFinite(options.loopBars) && (options.loopBars ?? 0) > 0
+      ? Math.max(1, Math.floor(options.loopBars ?? 0))
+      : 0;
     this.pausedTime = 0;
     this.paused = false;
     this.running = true;
@@ -67,7 +83,18 @@ export class MusicTransport {
     this.running = false;
     this.paused = false;
     this.absoluteStep = 0;
+    this.loopBars = 0;
     this.pausedTime = 0;
+  }
+
+  onBeat(callback: StepCallback): () => void {
+    this.beatListeners.add(callback);
+    return () => this.beatListeners.delete(callback);
+  }
+
+  onBar(callback: StepCallback): () => void {
+    this.barListeners.add(callback);
+    return () => this.barListeners.delete(callback);
   }
 
   /**
@@ -92,7 +119,27 @@ export class MusicTransport {
       const bar = Math.floor(absoluteStep / STEPS_PER_BAR) + 1;
       const phrase = Math.floor((bar - 1) / 4) + 1;
       const time = this.nextStepTime();
-      if (time >= currentTime - tolerance) callback({ time, absoluteStep, stepInBar, bar, phrase });
+      const loopStep = this.loopBars > 0
+        ? absoluteStep % (this.loopBars * STEPS_PER_BAR)
+        : absoluteStep;
+      const scheduled: ScheduledStep = {
+        time,
+        absoluteStep,
+        stepInBar,
+        bar,
+        phrase,
+        loopStep,
+        loopBar: Math.floor(loopStep / STEPS_PER_BAR) + 1,
+      };
+      if (time >= currentTime - tolerance) {
+        callback(scheduled);
+        if ((stepInBar - 1) % STEPS_PER_BEAT === 0) {
+          for (const listener of this.beatListeners) listener(scheduled);
+        }
+        if (stepInBar === 1) {
+          for (const listener of this.barListeners) listener(scheduled);
+        }
+      }
       this.absoluteStep++;
     }
   }
@@ -118,6 +165,22 @@ export class MusicTransport {
 
   nextStepTime(): number {
     return this.startTime + this.absoluteStep * this.stepDuration;
+  }
+
+  /** Retourne le prochain instant de grille au moins égal à `now`. */
+  nextQuantizedTime(now: number, quantization: Quantization = 'beat'): number {
+    const stepsByQuantization: Record<Quantization, number> = {
+      step: 1,
+      beat: STEPS_PER_BEAT,
+      bar: STEPS_PER_BAR,
+      '2bars': STEPS_PER_BAR * 2,
+      '4bars': STEPS_PER_BAR * 4,
+      phrase: STEPS_PER_BAR * 4,
+    };
+    const unit = stepsByQuantization[quantization] ?? STEPS_PER_BEAT;
+    const elapsedSteps = Math.max(0, (Number.isFinite(now) ? now : 0) - this.startTime) / this.stepDuration;
+    const nextStep = Math.ceil(elapsedSteps / unit) * unit;
+    return this.startTime + nextStep * this.stepDuration;
   }
 
   transportTime(now: number): number {
