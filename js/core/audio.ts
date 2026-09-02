@@ -98,6 +98,12 @@ export class AudioSys implements AudioLike {
   master!: GainNode;
   comp!: DynamicsCompressorNode;
   musicBus!: GainNode;
+  drumBus!: GainNode;
+  bassBus!: GainNode;
+  harmonyBus!: GainNode;
+  arpBus!: GainNode;
+  leadBus!: GainNode;
+  musicFxBus!: GainNode;
   sfxBus!: GainNode;
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
@@ -147,6 +153,16 @@ export class AudioSys implements AudioLike {
     this.musicBus = context.createGain();
     this.musicBus.gain.value = 0.5;
     this.musicBus.connect(this.master);
+    this.drumBus = context.createGain();
+    this.bassBus = context.createGain();
+    this.harmonyBus = context.createGain();
+    this.arpBus = context.createGain();
+    this.leadBus = context.createGain();
+    this.musicFxBus = context.createGain();
+    for (const bus of [this.drumBus, this.bassBus, this.harmonyBus, this.arpBus, this.leadBus, this.musicFxBus]) {
+      bus.gain.value = 1;
+      bus.connect(this.musicBus);
+    }
     this.sfxBus = context.createGain();
     this.sfxBus.gain.value = 1;
     this.sfxBus.connect(this.master);
@@ -394,29 +410,29 @@ export class AudioSys implements AudioLike {
 
   drum(kind: DrumKind, t: number): void {
     if (kind === 'kick') {
-      this.tone({ f: 150, f1: 42, type: 'sine', t, dur: 0.17, vol: 0.85, dest: this.musicBus });
-      this.noise({ t, dur: 0.03, f: 3000, vol: 0.1, dest: this.musicBus });
+      this.tone({ f: 150, f1: 42, type: 'sine', t, dur: 0.17, vol: 0.85, dest: this.drumBus });
+      this.noise({ t, dur: 0.03, f: 3000, vol: 0.1, dest: this.drumBus });
     } else if (kind === 'snare') {
-      this.noise({ t, dur: 0.13, f: 1800, type: 'bandpass', q: 0.8, vol: 0.3, dest: this.musicBus });
-      this.tone({ f: 190, type: 'triangle', t, dur: 0.05, vol: 0.15, dest: this.musicBus });
+      this.noise({ t, dur: 0.13, f: 1800, type: 'bandpass', q: 0.8, vol: 0.3, dest: this.drumBus });
+      this.tone({ f: 190, type: 'triangle', t, dur: 0.05, vol: 0.15, dest: this.drumBus });
     } else if (kind === 'tick') {
       // Métronome du décompte du jeu de rythme.
-      this.tone({ f: 1175, type: 'square', t, dur: 0.05, vol: 0.1, dest: this.musicBus });
+      this.tone({ f: 1175, type: 'square', t, dur: 0.05, vol: 0.1, dest: this.drumBus });
     } else {
       this.hatAt(t, 0.15);
     }
   }
 
-  hatAt(t: number, vol: number): void { this.noise({ t, dur: 0.04, f: 7500, type: 'highpass', vol, dest: this.musicBus }); }
+  hatAt(t: number, vol: number): void { this.noise({ t, dur: 0.04, f: 7500, type: 'highpass', vol, dest: this.drumBus }); }
 
   bassAt(t: number, midi: number): void {
-    this.tone({ f: midiHz(midi), type: 'triangle', t, dur: 0.2, vol: 0.22, dest: this.musicBus });
-    this.tone({ f: midiHz(midi + 12), type: 'square', t, dur: 0.1, vol: 0.05, dest: this.musicBus });
+    this.tone({ f: midiHz(midi), type: 'triangle', t, dur: 0.2, vol: 0.22, dest: this.bassBus });
+    this.tone({ f: midiHz(midi + 12), type: 'square', t, dur: 0.1, vol: 0.05, dest: this.bassBus });
   }
 
   padAt(t: number, root: number, dur: number): void {
     for (const interval of [0, 3, 7, 12]) {
-      this.tone({ f: midiHz(root + interval), type: 'sawtooth', t, dur: dur * 0.95, vol: 0.028, attack: 0.4, dest: this.musicBus });
+      this.tone({ f: midiHz(root + interval), type: 'sawtooth', t, dur: dur * 0.95, vol: 0.028, attack: 0.4, dest: this.harmonyBus });
     }
   }
 
