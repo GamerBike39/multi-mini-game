@@ -1,21 +1,23 @@
 // BLOB SNAKE — serpent sur grille 32×18, pas discrets interpolés entre cells.
 // Lucioles = points + accélération ; fruit doré = 5× ; murs et queue mortels.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta, InputLike } from '../core/types';
 
 const CELL = 40, COLS = 32, ROWS = 18;       // 32×40=1280, 18×40=720 : plein écran
 const STEP0 = 0.15, STEP_MIN = 0.075, STEP_DEC = 0.004;
 const START_LEN = 4;
 
 // assombrit une couleur hex (pour le corps, même teinte que l'accent)
-function shade(hex, f) {
+function shade(hex: string, f: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgb(${Math.round(((n >> 16) & 255) * f)},${Math.round(((n >> 8) & 255) * f)},${Math.round((n & 255) * f)})`;
 }
 
 export class SnakeGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'snake', name: 'BLOB SNAKE', accent: '#22d3ee', mood: 'runner',
     desc: 'Croque, grandis, survis', controls: 'Stick / ZQSD diriger',
     keys: "Flèches / ZQSD",
@@ -23,13 +25,13 @@ export class SnakeGame extends BaseGame {
     unit: 'pts', ranks: [1200, 700, 400, 180, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.r = 15;
     this.blob.trailOn = true;
     this.cells = [];
     for (let i = 0; i < START_LEN; i++) this.cells.push({ x: 8 - i, y: 9 });
-    this.prevCells = this.cells.map((c) => ({ ...c })); // positions du pas précédent (interpolation)
+    this.prevCells = this.cells.map((c: any) => ({ ...c })); // positions du pas précédent (interpolation)
     this.dir = [1, 0];
     this.queue = [];                 // file d'inputs, profondeur max 2
     this.lastStick = null;
@@ -46,9 +48,9 @@ export class SnakeGame extends BaseGame {
   }
 
   // ---------- helpers ----------
-  px(x) { return (x + 0.5) * CELL; }
+  px(x: number): number { return (x + 0.5) * CELL; }
 
-  enqueue(dx, dy) {
+  enqueue(dx: number, dy: number): void {
     // valide contre la dernière direction effective (file ou pas appliqué) :
     // ni demi-tour, ni doublon — évite le U-turn empilé [up, down] en un pas.
     const last = this.queue.length ? this.queue[this.queue.length - 1] : this.dir;
@@ -56,7 +58,7 @@ export class SnakeGame extends BaseGame {
     if (this.queue.length < 2) this.queue.push([dx, dy]);
   }
 
-  readInput(I) {
+  readInput(I: InputLike): void {
     if (I.pressed('up')) this.enqueue(0, -1);
     if (I.pressed('down')) this.enqueue(0, 1);
     if (I.pressed('left')) this.enqueue(-1, 0);
@@ -76,17 +78,17 @@ export class SnakeGame extends BaseGame {
   }
 
   // place le blob (tête) à la position interpolée entre prevCells[0] et cells[0]
-  syncBlob(t) {
+  syncBlob(t: number): void {
     const p = this.prevCells[0], c = this.cells[0];
     this.blob.x = this.px(p.x + (c.x - p.x) * t);
     this.blob.y = this.px(p.y + (c.y - p.y) * t);
   }
 
-  spawnFood() {
+  spawnFood(): void {
     const free = [];
     for (let y = 0; y < ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
-        if (!this.cells.some((c) => c.x === x && c.y === y)) free.push({ x, y });
+        if (!this.cells.some((c: any) => c.x === x && c.y === y)) free.push({ x, y });
       }
     }
     if (!free.length) { this.over(true); return; } // grille remplie : victoire !
@@ -96,7 +98,7 @@ export class SnakeGame extends BaseGame {
     this.food = { x: c.x, y: c.y, gold, ph: Math.random() * 6.28 };
   }
 
-  eat() {
+  eat(): void {
     const f = this.food;
     this.eaten++;
     this.sinceGold++;
@@ -121,7 +123,7 @@ export class SnakeGame extends BaseGame {
     this.spawnFood();
   }
 
-  doStep() {
+  doStep(): void {
     const prevD = this.dir;
     if (this.queue.length) {
       const d = this.queue.shift();
@@ -161,7 +163,7 @@ export class SnakeGame extends BaseGame {
     if (willEat) this.eat();
   }
 
-  die(px, py, splat) {
+  die(px: number, py: number, splat: boolean): void {
     if (this.state === 'over') return;
     this.audio.explode(1.4);
     this.input.rumble(1, 0.4);
@@ -178,7 +180,7 @@ export class SnakeGame extends BaseGame {
     this.over();
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const I = this.input;
 
@@ -214,7 +216,7 @@ export class SnakeGame extends BaseGame {
     }
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#070910';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -279,3 +281,4 @@ export class SnakeGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+

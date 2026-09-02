@@ -1,11 +1,13 @@
 // BLOBBLASTER — twin-stick : stick gauche bouge, stick droit vise (tir auto).
 // Clavier : le tir vise tout seul l'ennemi le plus proche.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta } from '../core/types';
 
 export class ShooterGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'shoot', name: 'BLOBBLASTER', accent: '#fbbf24', mood: 'shooter',
     desc: 'Twin-stick frénétique', controls: 'Stick G bouger · Stick D viser',
     keys: "ZQSD + Espace (auto-visée)",
@@ -13,7 +15,7 @@ export class ShooterGame extends BaseGame {
     unit: 'pts', ranks: [5000, 2500, 1200, 500, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.x = 640; this.blob.y = 480; this.blob.r = 20;
     this.blob.trailOn = true;
@@ -33,7 +35,7 @@ export class ShooterGame extends BaseGame {
     for (let i = 0; i < 70; i++) this.stars.push({ x: Math.random() * 1280, y: Math.random() * 720, z: 0.3 + Math.random() * 0.7 });
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const b = this.blob, I = this.input;
 
@@ -147,7 +149,7 @@ export class ShooterGame extends BaseGame {
       }
       if (this.inv <= 0 && Math.hypot(b.x - e.x, b.y - e.y) < e.r + b.r - 4) this.hurt();
     }
-    this.enemies = this.enemies.filter((e) => !e.dead);
+    this.enemies = this.enemies.filter((e: any) => !e.dead);
 
     // --- balles joueur ---
     const born = []; // fragments d'astéroïdes créés cette frame (ajoutés après la boucle)
@@ -191,9 +193,9 @@ export class ShooterGame extends BaseGame {
         }
       }
     }
-    this.pbullets = this.pbullets.filter((p) => !p.dead);
+    this.pbullets = this.pbullets.filter((p: any) => !p.dead);
     // les ennemis tués par balles disparaissent dès cette frame (pas de cadavre jouable)
-    this.enemies = this.enemies.filter((e) => !e.dead);
+    this.enemies = this.enemies.filter((e: any) => !e.dead);
     this.enemies.push(...born);
 
     // --- balles ennemies ---
@@ -202,7 +204,7 @@ export class ShooterGame extends BaseGame {
       if (p.x < -20 || p.x > 1300 || p.y < -20 || p.y > 740) { p.dead = true; continue; }
       if (this.inv <= 0 && Math.hypot(b.x - p.x, b.y - p.y) < p.r + b.r - 5) { p.dead = true; this.hurt(); }
     }
-    this.ebullets = this.ebullets.filter((p) => !p.dead);
+    this.ebullets = this.ebullets.filter((p: any) => !p.dead);
 
     // étoiles parallaxe
     for (const s of this.stars) {
@@ -215,34 +217,34 @@ export class ShooterGame extends BaseGame {
     this.fx.zoom = 1;
   }
 
-  mult() { return 1 + Math.min(3, Math.floor(this.streak) * 0.1); }
+  mult(): number { return 1 + Math.min(3, Math.floor(this.streak) * 0.1); }
 
-  spawnDrone() {
+  spawnDrone(): void {
     this.enemies.push({ kind: 'drone', x0: 100 + Math.random() * 1080, x: 0, y: -30, vy: 95 + this.time * 0.6, r: 15, hp: 1, t: 0, ph: Math.random() * 6.28 });
   }
-  spawnTank() {
+  spawnTank(): void {
     this.enemies.push({ kind: 'tank', x: 150 + Math.random() * 980, y: -40, r: 26, hp: 4, t: 0, ph: Math.random() * 6.28 });
   }
-  spawnSniper() {
+  spawnSniper(): void {
     this.enemies.push({ kind: 'sniper', x: Math.random() < 0.5 ? -30 : 1310, y: 80 + Math.random() * 300, tx: 200 + Math.random() * 880, ty: 90 + Math.random() * 220, r: 16, hp: 2, st: 'in', t: 0, shots: 3, ang: 0 });
   }
 
   // astéroïde : polygone irrégulier généré, rotation, dérive, se brise en deux
-  makeRock(r, x, y, vx, vy) {
+  makeRock(r: number, x: number, y: number, vx: number, vy: number): any {
     const n = 8 + ((Math.random() * 4) | 0);
     const verts = [];
     for (let i = 0; i < n; i++) verts.push(0.72 + Math.random() * 0.42);
     return { kind: 'rock', x, y, vx, vy, r, verts, hp: r > 26 ? 2 : 1, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 1.6, t: 0 };
   }
-  spawnRock() {
+  spawnRock(): void {
     const r = 15 + Math.random() * 20;
     this.enemies.push(this.makeRock(r, 80 + Math.random() * 1120, -50, (Math.random() - 0.5) * 50, 45 + Math.random() * 55));
   }
-  spawnSat() {
+  spawnSat(): void {
     this.enemies.push({ kind: 'sat', x: 100 + Math.random() * 1080, y: -40, vx: (Math.random() - 0.5) * 30, vy: 26 + Math.random() * 18, r: 24, hp: 3, t: 0, ph: Math.random() * 6.28 });
   }
 
-  boom(x, y, power, color) {
+  boom(x: number, y: number, power: number, color: string): void {
     this.audio.explode(power);
     this.input.rumble(0.3 + power * 0.3, 0.15);
     this.fx.shake(0.18 + power * 0.25);
@@ -250,7 +252,7 @@ export class ShooterGame extends BaseGame {
     this.fx.ring(x, y, { r0: 8, r1: 40 + 55 * power, color, life: 0.3 });
   }
 
-  hurt() {
+  hurt(): void {
     if (this.inv > 0 || this.state === 'over') return;
     this.hp--;
     this.streak = 0;
@@ -270,7 +272,7 @@ export class ShooterGame extends BaseGame {
     this.blob.punch(0.6);
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0d0a06';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -410,3 +412,5 @@ export class ShooterGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
+

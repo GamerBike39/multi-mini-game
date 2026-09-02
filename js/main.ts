@@ -1,17 +1,17 @@
 import { Engine } from './core/engine';
-import { Menu } from './menu.js';
+import { Menu } from './menu';
 import { analyzeBuffer } from './core/analyzer';
 import { RhythmGame } from './games/rhythm.js';
-import { SurvivalGame } from './games/survival.js';
-import { ShooterGame } from './games/shooter.js';
-import { RunnerGame } from './games/runner.js';
-import { CaveGame } from './games/cave.js';
+import { SurvivalGame } from './games/survival';
+import { ShooterGame } from './games/shooter';
+import { RunnerGame } from './games/runner';
+import { CaveGame } from './games/cave';
 import { SimonGame } from './games/simon';
-import { SnakeGame } from './games/snake.js';
-import { BreakerGame } from './games/breaker.js';
-import { GolfGame } from './games/golf.js';
-import { FishingGame } from './games/fish.js';
-import type { AppLike } from './core/types';
+import { SnakeGame } from './games/snake';
+import { BreakerGame } from './games/breaker';
+import { GolfGame } from './games/golf';
+import { FishingGame } from './games/fish';
+import type { AppLike, GameConstructor } from './core/types';
 
 declare global {
   interface Window {
@@ -24,7 +24,7 @@ declare global {
   }
 }
 
-const GAMES = [
+const GAMES: GameConstructor[] = [
   RhythmGame,
   SurvivalGame,
   ShooterGame,

@@ -1,29 +1,35 @@
+interface DemoImpl {
+  update(dt: number): void;
+  draw(ctx: CanvasRenderingContext2D): void;
+}
+
 // Démos simulées (attract mode) : une petite scène autonome par jeu, en boucle,
 // dessinée en fond de la fiche du menu. Zéro logique de jeu réelle : ce sont des
 // vignettes scriptées qui reprennent le langage visuel de chaque jeu (blobs, accents).
 
-import { Blob } from './core/blob.ts';
+import { Blob } from './core/blob';
 
 const TAU = Math.PI * 2;
-const rand = (a, b) => a + Math.random() * (b - a);
-const pick = (arr) => arr[(Math.random() * arr.length) | 0];
+const rand = (a: number, b: number): number => a + Math.random() * (b - a);
+const pick = (arr: readonly any[]): any => arr[(Math.random() * arr.length) | 0];
 
 // palette de jeu : accent + dérivées
-function shade(hex, f) {
+function shade(hex: string, f: number): string {
   const n = parseInt(hex.slice(1), 16);
   return `rgb(${Math.round(((n >> 16) & 255) * f)},${Math.round(((n >> 8) & 255) * f)},${Math.round((n & 255) * f)})`;
 }
 
 // mini-kit de particules (indépendant du Fx des jeux, plus léger)
 class Puffs {
+  ps: any[] = [];
   constructor() { this.ps = []; }
-  burst(x, y, cols, n = 12, sp = [50, 240], life = 0.55, grav = 0) {
+  burst(x: number, y: number, cols: string[], n = 12, sp: [number, number] = [50, 240], life = 0.55, grav = 0): void {
     for (let i = 0; i < n; i++) {
       const a = Math.random() * TAU, v = rand(sp[0], sp[1]);
       this.ps.push({ x, y, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: rand(life * 0.5, life), ml: life, r: rand(1.5, 4), c: pick(cols), grav });
     }
   }
-  update(dt) {
+  update(dt: number): void {
     let w = 0;
     for (const p of this.ps) {
       p.life -= dt;
@@ -36,7 +42,7 @@ class Puffs {
     }
     this.ps.length = w;
   }
-  draw(ctx) {
+  draw(ctx: CanvasRenderingContext2D): void {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const p of this.ps) {
@@ -52,16 +58,16 @@ class Puffs {
 }
 
 // ---------------- BLOB BEAT : notes qui tombent sur 4 couloirs ----------------
-function demoBeat(accent) {
+function demoBeat(accent: string): DemoImpl {
   const X0 = 512, LW = 92, HIT_Y = 528, SPAWN_Y = 158;
-  const laneCol = (i) => `hsl(${192 + i * 36}, 85%, 66%)`;
-  const s = {
+  const laneCol = (i: number): string => `hsl(${192 + i * 36}, 85%, 66%)`;
+  const s: any = {
     notes: [], spawnT: 0.4, hitT: [-9, -9, -9, -9],
     blob: new Blob({ x: X0 + 1.5 * LW, y: HIT_Y, r: 14, color: accent }),
     puffs: new Puffs(),
   };
   return {
-    update(dt) {
+    update(dt: number): void {
       s.spawnT -= dt;
       if (s.spawnT <= 0) {
         s.spawnT = rand(0.32, 0.6);
@@ -83,7 +89,7 @@ function demoBeat(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       for (let i = 0; i < 4; i++) {
         const lx = X0 + i * LW;
         ctx.globalAlpha = 0.1;
@@ -114,8 +120,8 @@ function demoBeat(accent) {
 }
 
 // ---------------- SURVIBLOB : esquive + dash à travers les chasseurs ----------------
-function demoSurv(accent) {
-  const s = {
+function demoSurv(accent: string): DemoImpl {
+  const s: any = {
     blob: new Blob({ x: 680, y: 380, r: 17, color: accent, trailOn: true }),
     enemies: [], t: 0, wanderT: 0, dashT: 1.2, dash: null, puffs: new Puffs(),
     tx: 680, ty: 380,
@@ -125,7 +131,7 @@ function demoSurv(accent) {
     return { x: 680 + Math.cos(a) * 320, y: 380 + Math.sin(a) * 220 };
   };
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt; s.wanderT -= dt; s.dashT -= dt;
       if (s.wanderT <= 0) { s.wanderT = rand(0.7, 1.3); s.tx = 680 + rand(-170, 170); s.ty = 380 + rand(-130, 130); }
       if (s.dashT <= 0 && !s.dash) {
@@ -173,7 +179,7 @@ function demoSurv(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       for (const e of s.enemies) {
         const a = Math.atan2(s.blob.y - e.y, s.blob.x - e.x) + Math.PI / 2;
         ctx.save();
@@ -194,13 +200,13 @@ function demoSurv(accent) {
 }
 
 // ---------------- BLOBBLASTER : twin-stick, ennemis qui poppent ----------------
-function demoShoot(accent) {
-  const s = {
+function demoShoot(accent: string): DemoImpl {
+  const s: any = {
     blob: new Blob({ x: 620, y: 460, r: 17, color: accent }),
     enemies: [], bullets: [], fireT: 0.4, spawnT: 0.3, t: 0, aim: -TAU / 4, puffs: new Puffs(),
   };
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       s.spawnT -= dt;
       if (s.spawnT <= 0) {
@@ -252,7 +258,7 @@ function demoShoot(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       // ligne de visée
       ctx.globalAlpha = 0.16;
       ctx.strokeStyle = accent;
@@ -289,15 +295,15 @@ function demoShoot(accent) {
 }
 
 // ---------------- BLOB RUN : auto-runner, sauts sur scies et pics ----------------
-function demoRun(accent) {
+function demoRun(accent: string): DemoImpl {
   const GY = 560, PX = 570;
-  const s = {
+  const s: any = {
     blob: new Blob({ x: PX, y: GY - 22, r: 19, color: accent }),
     obs: [], spawnT: 1, scroll: 300, vy: 0, t: 0, puffs: new Puffs(), dots: [],
   };
   for (let i = 0; i < 14; i++) s.dots.push({ x: rand(440, 940), y: rand(200, 520), z: rand(0.3, 1) });
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       s.spawnT -= dt;
       if (s.spawnT <= 0) {
@@ -305,7 +311,7 @@ function demoRun(accent) {
         s.obs.push({ type: Math.random() < 0.6 ? 'spike' : 'saw', x: 930, rot: 0 });
       }
       // saute le premier obstacle proche
-      const next = s.obs.find((o) => o.x > PX);
+      const next = s.obs.find((o: any) => o.x > PX);
       const grounded = s.blob.y >= GY - 22 - 0.5;
       if (grounded && next && next.x - PX < 150) {
         s.vy = -940;
@@ -332,7 +338,7 @@ function demoRun(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       ctx.globalAlpha = 0.25;
       ctx.fillStyle = '#7dd3fc';
       for (const d of s.dots) { ctx.beginPath(); ctx.arc(d.x, d.y, d.z * 2, 0, TAU); ctx.fill(); }
@@ -378,12 +384,12 @@ function demoRun(accent) {
 }
 
 // ---------------- CAVE RACER : tunnel qui respire, near-miss ----------------
-function demoCave(accent) {
-  const s = { wx: 0, blob: new Blob({ x: 590, y: 370, r: 15, color: accent, trailOn: true }), puffs: new Puffs(), boost: 0 };
-  const cy = (x) => 372 + Math.sin((s.wx + x * 0.55) * 0.011) * 96 + Math.sin((s.wx + x * 0.55) * 0.027) * 30;
-  const ch = (x) => 118 + Math.sin((s.wx + x * 0.55) * 0.006 + 2) * 36;
+function demoCave(accent: string): DemoImpl {
+  const s: any = { wx: 0, blob: new Blob({ x: 590, y: 370, r: 15, color: accent, trailOn: true }), puffs: new Puffs(), boost: 0 };
+  const cy = (x: number): number => 372 + Math.sin((s.wx + x * 0.55) * 0.011) * 96 + Math.sin((s.wx + x * 0.55) * 0.027) * 30;
+  const ch = (x: number): number => 118 + Math.sin((s.wx + x * 0.55) * 0.006 + 2) * 36;
   return {
-    update(dt) {
+    update(dt: number): void {
       s.wx += 250 * dt;
       s.boost -= dt;
       if (s.boost <= -rand(2, 3.4)) { s.boost = 0.5; }
@@ -397,7 +403,7 @@ function demoCave(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       const x0 = 440, x1 = 950;
       ctx.globalAlpha = 0.55;
       ctx.fillStyle = '#0d1220';
@@ -433,12 +439,12 @@ function demoCave(accent) {
 }
 
 // ---------------- BLOB SIMON : séquence de pads allumés ----------------
-function demoSimon(accent) {
+function demoSimon(accent: string): DemoImpl {
   const P = [[0, -64], [-64, 0], [64, 0], [0, 64]];
   const cols = ['#f97316', '#38bdf8', '#a3e635', '#fb7185'];
-  const s = { seq: [], ptr: 0, stepT: 0.8, lit: -1, litT: 0, mode: 'add', cx: 680, cy: 360, t: 0 };
+  const s: any = { seq: [], ptr: 0, stepT: 0.8, lit: -1, litT: 0, mode: 'add', cx: 680, cy: 360, t: 0 };
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       s.litT -= dt;
       s.stepT -= dt;
@@ -464,7 +470,7 @@ function demoSimon(accent) {
         }
       }
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       // losange de liaison
       ctx.globalAlpha = 0.14;
       ctx.strokeStyle = accent;
@@ -494,10 +500,10 @@ function demoSimon(accent) {
 }
 
 // ---------------- BLOB SNAKE : serpent IA qui croque des lucioles ----------------
-function demoSnake(accent) {
+function demoSnake(accent: string): DemoImpl {
   const CELL = 27, OX = 512, OY = 212, COLS = 14, ROWS = 12;
-  const px = (c) => OX + (c + 0.5) * CELL;
-  let s;
+  const px = (c: number): number => OX + (c + 0.5) * CELL;
+  let s: any;
   const reset = () => {
     s = {
       cells: [{ x: 6, y: 6 }, { x: 5, y: 6 }, { x: 4, y: 6 }],
@@ -509,9 +515,9 @@ function demoSnake(accent) {
     sync();
   };
   const spawn = () => {
-    let c;
+    let c: { x: number; y: number };
     do { c = { x: (Math.random() * COLS) | 0, y: (Math.random() * ROWS) | 0 }; }
-    while (s.cells.some((p) => p.x === c.x && p.y === c.y));
+    while (s.cells.some((p: { x: number; y: number }) => p.x === c.x && p.y === c.y));
     s.food = c;
   };
   const sync = () => {
@@ -519,7 +525,7 @@ function demoSnake(accent) {
   };
   reset();
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       s.stepT += dt;
       while (s.stepT >= s.step) {
@@ -527,11 +533,11 @@ function demoSnake(accent) {
         const head = s.cells[0];
         const f = s.food;
         // candidats : tout droit, gauche, droite — filtrés contre murs + corps
-        const dirs = [s.dir, [-s.dir[1], s.dir[0]], [s.dir[1], -s.dir[0]]];
-        const ok = dirs.filter((d) => {
+        const dirs: number[][] = [s.dir, [-s.dir[1], s.dir[0]], [s.dir[1], -s.dir[0]]];
+        const ok = dirs.filter((d: number[]) => {
           const nx = head.x + d[0], ny = head.y + d[1];
           if (nx < 0 || nx >= COLS || ny < 0 || ny >= ROWS) return false;
-          return !s.cells.some((c, i) => i < s.cells.length - 1 && c.x === nx && c.y === ny);
+          return !s.cells.some((cell: { x: number; y: number }, i: number) => i < s.cells.length - 1 && cell.x === nx && cell.y === ny);
         });
         if (!ok.length) { s.puffs.burst(s.blob.x, s.blob.y, [accent, '#ffffff'], 20, [60, 300], 0.5); reset(); return; }
         // glouton : on suit l'axe le plus éloigné de la luciole
@@ -558,7 +564,7 @@ function demoSnake(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       ctx.globalAlpha = 0.09;
       ctx.strokeStyle = '#7dd3fc';
       ctx.lineWidth = 1;
@@ -589,9 +595,9 @@ function demoSnake(accent) {
 }
 
 // ---------------- BLOB BREAKER : balle, paddle, briques ----------------
-function demoBreaker(accent) {
+function demoBreaker(accent: string): DemoImpl {
   const RX0 = 496, RX1 = 872, RY0 = 190, PAD_Y = 548;
-  let s;
+  let s: any;
   const build = () => {
     s.bricks = [];
     for (let r = 0; r < 4; r++) for (let c = 0; c < 6; c++) {
@@ -608,7 +614,7 @@ function demoBreaker(accent) {
   build();
   resetBall();
   return {
-    update(dt) {
+    update(dt: number): void {
       const b = s.ball;
       if (b.stuck > 0) {
         b.stuck -= dt;
@@ -636,7 +642,7 @@ function demoBreaker(accent) {
           }
         }
         if (b.y > 620) resetBall();
-        if (!s.bricks.some((br) => br.alive)) { build(); resetBall(); }
+        if (!s.bricks.some((br: any) => br.alive)) { build(); resetBall(); }
       }
       s.pad.x += (b.x - s.pad.x) * Math.min(1, dt * 5);
       s.pad.x = Math.max(RX0 + 52, Math.min(RX1 - 52, s.pad.x));
@@ -644,7 +650,7 @@ function demoBreaker(accent) {
       s.blob.update(dt);
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       ctx.globalAlpha = 0.2;
       ctx.strokeStyle = accent;
       ctx.strokeRect(RX0, RY0, RX1 - RX0, 620 - RY0);
@@ -673,9 +679,9 @@ function demoBreaker(accent) {
 }
 
 // ---------------- BLOB GOLF : trajectoire, drapeau, trou ----------------
-function demoGolf(accent) {
-  const s = { seed: 0, t: 0, phase: 'aim', ct: 0, ball: { x: 500, y: 0, vx: 0, vy: 0 }, hole: { x: 880 }, puffs: new Puffs(), landT: 0 };
-  const gy = (x) => 505 + Math.sin(x * 0.008 + s.seed * 7) * 34 + Math.sin(x * 0.021 + s.seed * 13) * 13;
+function demoGolf(accent: string): DemoImpl {
+  const s: any = { seed: 0, t: 0, phase: 'aim', ct: 0, ball: { x: 500, y: 0, vx: 0, vy: 0 }, hole: { x: 880 }, puffs: new Puffs(), landT: 0 };
+  const gy = (x: number): number => 505 + Math.sin(x * 0.008 + s.seed * 7) * 34 + Math.sin(x * 0.021 + s.seed * 13) * 13;
   const place = () => {
     s.seed = Math.random() * 100;
     s.ball.x = 500; s.ball.y = gy(500) - 7;
@@ -687,7 +693,7 @@ function demoGolf(accent) {
   };
   place();
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       const b = s.ball;
       if (s.phase === 'aim') {
@@ -727,7 +733,7 @@ function demoGolf(accent) {
       }
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       // terrain
       ctx.globalAlpha = 0.5;
       ctx.fillStyle = '#0d1424';
@@ -783,16 +789,16 @@ function demoGolf(accent) {
 }
 
 // ---------------- BLOB PÊCHE : lancer, touche, remorquage ----------------
-function demoFish(accent) {
+function demoFish(accent: string): DemoImpl {
   const WATER = 386, TIP = { x: 556, y: 252 };
-  const s = {
+  const s: any = {
     phase: 'idle', t: 0, bob: { x: TIP.x, y: TIP.y }, fish: { x: 880, y: 470, ph: 0 },
     fisher: new Blob({ x: 508, y: 306, r: 17, color: accent }),
     puffs: new Puffs(), jig: 0, text: null, textT: 0, waveT: 0,
   };
   const cast = () => { s.phase = 'cast'; s.t = 0; };
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       s.waveT += dt;
       s.textT -= dt;
@@ -843,7 +849,7 @@ function demoFish(accent) {
       }
       s.puffs.update(dt);
     },
-    draw(ctx) {
+    draw(ctx: CanvasRenderingContext2D): void {
       // ponton
       ctx.fillStyle = '#3b2f22';
       ctx.fillRect(430, 318, 118, 12);
@@ -916,15 +922,15 @@ function demoFish(accent) {
 }
 
 // ---------------- fallback : blobs flottants ----------------
-function demoFallback(accent) {
-  const s = { blobs: [], t: 0 };
+function demoFallback(accent: string): DemoImpl {
+  const s: any = { blobs: [], t: 0 };
   for (let i = 0; i < 5; i++) {
     const b = new Blob({ x: rand(500, 900), y: rand(200, 560), r: rand(12, 26), color: accent });
     b.vx = rand(-60, 60); b.vy = rand(-60, 60);
     s.blobs.push(b);
   }
   return {
-    update(dt) {
+    update(dt: number): void {
       s.t += dt;
       for (const b of s.blobs) {
         b.x += b.vx * dt; b.y += b.vy * dt;
@@ -933,11 +939,11 @@ function demoFallback(accent) {
         b.update(dt);
       }
     },
-    draw(ctx) { for (const b of s.blobs) b.render(ctx); },
+    draw(ctx: CanvasRenderingContext2D): void { for (const b of s.blobs) b.render(ctx); },
   };
 }
 
-const BUILDERS = {
+const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
   shoot: demoShoot,
@@ -951,11 +957,13 @@ const BUILDERS = {
 };
 
 export class Demo {
-  constructor(id, accent) { this.reset(id, accent); }
-  reset(id, accent) {
+  impl!: DemoImpl;
+
+  constructor(id: string, accent: string) { this.reset(id, accent); }
+  reset(id: string, accent: string): void {
     const f = BUILDERS[id] || demoFallback;
     this.impl = f(accent);
   }
-  update(dt) { this.impl.update(dt); }
-  draw(ctx) { this.impl.draw(ctx); }
+  update(dt: number): void { this.impl.update(dt); }
+  draw(ctx: CanvasRenderingContext2D): void { this.impl.draw(ctx); }
 }

@@ -1,14 +1,16 @@
 // SURVIBLOB — arène, esquive au stick, dash qui traverse les chasseurs.
 // Chaque spawn est télégraphié, chaque impact est éxagéré (hitstop, shake, rumble).
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta } from '../core/types';
 
 const M = 70; // marge arène
 const AW = 1280 - M * 2, AH = 720 - M * 2;
 
 export class SurvivalGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'surv', name: 'SURVIBLOB', accent: '#34d399', mood: 'survival',
     desc: 'Esquive. Dash. Répète.', controls: 'Stick bouger · A dash',
     keys: "ZQSD / Flèches + Espace",
@@ -16,7 +18,7 @@ export class SurvivalGame extends BaseGame {
     unit: 'pts', ranks: [2500, 1200, 600, 250, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.x = 640; this.blob.y = 360; this.blob.r = 21;
     this.blob.trailOn = true;
@@ -32,7 +34,7 @@ export class SurvivalGame extends BaseGame {
     this.facing = [1, 0];
   }
 
-  spawnPoint() {
+  spawnPoint(): [number, number] {
     const side = (Math.random() * 4) | 0;
     const p = 0.15 + Math.random() * 0.7;
     if (side === 0) return [M + AW * p, M + 30];
@@ -41,7 +43,7 @@ export class SurvivalGame extends BaseGame {
     return [M + AW - 30, M + AH * p];
   }
 
-  spawnWave() {
+  spawnWave(): void {
     const t = this.time;
     const r = Math.random();
     let type = 'chaser';
@@ -51,7 +53,7 @@ export class SurvivalGame extends BaseGame {
     this.telegraphs.push({ x, y, t: 0.6, type });
   }
 
-  realize(tg) {
+  realize(tg: any): void {
     const mul = 1 + this.time * 0.009;
     if (tg.type === 'chaser') {
       this.enemies.push({ kind: 'chaser', x: tg.x, y: tg.y, vx: 0, vy: 0, r: 15, sp: 130 * mul, rot: 0 });
@@ -62,7 +64,7 @@ export class SurvivalGame extends BaseGame {
     }
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const b = this.blob, I = this.input;
 
@@ -102,7 +104,7 @@ export class SurvivalGame extends BaseGame {
       this.spawnT = Math.max(0.55, 2.1 - this.time * 0.028);
     }
     for (const tg of this.telegraphs) tg.t -= dt;
-    this.telegraphs = this.telegraphs.filter((tg) => {
+    this.telegraphs = this.telegraphs.filter((tg: any) => {
       if (tg.t <= 0) { this.realize(tg); return false; }
       return true;
     });
@@ -169,7 +171,7 @@ export class SurvivalGame extends BaseGame {
         if (Math.hypot(b.x - e.x, b.y - e.y) < e.r + b.r - 4) this.die();
       }
     }
-    this.enemies = this.enemies.filter((e) => !e.dead);
+    this.enemies = this.enemies.filter((e: any) => !e.dead);
 
     // --- balles ---
     for (const p of this.bullets) {
@@ -177,7 +179,7 @@ export class SurvivalGame extends BaseGame {
       if (Math.hypot(b.x - p.x, b.y - p.y) < p.r + b.r - 4) { this.die(); }
       if (p.x < -20 || p.x > 1300 || p.y < -20 || p.y > 740) p.dead = true;
     }
-    this.bullets = this.bullets.filter((p) => !p.dead);
+    this.bullets = this.bullets.filter((p: any) => !p.dead);
 
     // --- orbes ---
     this.orbT -= dt;
@@ -199,7 +201,7 @@ export class SurvivalGame extends BaseGame {
         this.input.rumble(0.2, 0.06);
       }
     }
-    this.orbs = this.orbs.filter((o) => !o.dead);
+    this.orbs = this.orbs.filter((o: any) => !o.dead);
 
     this.score += dt * 10;
 
@@ -212,7 +214,7 @@ export class SurvivalGame extends BaseGame {
     this.fx.zoom = 1;
   }
 
-  boom(x, y, color, power = 1) {
+  boom(x: number, y: number, color: string, power = 1): void {
     this.audio.explode(power);
     this.input.rumble(Math.min(1, 0.4 + power * 0.3), 0.15);
     this.fx.shake(0.3 + power * 0.2);
@@ -221,14 +223,14 @@ export class SurvivalGame extends BaseGame {
     this.fx.stop(0.03);
   }
 
-  die() {
+  die(): void {
     if (this.state === 'over') return;
     this.boom(this.blob.x, this.blob.y, this.accent, 1.4);
     this.blob.dead = true;
     this.over();
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#07110d';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -353,3 +355,5 @@ export class SurvivalGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
+

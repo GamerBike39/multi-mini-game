@@ -1,8 +1,9 @@
 // BLOB GOLF — mini-golf 9 trous faits main : visée au stick (lissée), coup chargé au A,
 // rebonds restitués sur les murs, bunkers de sable qui freinent, trou capturé à vitesse douce.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta } from '../core/types';
 
 // Bordure fermée de 20 px, commune à tous les trous
 const BORD = [
@@ -59,7 +60,8 @@ const CHARGE_T = 1.1;     // secondes pour remplir la jauge
 const SAND_COL = '#c9a97e'; // teinte désaturée du blob dans le sable
 
 export class GolfGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'golf', name: 'BLOB GOLF', accent: '#f97316', mood: 'cave',
     desc: '9 trous, le moins de coups', controls: 'Stick viser · A maintenir = puissance',
     keys: "Flèches + Espace",
@@ -67,7 +69,7 @@ export class GolfGame extends BaseGame {
     unit: 'pts', ranks: [100, 85, 70, 50, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.r = 13;
     this.holeIdx = 0;
@@ -83,7 +85,7 @@ export class GolfGame extends BaseGame {
     this.loadHole(0);
   }
 
-  loadHole(i) {
+  loadHole(i: number): void {
     this.holeIdx = i;
     this.hole = HOLES[i];
     this.strokes = 0;
@@ -99,7 +101,7 @@ export class GolfGame extends BaseGame {
     this.aimAng = Math.atan2(this.hole.cup.y - b.y, this.hole.cup.x - b.x);
   }
 
-  inSand() {
+  inSand(): boolean {
     const b = this.blob;
     for (const s of this.hole.sand) {
       if (b.x > s.x - 4 && b.x < s.x + s.w + 4 && b.y > s.y - 4 && b.y < s.y + s.h + 4) return true;
@@ -108,7 +110,7 @@ export class GolfGame extends BaseGame {
   }
 
   // Cercle vs AABB : repousse hors du mur + réflexion sur la normale (axe de moindre pénétration).
-  hitWall(w) {
+  hitWall(w: any): any {
     const b = this.blob, r = b.r;
     const nx = Math.max(w.x, Math.min(b.x, w.x + w.w));
     const ny = Math.max(w.y, Math.min(b.y, w.y + w.h));
@@ -138,7 +140,7 @@ export class GolfGame extends BaseGame {
     return { imp, px, py, cx: b.x - px * r, cy: b.y - py * r };
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const b = this.blob, I = this.input;
     this.hitCd = Math.max(0, this.hitCd - dt);
@@ -171,7 +173,7 @@ export class GolfGame extends BaseGame {
     b.update(dt);
   }
 
-  updateAim(dt) {
+  updateAim(dt: number): void {
     const I = this.input;
     const l = Math.hypot(I.moveX, I.moveY);
     if (l > 0.25) {
@@ -182,7 +184,7 @@ export class GolfGame extends BaseGame {
     }
   }
 
-  shoot() {
+  shoot(): void {
     const b = this.blob;
     const sp = 340 + 640 * this.gauge;
     b.vx = Math.cos(this.aimAng) * sp;
@@ -202,7 +204,7 @@ export class GolfGame extends BaseGame {
     this.fx.ring(b.x, b.y, { r0: 8, r1: 42, color: this.accent, life: 0.22, width: 2.5 });
   }
 
-  updateFly(dt) {
+  updateFly(dt: number): void {
     const b = this.blob, hole = this.hole, cup = hole.cup;
 
     // friction exponentielle, beaucoup plus forte dans le sable
@@ -257,7 +259,7 @@ export class GolfGame extends BaseGame {
     }
   }
 
-  sink() {
+  sink(): void {
     const hole = this.hole;
     this.phase = 'sunk';
     this.sinkT = 0;
@@ -284,7 +286,7 @@ export class GolfGame extends BaseGame {
     this.fx.text(hole.cup.x, hole.cup.y - 14, '+' + pts + ' pts', { color: '#aeb8c8', size: 16, mono: true, life: 1.3 });
   }
 
-  updateSunk(dt) {
+  updateSunk(dt: number): void {
     const b = this.blob, cup = this.hole.cup;
     this.sinkT += dt;
     const k = Math.min(1, this.sinkT / 0.4);
@@ -298,7 +300,7 @@ export class GolfGame extends BaseGame {
     }
   }
 
-  drawAim(ctx) {
+  drawAim(ctx: CanvasRenderingContext2D): void {
     const b = this.blob;
     const ca = Math.cos(this.aimAng), sa = Math.sin(this.aimAng);
     const pulse = 0.55 + 0.45 * Math.sin(this.time * (this.phase === 'charge' ? 18 : 6));
@@ -314,7 +316,7 @@ export class GolfGame extends BaseGame {
     ctx.globalAlpha = 1;
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0a140c';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -425,3 +427,5 @@ export class GolfGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
+

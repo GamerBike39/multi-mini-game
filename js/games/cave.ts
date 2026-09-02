@@ -1,13 +1,15 @@
 // CAVE RACER — tunnel procédural déterministe (somme de sinus), de plus en plus serré.
 // Bonus de "near-miss" le long des parois, orbes en chaîne, boost risqué.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta, InputLike } from '../core/types';
 
 const COL = 32;
 
 export class CaveGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'cave', name: 'CAVE RACER', accent: '#818cf8', mood: 'cave',
     desc: 'Le tunnel se resserre', controls: 'Stick piloter · A boost',
     keys: "ZQSD / Flèches + Espace",
@@ -15,7 +17,7 @@ export class CaveGame extends BaseGame {
     unit: 'pts', ranks: [4000, 2500, 1200, 500, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.ph = [0, 0, 0, 0].map(() => Math.random() * 100);
     this.blob.x = 300; this.blob.y = 360; this.blob.r = 17;
@@ -30,36 +32,36 @@ export class CaveGame extends BaseGame {
     for (let i = 0; i < 46; i++) this.stars.push({ x: Math.random() * 1500, y: 40 + Math.random() * 640, z: 0.2 + Math.random() * 0.6 });
   }
 
-  center(i) {
+  center(i: number): number {
     return 360 + 150 * Math.sin(i * 0.043 + this.ph[0]) + 90 * Math.sin(i * 0.011 + this.ph[1]) + 45 * Math.sin(i * 0.09 + this.ph[2]);
   }
-  gap(i) {
+  gap(i: number): number {
     const g = Math.max(150, 310 - Math.min(160, i * 0.4)) * (1 + 0.13 * Math.sin(i * 0.05 + this.ph[3]));
     return Math.min(g, 330);
   }
-  clampC(i, g) { return Math.max(60 + g, Math.min(660 - g, this.center(i))); }
+  clampC(i: number, g: number): number { return Math.max(60 + g, Math.min(660 - g, this.center(i))); }
 
-  topAt(wx) {
+  topAt(wx: number): number {
     const i = wx / COL, i0 = Math.floor(i), f = i - i0;
     const g0 = this.gap(i0), g1 = this.gap(i0 + 1);
     const c0 = this.clampC(i0, g0), c1 = this.clampC(i0 + 1, g1);
     return (c0 - g0) * (1 - f) + (c1 - g1) * f;
   }
-  botAt(wx) {
+  botAt(wx: number): number {
     const i = wx / COL, i0 = Math.floor(i), f = i - i0;
     const g0 = this.gap(i0), g1 = this.gap(i0 + 1);
     const c0 = this.clampC(i0, g0), c1 = this.clampC(i0 + 1, g1);
     return (c0 + g0) * (1 - f) + (c1 + g1) * f;
   }
 
-  blockAt(i) {
+  blockAt(i: number): { x: number; y: number; w: number; h: number } | null {
     if (i < 140 || i % 97 !== 50) return null;
     const g = this.gap(i), c = this.clampC(i, g);
     const cy = c + Math.sin(i * 0.8) * g * 0.3;
     return { x: i * COL + 16 - 23, y: cy - 23, w: 46, h: 46 };
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const b = this.blob, I = this.input;
 
@@ -140,13 +142,13 @@ export class CaveGame extends BaseGame {
     this.speedNow = speed;
   }
 
-  circleRect(cx, cy, cr, x, y, w, h) {
+  circleRect(cx: number, cy: number, cr: number, x: number, y: number, w: number, h: number): boolean {
     const nx = Math.max(x, Math.min(cx, x + w));
     const ny = Math.max(y, Math.min(cy, y + h));
     return Math.hypot(cx - nx, cy - ny) < cr;
   }
 
-  die() {
+  die(): void {
     if (this.state === 'over') return;
     this.audio.explode(1.4);
     this.input.rumble(1, 0.4);
@@ -158,7 +160,7 @@ export class CaveGame extends BaseGame {
     this.over();
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#070812';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -253,3 +255,5 @@ export class CaveGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
+

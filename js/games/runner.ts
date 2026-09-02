@@ -1,14 +1,16 @@
 // BLOB RUN — auto-runner : saut variable (maintien), coyote time, buffer de saut,
 // duck pour passer sous les barres, marteaux pneumatiques... non, des scies.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta, InputLike } from '../core/types';
 
 const GY = 600;           // sol
 const PX = 320;           // x écran du joueur
 
 export class RunnerGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'run', name: 'BLOB RUN', accent: '#a3e635', mood: 'runner',
     desc: 'Saute. Baisse-toi. Vite.', controls: 'A sauter · B duck',
     keys: "Espace / K",
@@ -16,7 +18,7 @@ export class RunnerGame extends BaseGame {
     unit: 'm', ranks: [900, 550, 320, 150, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.x = PX; this.blob.y = GY - 22; this.blob.r = 22;
     this.blob.trailOn = false;
@@ -35,10 +37,10 @@ export class RunnerGame extends BaseGame {
     this.tickOff = 0;
   }
 
-  meters() { return this.dist / 45; }
-  r() { return 22 - this.duck * 9; }
+  meters(): number { return this.dist / 45; }
+  r(): number { return 22 - this.duck * 9; }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const b = this.blob, I = this.input;
 
@@ -76,7 +78,7 @@ export class RunnerGame extends BaseGame {
     this.onGround = false;
     let supportY = GY;
     if (b.y + b.r >= GY) { this.onGround = true; supportY = GY; }
-    for (const o of this.obs) {
+    for (const o of this.obs as any[]) {
       if (o.type !== 'block') continue;
       if (PX + b.r * 0.7 < o.x || PX - b.r * 0.7 > o.x + o.w) continue;
       const feet = b.y + b.r;
@@ -105,7 +107,7 @@ export class RunnerGame extends BaseGame {
       o.x -= this.speed * dt;
       if (o.type === 'saw') { o.x -= 115 * dt; o.ang += dt * 9; }
     }
-    this.obs = this.obs.filter((o) => o.x + (o.w || 60) > -80);
+    this.obs = this.obs.filter((o: any) => o.x + (o.w || 60) > -80);
 
     // spawn
     this.spawnGap -= this.speed * dt;
@@ -145,7 +147,7 @@ export class RunnerGame extends BaseGame {
     this.fx.zoom = 1 - Math.min(0.11, Math.max(0, (this.speed - 400) * 0.00028));
   }
 
-  spawnPattern() {
+  spawnPattern(): void {
     const m = this.meters();
     const pool = [];
     pool.push('s1');
@@ -154,7 +156,7 @@ export class RunnerGame extends BaseGame {
     if (m > 380) pool.push('combo1', 'combo2', 'stairs');
     const p = pool[(Math.random() * pool.length) | 0];
     let x = 1340;
-    const push = (o) => { o.x = x; this.obs.push(o); x += o.w ?? 60; };
+    const push = (o: any) => { o.x = x; this.obs.push(o); x += o.w ?? 60; };
     if (p === 's1') push({ type: 'spike', w: 36, h: 36 });
     else if (p === 's2') { push({ type: 'spike', w: 36, h: 36 }); push({ type: 'spike', w: 36, h: 36 }); }
     else if (p === 's3') { for (let i = 0; i < 3; i++) push({ type: 'spike', w: 36, h: 36 }); }
@@ -169,7 +171,7 @@ export class RunnerGame extends BaseGame {
     this.spawnGap = width + this.speed * (0.55 + Math.random() * 0.5) + 90;
   }
 
-  checkHits() {
+  checkHits(): void {
     const b = this.blob, r = b.r;
     for (const o of this.obs) {
       if (o.type === 'spike') {
@@ -191,13 +193,13 @@ export class RunnerGame extends BaseGame {
     }
   }
 
-  circleRect(cx, cy, cr, x, y, w, h) {
+  circleRect(cx: number, cy: number, cr: number, x: number, y: number, w: number, h: number): boolean {
     const nx = Math.max(x, Math.min(cx, x + w));
     const ny = Math.max(y, Math.min(cy, y + h));
     return Math.hypot(cx - nx, cy - ny) < cr;
   }
 
-  die() {
+  die(): void {
     if (this.state === 'over') return;
     this.audio.explode(1.4);
     this.input.rumble(1, 0.35);
@@ -210,7 +212,7 @@ export class RunnerGame extends BaseGame {
     this.over();
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0a0f07';
     ctx.fillRect(0, 0, 1280, 720);
 

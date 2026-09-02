@@ -3,8 +3,9 @@
 // 3 bandes de profondeur (léger/haut → lourd/bas), ~4 % de légendaires dorés.
 // 90 s, score en grammes, plus haut = mieux.
 
-import { BaseGame } from '../core/game.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta } from '../core/types';
 
 const SURFACE = 110;                    // y de la mer
 const BX = 130, BY = 78;                // blob pêcheur sur sa bouée
@@ -19,12 +20,13 @@ const BANDS = [
 ];
 const LEGEND_P = 0.04, LEGEND_W = 8000, GOLD = '#ffd166';
 
-const rand = (a, b) => a + Math.random() * (b - a);
-const ri = (a, b) => Math.floor(rand(a, b + 1));
-const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const rand = (a: number, b: number): number => a + Math.random() * (b - a);
+const ri = (a: number, b: number): number => Math.floor(rand(a, b + 1));
+const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 
 export class FishingGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'fish', name: 'BLOB PÊCHE', accent: '#38bdf8', mood: 'menu',
     desc: 'Lance, ferris, remorque', controls: 'A lancer/ferrer · Stick G hameçon',
     keys: "Espace + ZQSD",
@@ -32,7 +34,7 @@ export class FishingGame extends BaseGame {
     unit: 'g', ranks: [12000, 7000, 3500, 1500, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.blob.x = BX; this.blob.y = BY; this.blob.r = 20;
     this.timeLeft = 90;
@@ -53,7 +55,7 @@ export class FishingGame extends BaseGame {
     for (let i = 0; i < 7; i++) this.fishes.push(this.makeFish(rand(240, 1320)));
   }
 
-  makeFish(x = 1330) {
+  makeFish(x: number = 1330): any {
     let r = Math.random(), band = BANDS[BANDS.length - 1];
     for (const b of BANDS) { if (r < b.p) { band = b; break; } r -= b.p; }
     const legend = Math.random() < LEGEND_P;
@@ -69,13 +71,13 @@ export class FishingGame extends BaseGame {
     };
   }
 
-  rodTip() {
+  rodTip(): { x: number; y: number } {
     const ang = clamp(Math.atan2(this.hook.y - BY, this.hook.x - BX), -0.55, 1.25);
     return { x: BX + 8 + Math.cos(ang) * 34, y: BY - 6 + Math.sin(ang) * 34 };
   }
 
   // éclaboussure d'entrée/sortie d'eau : bruit filtré + gerbe + anneau
-  splash(x, y, power = 1) {
+  splash(x: number, y: number, power = 1): void {
     this.fx.burst(x, y, {
       n: Math.round(12 * power) + 6, speed: [70, 200 * power + 80], ang: -1.5708, spread: 1.3,
       colors: ['#bfe3ff', '#ffffff', '#7dd3fc'], size: [1.5, 4], life: 0.5, grav: 420,
@@ -86,7 +88,7 @@ export class FishingGame extends BaseGame {
     this.input.rumble(0.15, 0.07);
   }
 
-  launchCast() {
+  launchCast(): void {
     const tip = this.rodTip();
     this.castFrom = { x: tip.x, y: tip.y };
     this.castTo = clamp(tip.x + 200 + 880 * this.gauge, 180, 1230);
@@ -98,7 +100,7 @@ export class FishingGame extends BaseGame {
     this.input.rumble(0.25, 0.09);
   }
 
-  startStrike(f) {
+  startStrike(f: any): void {
     f.state = 'hooked';
     this.hooked = f;
     this.phase = 'strike';
@@ -111,7 +113,7 @@ export class FishingGame extends BaseGame {
     this.fx.text(f.x, f.y - f.r - 16, '!', { color: GOLD, size: 30, life: 0.7 });
   }
 
-  startReel() {
+  startReel(): void {
     this.phase = 'reel';
     this.tension = 0.15;
     this.jerk = 0; this.jerkT = rand(0.8, 1.5);
@@ -120,7 +122,7 @@ export class FishingGame extends BaseGame {
     this.input.rumble(0.2, 0.08);
   }
 
-  breakLine() {
+  breakLine(): void {
     const f = this.hooked;
     this.audio.miss();
     this.fx.shake(0.5);
@@ -134,7 +136,7 @@ export class FishingGame extends BaseGame {
     this.phase = 'return';
   }
 
-  capture() {
+  capture(): void {
     const f = this.hooked;
     const sx = clamp(this.hook.x, 40, 1240);
     this.splash(sx, SURFACE, 1.2);
@@ -152,13 +154,13 @@ export class FishingGame extends BaseGame {
     }
     f.state = 'caught';
     this.caughtFish = f; this.caughtFrom = { x: f.x, y: f.y }; this.caughtT = 0;
-    this.fishes = this.fishes.filter((ff) => ff !== f);
+    this.fishes = this.fishes.filter((ff: any) => ff !== f);
     this.hooked = null;
     this.tension = 0;
     this.phase = 'caught';
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const I = this.input, b = this.blob;
 
@@ -298,7 +300,7 @@ export class FishingGame extends BaseGame {
       } else if (f.state === 'reel') tt = Math.sin(this.time * 22) * 0.3;
       f.tilt += (tt - f.tilt) * Math.min(1, dt * 8);
     }
-    this.fishes = this.fishes.filter((f) => !f.dead);
+    this.fishes = this.fishes.filter((f: any) => !f.dead);
 
     // bulles de l'hameçon immergé
     this.bubT -= dt;
@@ -323,7 +325,7 @@ export class FishingGame extends BaseGame {
 
   // ---------- rendu ----------
 
-  drawFish(ctx, f) {
+  drawFish(ctx: CanvasRenderingContext2D, f: any): void {
     const r = f.r * (f.legend ? 1.6 : 1);
     ctx.save();
     ctx.translate(f.x + f.jx, f.y + f.jy);
@@ -367,7 +369,7 @@ export class FishingGame extends BaseGame {
     ctx.restore();
   }
 
-  drawCaught(ctx) {
+  drawCaught(ctx: CanvasRenderingContext2D): void {
     const f = this.caughtFish;
     const ease = 1 - Math.pow(1 - Math.min(1, this.caughtT / 0.5), 2);
     const x = this.caughtFrom.x + ((BX + 16) - this.caughtFrom.x) * ease;
@@ -385,7 +387,7 @@ export class FishingGame extends BaseGame {
     ctx.globalAlpha = 1;
   }
 
-  drawLine(ctx) {
+  drawLine(ctx: CanvasRenderingContext2D): void {
     const tip = this.rodTip(), h = this.hook;
     // canne
     ctx.strokeStyle = '#5b4636';
@@ -423,8 +425,8 @@ export class FishingGame extends BaseGame {
     ctx.stroke();
   }
 
-  drawWaves(ctx) {
-    const rows = [[0, 1.5, 4, 'rgba(125,211,252,0.5)', 2.5], [5, -1.05, 3, 'rgba(56,189,248,0.28)', 2]];
+  drawWaves(ctx: CanvasRenderingContext2D): void {
+    const rows: Array<[number, number, number, string, number]> = [[0, 1.5, 4, 'rgba(125,211,252,0.5)', 2.5], [5, -1.05, 3, 'rgba(56,189,248,0.28)', 2]];
     for (const [off, sp, amp, col, w] of rows) {
       ctx.beginPath();
       for (let x = 0; x <= 1280; x += 16) {
@@ -437,7 +439,7 @@ export class FishingGame extends BaseGame {
     }
   }
 
-  drawBuoy(ctx) {
+  drawBuoy(ctx: CanvasRenderingContext2D): void {
     ctx.save();
     ctx.beginPath();
     ctx.ellipse(BX, 103, 26, 16, 0, 0, 6.2832);
@@ -453,7 +455,7 @@ export class FishingGame extends BaseGame {
     ctx.fill();
   }
 
-  drawCastGauge(ctx) {
+  drawCastGauge(ctx: CanvasRenderingContext2D): void {
     const gx = BX - 46, gy = 40, gw = 12, gh = 74;
     UI.panel(ctx, gx - 4, gy - 4, gw + 8, gh + 8, { radius: 8, fill: 'rgba(8,11,18,0.78)', stroke: '#ffffff2e' });
     const hFill = gh * this.gauge;
@@ -462,7 +464,7 @@ export class FishingGame extends BaseGame {
     UI.txt(ctx, 'PORTÉE', gx + gw / 2, gy + gh + 18, { size: 9, align: 'center', color: '#7c8698' });
   }
 
-  drawTension(ctx) {
+  drawTension(ctx: CanvasRenderingContext2D): void {
     const bw = 260, bx = 640 - bw / 2, by = 684, bh = 10;
     UI.panel(ctx, bx - 5, by - 5, bw + 10, bh + 10, { radius: 9, fill: 'rgba(8,11,18,0.78)', stroke: '#ffffff2e' });
     const t = this.tension;
@@ -477,7 +479,7 @@ export class FishingGame extends BaseGame {
     UI.txt(ctx, 'TENSION' + (t > 0.78 ? ' !' : ''), 640, by - 11, { size: 11, align: 'center', color: col, mono: true });
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     // ciel + mer
     const sky = ctx.createLinearGradient(0, 0, 0, SURFACE + 2);
     sky.addColorStop(0, '#05070d');
@@ -537,3 +539,5 @@ export class FishingGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
+

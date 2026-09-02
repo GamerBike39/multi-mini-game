@@ -6,12 +6,11 @@
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "strict": true,
     "noEmit": true,
-    "allowJs": true,
-    "checkJs": false,
+    "allowJs": false,
     "isolatedModules": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["js/**/*.js", "js/**/*.ts", "js/**/*.d.ts"]
+  "include": ["js/**/*.ts", "js/**/*.d.ts"]
 }

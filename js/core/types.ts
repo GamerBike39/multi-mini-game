@@ -62,6 +62,28 @@ export interface ToneLikeOptions {
   dest?: AudioNode | null;
 }
 
+export interface NoiseLikeOptions {
+  t?: number;
+  dur?: number;
+  vol?: number;
+  f?: number;
+  f1?: number;
+  type?: BiquadFilterType;
+  q?: number;
+  dest?: AudioNode | null;
+}
+
+export interface ThumpLikeOptions {
+  f0?: number;
+  f1?: number;
+  dur?: number;
+}
+
+export interface TrackLikeOptions {
+  countIn?: number;
+  bpm?: number;
+}
+
 export interface AudioLike {
   ctx: AudioContext | null;
   muted: boolean;
@@ -74,14 +96,33 @@ export interface AudioLike {
   setVol(key: VolumeKey, value: number): void;
   setMuted(muted: boolean): void;
   tone(options?: ToneLikeOptions): void;
+  noise(options?: NoiseLikeOptions): void;
+  thump(vol?: number, options?: ThumpLikeOptions): void;
   beat(): number;
   uiMove(): void;
   uiOk(): void;
   uiBack(): void;
+  jump(): void;
+  land(): void;
+  dash(): void;
+  shoot(): void;
+  hitEnemy(): void;
+  hurt(): void;
+  coin(step?: number): void;
+  perfect(): void;
+  good(): void;
   milestone(): void;
-  miss(): void;
   whiff(): void;
+  miss(): void;
   explode(big?: number): void;
+  musicOn: boolean;
+  trackMode: boolean;
+  startTrack(buffer: AudioBuffer, options?: TrackLikeOptions): void;
+  pauseTrack(): void;
+  resumeTrack(): void;
+  trackPos(): number;
+  songTime(): number;
+  drum(kind: string, t: number): void;
 }
 
 export interface SettingsLike {
@@ -90,6 +131,7 @@ export interface SettingsLike {
   open(): void;
   draw(ctx: CanvasRenderingContext2D, accent?: string): void;
   onPointer(x: number, y: number): void | boolean;
+  onPointerMove(x: number, y: number): void | boolean;
   onPointerUp(): void;
 }
 
@@ -118,6 +160,11 @@ export interface AppLike {
   onPointerMove?(x: number, y: number): void;
   onPointerUp?(): void;
   onPointerLeave?(): void;
+}
+
+export interface GameConstructor {
+  new (engine: EngineLike): AppLike;
+  meta: GameMeta;
 }
 
 export interface EngineLike {

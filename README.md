@@ -23,10 +23,12 @@ Puis ouvre http://localhost:5173
 Pour générer la version distribuable : `npm run build`, puis `npm run preview` pour
 la tester localement.
 
-`npm run typecheck` vérifie les modules TypeScript sans générer de fichiers. La
-migration est progressive : le moteur, l'audio, les réglages, l'UI commune et le
-point d'entrée sont en TypeScript ; les jeux et les démos peuvent encore être
-convertis un par un.
+`npm run typecheck` vérifie l'ensemble des modules TypeScript sans générer de
+fichiers. La migration applicative est terminée : le moteur, l'audio, les
+réglages, l'UI commune, les démos et les mini-jeux sont en TypeScript. Exception
+volontaire : `js/games/rhythm.js` reste temporairement en JavaScript pour sa
+prochaine refonte ; son contrat d'intégration est documenté dans
+`js/games/rhythm.d.ts`.
 
 ## Héberger sur Vercel
 
@@ -91,8 +93,9 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
-js/games/   rhythm, survival, shooter, runner, cave, simon, snake, breaker, golf, fish (JS, migration progressive)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish (TypeScript)
+js/games/   rhythm.js + rhythm.d.ts (exception temporaire, refonte à venir)
 js/main.ts  point d'entrée navigateur
-js/menu.js  hub (fiche plein écran + grille globale, migration à venir)
-js/demos.js démos simulées (attract mode) de la fiche
+js/menu.ts  hub (fiche plein écran + grille globale)
+js/demos.ts démos simulées (attract mode) de la fiche
 ```

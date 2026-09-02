@@ -6,6 +6,7 @@ interface BlobOptions {
   y?: number;
   r?: number;
   color?: string;
+  trailOn?: boolean;
 }
 
 interface TrailPoint {
@@ -32,11 +33,12 @@ export class Blob {
   dead = false;
   hideTrail = false;
 
-  constructor({ x = 640, y = 360, r = 22, color = '#7dd3fc' }: BlobOptions = {}) {
+  constructor({ x = 640, y = 360, r = 22, color = '#7dd3fc', trailOn = false }: BlobOptions = {}) {
     this.x = x;
     this.y = y;
     this.r = r;
     this.color = color;
+    this.trailOn = trailOn;
   }
 
   punch(amount = 0.3): void {

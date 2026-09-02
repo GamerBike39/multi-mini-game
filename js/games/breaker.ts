@@ -2,9 +2,10 @@
 // grille 10×6, drops (MULTI / LARGE / SLOW), combo à pitch montant.
 // Tout est dessiné au canvas, tous les sons sont synthétisés.
 
-import { BaseGame } from '../core/game.ts';
-import { Blob } from '../core/blob.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import { Blob } from '../core/blob';
+import * as UI from '../core/ui';
+import type { EngineLike, GameMeta } from '../core/types';
 
 const WALL = 20;             // marge de jeu (murs latéraux + plafond)
 const PAD_Y = 660;           // y du paddle
@@ -14,10 +15,11 @@ const BX0 = 86, BY0 = 90, GX = 112, GY = 33; // grille dans la zone x 80..1200, 
 const PTS = [50, 40, 30, 20, 15, 10];
 const PAL = ['#fb7185', '#f472b6', '#c084fc', '#818cf8', '#38bdf8', '#34d399'];
 const PALD = ['#6b2434', '#66284a', '#4a2a63', '#333a6b', '#1c4a66', '#1a5a42']; // teintes sombres (brique abîmée)
-const DCOL = { MULTI: '#7dd3fc', LARGE: '#34d399', SLOW: '#c084fc' };
+const DCOL: Record<string, string> = { MULTI: '#7dd3fc', LARGE: '#34d399', SLOW: '#c084fc' };
 
 export class BreakerGame extends BaseGame {
-  static meta = {
+  [key: string]: any;
+  static meta: GameMeta = {
     id: 'breaker', name: 'BLOB BREAKER', accent: '#fb7185', mood: 'shooter',
     desc: 'Casse tout au blob-rebond', controls: 'Stick G / ZQSD paddle · A lancer',
     keys: "ZQSD + Espace",
@@ -25,7 +27,7 @@ export class BreakerGame extends BaseGame {
     unit: 'pts', ranks: [5000, 3000, 1500, 600, 0],
   };
 
-  constructor(engine) {
+  constructor(engine: EngineLike) {
     super(engine);
     this.pad = { x: 640, y: PAD_Y, vx: 0, vy: 0 };
     this.padW = 110;
@@ -47,7 +49,7 @@ export class BreakerGame extends BaseGame {
     this.buildBricks();
   }
 
-  buildBricks() {
+  buildBricks(): void {
     this.bricks = [];
     for (let r = 0; r < ROWS; r++) {
       for (let c = 0; c < COLS; c++) {
@@ -58,7 +60,7 @@ export class BreakerGame extends BaseGame {
   }
 
   // renormalise la vitesse de toutes les balles actives (après +10 / changement de niveau)
-  normSpeed() {
+  normSpeed(): void {
     for (const b of this.balls) {
       if (this.stuck && b === this.balls[0]) continue;
       const l = Math.hypot(b.vx, b.vy) || 1;
@@ -66,7 +68,7 @@ export class BreakerGame extends BaseGame {
     }
   }
 
-  launch() {
+  launch(): void {
     const b = this.balls[0];
     const a = (Math.random() * 2 - 1) * (Math.PI / 9); // ±20° autour de la verticale
     b.vx = Math.sin(a) * this.speed;
@@ -77,7 +79,7 @@ export class BreakerGame extends BaseGame {
     this.fx.burst(b.x, b.y, { n: 8, speed: [40, 200], colors: [this.accent, '#ffffff'], life: 0.35 });
   }
 
-  resetBall() {
+  resetBall(): void {
     const b = new Blob({ x: this.pad.x, y: PAD_Y - 26, r: 9, color: this.accent });
     b.trailOn = true;
     this.balls = [b];
@@ -85,7 +87,7 @@ export class BreakerGame extends BaseGame {
     this.stuck = true;
   }
 
-  hitBrick(br, bl) {
+  hitBrick(br: any, bl: any): void {
     const cx = br.x + br.w / 2, cy = br.y + br.h / 2;
     br.hp--;
     if (br.hp > 0) {
@@ -119,7 +121,7 @@ export class BreakerGame extends BaseGame {
     }
   }
 
-  nextLevel() {
+  nextLevel(): void {
     this.level++;
     this.audio.milestone();
     this.fx.flash(this.accent, 0.15);
@@ -131,7 +133,7 @@ export class BreakerGame extends BaseGame {
     this.normSpeed();
   }
 
-  applyDrop(kind) {
+  applyDrop(kind: any): void {
     const px = this.pad.x, py = PAD_Y - 26;
     this.audio.good();
     this.fx.flash(this.accent, 0.1);
@@ -160,12 +162,12 @@ export class BreakerGame extends BaseGame {
     this.fx.text(px, py - 14, kind, { color: DCOL[kind], size: 20 });
   }
 
-  wallHit(bl) {
+  wallHit(bl: any): void {
     bl.punch(0.1);
     this.audio.tone({ f: 190, dur: 0.03, vol: 0.05, type: 'sine' });
   }
 
-  update(dt) {
+  update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const I = this.input, pad = this.pad;
     // temps réel (hors slow-mo) pour les minuteurs de bonus / combo
@@ -241,7 +243,7 @@ export class BreakerGame extends BaseGame {
     }
 
     // balles mortes
-    const alive = this.balls.filter((b) => !b.dead);
+    const alive = this.balls.filter((b: any) => !b.dead);
     if (alive.length !== this.balls.length) {
       this.balls = alive;
       if (alive.length) this.blob = alive[0];
@@ -263,16 +265,16 @@ export class BreakerGame extends BaseGame {
         this.applyDrop(d.kind);
       }
     }
-    this.drops = this.drops.filter((d) => !d.dead);
+    this.drops = this.drops.filter((d: any) => !d.dead);
 
     // flash d'impact des briques abîmées
     for (const br of this.bricks) if (br.fl > 0) br.fl -= dt;
 
     // niveau fini ?
-    if (this.bricks.every((br) => br.hp <= 0)) this.nextLevel();
+    if (this.bricks.every((br: any) => br.hp <= 0)) this.nextLevel();
   }
 
-  drawPaddle(ctx) {
+  drawPaddle(ctx: CanvasRenderingContext2D): void {
     const pad = this.pad, w = this.padW, h = 18;
     const sq = Math.min(1, Math.abs(pad.vx) / 900);
     ctx.save();
@@ -299,7 +301,7 @@ export class BreakerGame extends BaseGame {
     ctx.restore();
   }
 
-  lifeBlob(ctx, x, y, on) {
+  lifeBlob(ctx: CanvasRenderingContext2D, x: number, y: number, on: boolean): void {
     ctx.globalAlpha = on ? 1 : 0.15;
     ctx.fillStyle = this.accent;
     ctx.beginPath();
@@ -313,7 +315,7 @@ export class BreakerGame extends BaseGame {
     ctx.globalAlpha = 1;
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     // fond
     ctx.fillStyle = '#0a0912';
     ctx.fillRect(0, 0, 1280, 720);
@@ -399,3 +401,4 @@ export class BreakerGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
+
