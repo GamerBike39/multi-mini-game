@@ -364,6 +364,7 @@ export class AudioSys implements AudioLike {
     this.chart = options.chart || null;
     this.chartPtr = 0;
     this.musicOn = true;
+    if (this.adaptiveEnabled) this.adaptiveDirector?.start();
     this.timer = window.setInterval(() => this.scheduleAhead(), 55);
     this.scheduleAhead();
   }

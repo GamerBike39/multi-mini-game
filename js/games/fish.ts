@@ -105,6 +105,7 @@ export class FishingGame extends BaseGame {
     this.hooked = f;
     this.phase = 'strike';
     this.strikeT = 0.65;
+    this.musicEvent('fishBite', 0.9);
     this.audio.good();
     this.input.rumble(0.3, 0.1);
     this.blob.punch(0.25);
@@ -124,6 +125,7 @@ export class FishingGame extends BaseGame {
 
   breakLine(): void {
     const f = this.hooked;
+    this.musicEvent('miss', 0.9);
     this.audio.miss();
     this.fx.shake(0.5);
     this.fx.text(this.hook.x, this.hook.y - 30, 'ROMPUE !', { color: '#ff5470', size: 26 });
@@ -140,6 +142,7 @@ export class FishingGame extends BaseGame {
     const f = this.hooked;
     const sx = clamp(this.hook.x, 40, 1240);
     this.splash(sx, SURFACE, 1.2);
+    this.musicEvent('fishCaught', 1);
     this.audio.explode(0.6);
     this.input.rumble(0.5, 0.15);
     this.fx.shake(0.16);
@@ -149,6 +152,7 @@ export class FishingGame extends BaseGame {
     if (f.legend) this.fx.text(sx, SURFACE - 70, 'LÉGENDAIRE !', { color: GOLD, size: 30, life: 1.4 });
     if (f.w > this.bestCatch) {
       this.bestCatch = f.w;
+      this.musicEvent('newHighScore', 0.7);
       this.audio.milestone();
       this.fx.text(sx, SURFACE - 100, 'RECORD !', { color: this.accent, size: 18, life: 1.2 });
     }
@@ -539,5 +543,4 @@ export class FishingGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
 

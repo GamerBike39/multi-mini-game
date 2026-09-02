@@ -166,6 +166,8 @@ export class ShooterGame extends BaseGame {
           if (e.hp <= 0) {
             e.dead = true;
             this.streak++;
+            this.musicEvent('enemyKilled', e.kind === 'tank' ? 1.3 : 0.7);
+            if (this.streak >= 3) this.musicEvent('combo', Math.min(1.4, this.streak / 8));
             const pts = e.kind === 'tank' ? 30 : e.kind === 'sat' ? 40 : e.kind === 'rock' ? 15 : e.kind === 'sniper' ? 20 : 10;
             this.score += pts * this.mult();
             this.fx.text(e.x, e.y - 22, '+' + pts * this.mult(), { color: '#ffd166', size: 17, mono: true });
@@ -412,5 +414,4 @@ export class ShooterGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
 

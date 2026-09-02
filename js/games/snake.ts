@@ -109,6 +109,8 @@ export class SnakeGame extends BaseGame {
     if (f.gold) { pts *= 5; this.audio.perfect(); this.fx.shake(0.12); }
     else this.audio.coin(this.coinStep);
     this.score += pts;
+    this.musicEvent('combo', Math.min(1.2, 0.35 + this.eaten * 0.025));
+    if (f.gold) this.musicEvent('powerUp', 0.85);
     const x = this.px(f.x), y = this.px(f.y);
     this.fx.burst(x, y, { n: f.gold ? 22 : 12, speed: [60, 300], colors: f.gold ? ['#ffd166', '#fde047', '#ffffff'] : ['#fde047', '#ffffff'], life: 0.5 });
     this.fx.ring(x, y, { r0: 6, r1: f.gold ? 84 : 46, color: f.gold ? '#ffd166' : '#fde047', life: 0.32 });
@@ -281,4 +283,3 @@ export class SnakeGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-

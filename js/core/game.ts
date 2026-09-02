@@ -4,6 +4,7 @@
 import { Fx } from './fx';
 import { Blob } from './blob';
 import * as UI from './ui';
+import { GameMusicAdapter, type GameMusicSource } from './music/game-adapter';
 import type { AudioLike, EngineLike, GameMeta, InputLike, SettingsLike } from './types';
 
 interface BestResult {
@@ -37,6 +38,7 @@ export class BaseGame {
   pvU = false;
   pvD = false;
   readonly settings: SettingsLike;
+  readonly musicAdapter: GameMusicAdapter;
   _statDone = false;
   cursor = 'default';
   bestKey?: string;
@@ -56,15 +58,14 @@ export class BaseGame {
     this.settings = engine.settings;
     this.hint = this.meta.hint;
     this.blob = new Blob({ r: 22, color: this.accent });
+    this.musicAdapter = new GameMusicAdapter(this.audio, this.meta);
   }
 
   get isOver(): boolean {
     return this.state === 'over';
   }
 
-  enter(): void {
-    this.audio.startMusic(this.meta.mood, this.musicOpts || {});
-  }
+  enter(): void { this.musicAdapter.start(); }
 
   // Les mini-jeux redéfinissent ces deux méthodes ; les versions vides
   // permettent au moteur de manipuler uniformément menu et jeux.
@@ -73,7 +74,7 @@ export class BaseGame {
   render(_ctx: CanvasRenderingContext2D): void {}
 
   exit(): void {
-    this.audio.stopMusic();
+    this.musicAdapter.stop();
     // Temps non comptabilisé par over() (partie abandonnée) : on le crédite quand même.
     if (!this._statDone && this.time > 0) UI.addTime(this.meta.id, this.time);
   }
@@ -151,6 +152,7 @@ export class BaseGame {
       }
       return true;
     }
+    this.musicAdapter.update(dt, this as unknown as GameMusicSource);
     return false;
   }
 
@@ -167,7 +169,12 @@ export class BaseGame {
     this._statDone = true;
     UI.addStat(this.meta.id, { score: Math.floor(this.score), time: this.time, win });
     this.audio.explode(1.3);
+    this.musicEvent(win ? 'waveComplete' : 'playerHit', win ? 0.8 : 1);
     this.input.rumble(1, 0.35);
+  }
+
+  musicEvent(type: Parameters<GameMusicAdapter['event']>[0], strength = 1, value = 0): void {
+    this.musicAdapter.event(type, strength, value);
   }
 
   restart(): void {

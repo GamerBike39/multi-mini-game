@@ -120,6 +120,7 @@ export class RunnerGame extends BaseGame {
     if (this.meters() >= this.milestone) {
       this.fx.text(640, 240, Math.floor(this.meters()) + ' m !', { color: this.accent, size: 30 });
       this.audio.milestone();
+      this.musicEvent('waveComplete', 0.35);
       this.fx.flash(this.accent, 0.06);
       this.milestone += 250;
     }

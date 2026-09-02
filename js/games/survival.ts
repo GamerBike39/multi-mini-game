@@ -51,6 +51,7 @@ export class SurvivalGame extends BaseGame {
     else if (t > 28 && r < 0.5) type = 'gunner';
     const [x, y] = this.spawnPoint();
     this.telegraphs.push({ x, y, t: 0.6, type });
+    this.musicEvent('waveStart', 0.35);
   }
 
   realize(tg: any): void {
@@ -123,6 +124,7 @@ export class SurvivalGame extends BaseGame {
         if (dashing && Math.hypot(b.x - e.x, b.y - e.y) < e.r + b.r + 4) {
           e.dead = true;
           this.score += 25;
+          this.musicEvent('enemyKilled', 0.7);
           this.boom(e.x, e.y, '#ff5470', 0.5);
           this.fx.text(e.x, e.y - 24, '+25', { color: '#ffd166', size: 20, mono: true });
         } else if (Math.hypot(b.x - e.x, b.y - e.y) < e.r + b.r - 4) {
@@ -195,6 +197,7 @@ export class SurvivalGame extends BaseGame {
         o.dead = true;
         this.coinStep++;
         this.score += 50;
+        this.musicEvent('powerUp', 0.5);
         this.audio.coin(this.coinStep);
         this.fx.burst(o.x, o.y, { n: 10, speed: [50, 220], colors: ['#7df9ff', '#ffffff'], life: 0.4 });
         this.fx.text(o.x, o.y - 20, '+50', { color: '#7df9ff', size: 18, mono: true });
@@ -355,5 +358,4 @@ export class SurvivalGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
 

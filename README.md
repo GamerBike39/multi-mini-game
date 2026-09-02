@@ -84,6 +84,12 @@ premier mode adaptatif. Le mode manuel expose les neuf axes `MusicState` ; `Y`
 active la navigation dans ces axes, `← →` les règle, `LB` active l'adaptation et
 `RB` réinitialise l'état.
 
+En jeu, le menu et les mini-jeux passent par le même adaptateur musical : il
+traduit leur état et leurs événements (vagues, combos, prises, near-miss, etc.)
+en `MusicState` et laisse le directeur adaptatif piloter les couches existantes.
+Les références exactes sont utilisées par Survival, Shooter et Fish ; les autres
+jeux conservent leurs compositions générées sur ce même rack.
+
 Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en pause ou la
 reprennent ; l'item « Quitter » permet de revenir au hub.
 
@@ -106,7 +112,7 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
-js/core/music/ transport, références, état manuel et direction adaptative (TypeScript)
+js/core/music/ transport, références, état manuel, direction adaptative et adaptateurs de jeu (TypeScript)
 js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm (TypeScript)
 js/main.ts  point d'entrée navigateur
 js/menu.ts  hub (fiche plein écran + grille globale)

@@ -99,6 +99,7 @@ export class GolfGame extends BaseGame {
     b.trail.length = 0; b.trailOn = false; b.dead = false;
     // QoL : l'angle initial pointe vers le trou
     this.aimAng = Math.atan2(this.hole.cup.y - b.y, this.hole.cup.x - b.x);
+    if (i > 0) this.musicEvent('waveStart', 0.25);
   }
 
   inSand(): boolean {
@@ -272,6 +273,8 @@ export class GolfGame extends BaseGame {
     const label = diff <= -2 ? 'EAGLE' : diff === -1 ? 'BIRDIE' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : '+' + diff;
     const pts = Math.max(0, 10 - diff * 3);
     this.score += pts;
+    this.musicEvent('waveComplete', 0.45);
+    if (this.strokes === 1) this.musicEvent('holeInOne', 1);
 
     this.audio.milestone();
     if (diff <= -1) this.audio.perfect();
@@ -427,5 +430,4 @@ export class GolfGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
 

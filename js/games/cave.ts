@@ -109,6 +109,7 @@ export class CaveGame extends BaseGame {
         this.coinStep++;
         this.coinT = 1.4;
         this.orbScore += 25;
+        this.musicEvent('powerUp', 0.5);
         this.audio.coin(this.coinStep);
         this.fx.burst(ox, oy, { n: 10, speed: [50, 230], colors: ['#7df9ff', '#ffffff'], life: 0.4 });
         this.fx.text(ox, oy - 18, '+25', { color: '#7df9ff', size: 16, mono: true });
@@ -124,6 +125,7 @@ export class CaveGame extends BaseGame {
     if (this.proxT > 0.22 && this.proxCd <= 0) {
       this.proxT = 0; this.proxCd = 1.1;
       this.proxScore += 25;
+      this.musicEvent('nearMiss', 0.7);
       this.audio.good();
       this.fx.text(b.x, b.y - 34, 'PROX +25', { color: '#c7d2fe', size: 16 });
       this.fx.burst(b.x, b.y + (b.y < 360 ? b.r + 6 : -b.r - 6), { n: 6, speed: [40, 160], colors: ['#c7d2fe'], size: [1.5, 3], life: 0.3 });
@@ -255,5 +257,4 @@ export class CaveGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
 
