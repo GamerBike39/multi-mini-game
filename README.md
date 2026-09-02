@@ -78,8 +78,11 @@ manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la ré
 et bruit avec intensités réglables.
 
 Validation musicale : la route `/music-test` permet d'écouter les références
-déterministes Shooter, Survival et Fish, de mettre le transport en pause, et de
-désactiver temporairement chaque couche pour la validation du mix.
+déterministes Shooter, Survival et Fish, de mettre le transport en pause, de
+désactiver temporairement chaque couche, puis de comparer la référence fixe au
+premier mode adaptatif. Le mode manuel expose les neuf axes `MusicState` ; `Y`
+active la navigation dans ces axes, `← →` les règle, `LB` active l'adaptation et
+`RB` réinitialise l'état.
 
 Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en pause ou la
 reprennent ; l'item « Quitter » permet de revenir au hub.
@@ -103,7 +106,7 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
-js/core/music/ transport musical et primitives d'architecture audio (TypeScript)
+js/core/music/ transport, références, état manuel et direction adaptative (TypeScript)
 js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm (TypeScript)
 js/main.ts  point d'entrée navigateur
 js/menu.ts  hub (fiche plein écran + grille globale)

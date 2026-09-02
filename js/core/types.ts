@@ -1,4 +1,4 @@
-import type { ReferenceMusic } from './music/types';
+import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
 
 export const ACTIONS = [
   'a', 'b', 'x', 'y',
@@ -169,6 +169,15 @@ export interface AudioLike {
   musicStep(): number;
   musicPhrase(): number;
   musicTransportTime(): number;
+  updateMusicState(dt: number): void;
+  setMusicState(state: Partial<MusicState>): void;
+  getMusicState(): MusicState;
+  getMusicTargetState(): MusicState;
+  resetMusicState(): void;
+  musicEvent(type: GameMusicEventName, strength?: number, value?: number): void;
+  setAdaptiveEnabled(enabled: boolean): void;
+  isAdaptiveEnabled(): boolean;
+  musicSection(): MusicalSection;
   setMusicLayerPresence(layer: MusicLayerName, value: number): void;
   setMusicLayerBrightness(layer: MusicLayerName, value: number): void;
 }

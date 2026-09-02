@@ -135,6 +135,10 @@ export class ReferencePlayer {
     return this.active && this.transport.running && !this.transport.paused;
   }
 
+  isActive(): boolean {
+    return this.active && this.transport.running;
+  }
+
   getBpm(): number { return this.transport.bpm; }
   getBeat(now: number): number { return this.transport.beatAt(now); }
   getBar(now: number): number { return this.transport.barAt(now); }

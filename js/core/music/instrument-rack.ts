@@ -262,6 +262,21 @@ export class InstrumentRack {
     this.harmony.trigger(notes, time, duration, velocity);
   }
 
+  setLayerPresence(layer: InstrumentName, value: number, time?: number): void {
+    this[layer].setPresence(value, time);
+  }
+
+  setLayerBrightness(layer: InstrumentName, value: number, time?: number): void {
+    this[layer].setBrightness(value, time);
+  }
+
+  resetLayers(time?: number): void {
+    for (const layer of ['drums', 'bass', 'harmony', 'arp', 'lead', 'fx'] as const) {
+      this[layer].setPresence(1, time);
+      this[layer].setBrightness(0.5, time);
+    }
+  }
+
   dispose(): void {
     this.drums.dispose();
     this.bass.dispose();

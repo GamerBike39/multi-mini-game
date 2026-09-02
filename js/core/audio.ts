@@ -4,10 +4,12 @@
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
 import type { AudioLike, MusicLayerName, VolumeKey } from './types';
+import { AdaptiveDirector } from './music/adaptive-director';
 import { InstrumentRack } from './music/instrument-rack';
 import { ReferencePlayer } from './music/reference-player';
+import { MusicStateController } from './music/state';
 import { MusicTransport } from './music/transport';
-import type { ReferenceMusic } from './music/types';
+import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
 
 type HatMode = 'off' | '8ths' | '16ths';
 type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
@@ -111,6 +113,9 @@ export class AudioSys implements AudioLike {
   noiseBuf!: AudioBuffer;
   instrumentRack: InstrumentRack | null = null;
   referencePlayer: ReferencePlayer | null = null;
+  readonly musicState = new MusicStateController();
+  adaptiveDirector: AdaptiveDirector | null = null;
+  adaptiveEnabled = false;
 
   trackMode = false;
   trackCountIn = 0;
@@ -193,6 +198,7 @@ export class AudioSys implements AudioLike {
       },
     });
     this.referencePlayer = new ReferencePlayer(this.transport, this.instrumentRack);
+    this.adaptiveDirector = new AdaptiveDirector(this.transport, this.instrumentRack, { state: this.musicState, seed: 0x424c4f42 });
     return true;
   }
 
@@ -381,6 +387,7 @@ export class AudioSys implements AudioLike {
     this.chart = null;
     this.chartPtr = 0;
     this.musicOn = true;
+    if (this.adaptiveEnabled) this.adaptiveDirector?.start();
     this.timer = window.setInterval(() => this.scheduleAhead(), 55);
     this.scheduleAhead();
   }
@@ -390,6 +397,7 @@ export class AudioSys implements AudioLike {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.adaptiveDirector?.stop();
     this.musicOn = false;
     this.transport.stop();
     this.referencePlayer?.stop();
@@ -530,6 +538,7 @@ export class AudioSys implements AudioLike {
     if (!this.ctx || !this.musicOn) return;
     if (this.trackMode) this.resumeTrack();
     else this.transport.resume(this.ctx.currentTime);
+    if (this.adaptiveEnabled && this.referencePlayer?.isActive()) this.adaptiveDirector?.start();
   }
 
   musicBpm(): number { return this.musicOn ? this.transport.bpm : 0; }
@@ -539,11 +548,53 @@ export class AudioSys implements AudioLike {
   musicPhrase(): number { return this.musicOn && this.ctx ? this.transport.phraseAt(this.ctx.currentTime) : 0; }
   musicTransportTime(): number { return this.musicOn && this.ctx ? this.transport.transportTime(this.ctx.currentTime) : 0; }
 
+  updateMusicState(dt: number): void {
+    if (this.adaptiveDirector) this.adaptiveDirector.update(dt);
+    else this.musicState.update(dt);
+  }
+
+  setMusicState(state: Partial<MusicState>): void {
+    this.musicState.setState(state);
+  }
+
+  getMusicState(): MusicState {
+    return this.musicState.snapshot();
+  }
+
+  getMusicTargetState(): MusicState {
+    return this.musicState.targetSnapshot();
+  }
+
+  resetMusicState(): void {
+    this.musicState.reset();
+  }
+
+  musicEvent(type: GameMusicEventName, strength = 1, value = 0): void {
+    this.adaptiveDirector?.event(type, strength, value);
+  }
+
+  setAdaptiveEnabled(enabled: boolean): void {
+    this.adaptiveEnabled = enabled;
+    if (!enabled) {
+      this.adaptiveDirector?.stop();
+      return;
+    }
+    if (this.musicOn && this.referencePlayer?.isActive()) this.adaptiveDirector?.start();
+  }
+
+  isAdaptiveEnabled(): boolean {
+    return this.adaptiveEnabled;
+  }
+
+  musicSection(): MusicalSection {
+    return this.adaptiveDirector?.section ?? 'groove';
+  }
+
   setMusicLayerPresence(layer: MusicLayerName, value: number): void {
-    this.instrumentRack?.[layer].setPresence(value, this.ctx?.currentTime);
+    this.instrumentRack?.setLayerPresence(layer, value, this.ctx?.currentTime);
   }
 
   setMusicLayerBrightness(layer: MusicLayerName, value: number): void {
-    this.instrumentRack?.[layer].setBrightness(value, this.ctx?.currentTime);
+    this.instrumentRack?.setLayerBrightness(layer, value, this.ctx?.currentTime);
   }
 }

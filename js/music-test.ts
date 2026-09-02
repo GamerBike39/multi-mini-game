@@ -1,6 +1,7 @@
 import * as UI from './core/ui';
 import type { AppLike, EngineLike, InputLike, MusicLayerName } from './core/types';
-import type { ReferenceMusic } from './core/music/types';
+import { MUSIC_STATE_KEYS, type MusicStateKey } from './core/music/state';
+import type { MusicState, ReferenceMusic } from './core/music/types';
 
 const REFERENCES: readonly ReferenceMusic[] = ['shooter', 'survival', 'fish'];
 const REFERENCE_LABELS: Record<ReferenceMusic, string> = {
@@ -22,6 +23,17 @@ const LAYER_LABELS: Record<MusicLayerName, string> = {
   lead: 'LEAD',
   fx: 'FX / BELL',
 };
+const STATE_LABELS: Record<MusicStateKey, string> = {
+  intensity: 'INTENSITÉ',
+  tension: 'TENSION',
+  danger: 'DANGER',
+  momentum: 'MOMENTUM',
+  complexity: 'COMPLEXITÉ',
+  brightness: 'LUMINOSITÉ',
+  triumph: 'TRIOMPHE',
+  calm: 'CALME',
+  narrativeArc: 'ARC NARRATIF',
+};
 
 const pulse = (time: number): number => 0.72 + Math.sin(time * Math.PI * 2) * 0.08;
 
@@ -36,6 +48,8 @@ export class MusicTestApp implements AppLike {
   private time = 0;
   private referenceIndex = 0;
   private layerIndex = 0;
+  private stateIndex = 0;
+  private stateFocus = false;
   private playingReference: ReferenceMusic | null = null;
   paused = false;
   private readonly layerEnabled: Record<MusicLayerName, boolean> = {
@@ -60,10 +74,20 @@ export class MusicTestApp implements AppLike {
       this.engine.menuBack();
       return;
     }
-    if (I.pressed('left')) this.selectReference(-1);
-    if (I.pressed('right')) this.selectReference(1);
-    if (I.pressed('up')) this.selectLayer(-1);
-    if (I.pressed('down')) this.selectLayer(1);
+    if (I.pressed('y')) this.stateFocus = !this.stateFocus;
+    if (I.pressed('lb')) this.audio.setAdaptiveEnabled(!this.audio.isAdaptiveEnabled());
+    if (I.pressed('rb')) this.audio.resetMusicState();
+    if (this.stateFocus) {
+      if (I.pressed('left')) this.adjustState(-0.05);
+      if (I.pressed('right')) this.adjustState(0.05);
+      if (I.pressed('up')) this.selectState(-1);
+      if (I.pressed('down')) this.selectState(1);
+    } else {
+      if (I.pressed('left')) this.selectReference(-1);
+      if (I.pressed('right')) this.selectReference(1);
+      if (I.pressed('up')) this.selectLayer(-1);
+      if (I.pressed('down')) this.selectLayer(1);
+    }
     if (I.pressed('a')) this.playSelected();
     if (I.pressed('b')) this.stop();
     if (I.pressed('start')) this.togglePause();
@@ -78,10 +102,13 @@ export class MusicTestApp implements AppLike {
     this.drawReferences(ctx);
     this.drawTransport(ctx);
     this.drawLayers(ctx);
+    this.drawMusicState(ctx);
     this.drawFooter(ctx);
   }
 
   exit(): void {
+    this.audio.setAdaptiveEnabled(false);
+    this.audio.resetMusicState();
     this.audio.stopMusic();
     for (const layer of LAYERS) this.audio.setMusicLayerPresence(layer, 1);
   }
@@ -107,11 +134,29 @@ export class MusicTestApp implements AppLike {
         this.layerIndex = index;
         this.toggleLayer(LAYERS[index]);
       }
+      return;
+    }
+    if (y >= 508 && y <= 536) {
+      if (x >= 1010) this.audio.setAdaptiveEnabled(!this.audio.isAdaptiveEnabled());
+      return;
+    }
+    if (y >= 538 && y <= 636) {
+      const column = Math.floor((x - 70) / 380);
+      const row = Math.floor((y - 538) / 33);
+      const index = row * 3 + column;
+      if (column >= 0 && column < 3 && row >= 0 && row < 3 && index < MUSIC_STATE_KEYS.length) {
+        this.stateIndex = index;
+        this.stateFocus = true;
+        const key = MUSIC_STATE_KEYS[index];
+        const value = Math.max(0, Math.min(1, (x - (70 + column * 380 + 150)) / 170));
+        this.setStateValue(key, value);
+      }
     }
   }
 
   onPointerMove(x: number, y: number): void {
     this.cursor = (y >= 150 && y <= 252) || (y >= 278 && y <= 340) || (y >= 425 && y <= 490)
+      || (y >= 508 && y <= 636)
       ? 'pointer'
       : 'default';
   }
@@ -154,6 +199,22 @@ export class MusicTestApp implements AppLike {
 
   private selectLayer(delta: number): void {
     this.layerIndex = (this.layerIndex + delta + LAYERS.length) % LAYERS.length;
+  }
+
+  private selectState(delta: number): void {
+    this.stateIndex = (this.stateIndex + delta + MUSIC_STATE_KEYS.length) % MUSIC_STATE_KEYS.length;
+  }
+
+  private adjustState(delta: number): void {
+    const key = MUSIC_STATE_KEYS[this.stateIndex];
+    const current = this.audio.getMusicTargetState()[key];
+    this.setStateValue(key, current + delta);
+  }
+
+  private setStateValue(key: MusicStateKey, value: number): void {
+    const state: Partial<MusicState> = {};
+    state[key] = Math.max(0, Math.min(1, value));
+    this.audio.setMusicState(state);
   }
 
   private toggleLayer(layer: MusicLayerName): void {
@@ -224,10 +285,69 @@ export class MusicTestApp implements AppLike {
     });
   }
 
+  private drawMusicState(ctx: CanvasRenderingContext2D): void {
+    const adaptive = this.audio.isAdaptiveEnabled();
+    const current = this.audio.getMusicState();
+    const target = this.audio.getMusicTargetState();
+    UI.panel(ctx, 70, 508, 1140, 138, {
+      radius: 16,
+      fill: 'rgba(8, 11, 18, 0.88)',
+      stroke: adaptive ? 'rgba(134, 239, 172, 0.4)' : 'rgba(125, 211, 252, 0.18)',
+    });
+    UI.txt(ctx, 'ÉTAT MUSICAL · Y POUR FOCALISER', 72, 530, { size: 14, mono: true, color: '#8490a5' });
+    UI.panel(ctx, 1010, 514, 180, 26, {
+      radius: 13,
+      fill: adaptive ? 'rgba(134, 239, 172, 0.16)' : 'rgba(126, 139, 160, 0.1)',
+      stroke: adaptive ? 'rgba(134, 239, 172, 0.65)' : 'rgba(126, 139, 160, 0.25)',
+    });
+    UI.txt(ctx, adaptive ? 'ADAPTATIF · LB' : 'REFERENCE · LB', 1100, 532, {
+      size: 11,
+      mono: true,
+      align: 'center',
+      color: adaptive ? '#bbf7d0' : '#aab5c7',
+    });
+
+    MUSIC_STATE_KEYS.forEach((key, index) => {
+      const column = index % 3;
+      const row = Math.floor(index / 3);
+      const x = 70 + column * 380;
+      const y = 538 + row * 33;
+      const selected = this.stateFocus && index === this.stateIndex;
+      UI.panel(ctx, x, y, 360, 27, {
+        radius: 8,
+        fill: selected ? 'rgba(125, 211, 252, 0.12)' : 'rgba(255,255,255,0.025)',
+        stroke: selected ? this.accent : 'rgba(125, 211, 252, 0.08)',
+        lineWidth: selected ? 2 : 1,
+      });
+      UI.txt(ctx, STATE_LABELS[key], x + 12, y + 18, { size: 11, mono: true, color: selected ? '#f4f8ff' : '#a0adbf' });
+      const barX = x + 150;
+      const barY = y + 9;
+      const barW = 158;
+      ctx.fillStyle = 'rgba(125, 211, 252, 0.12)';
+      ctx.fillRect(barX, barY, barW, 8);
+      ctx.fillStyle = selected ? this.accent : 'rgba(125, 211, 252, 0.7)';
+      ctx.fillRect(barX, barY, barW * current[key], 8);
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillRect(barX + barW * target[key] - 1, barY - 3, 2, 14);
+      UI.txt(ctx, `${Math.round(current[key] * 100).toString().padStart(3, '0')}`, x + 340, y + 18, {
+        size: 11,
+        mono: true,
+        align: 'right',
+        color: '#dce6f3',
+      });
+    });
+  }
+
   private drawFooter(ctx: CanvasRenderingContext2D): void {
     const beat = this.audio.musicBeat();
     const glow = pulse(this.time + beat);
-    UI.txt(ctx, '← → référence   ↑ ↓ couche   A lire   START pause   B stop   Échap retour hub', 70, 655, { size: 15, mono: true, color: '#a5b2c5' });
-    UI.txt(ctx, 'COMPOSITION FIXE · PAS DE SEED · PAS D’ADAPTATION', 70, 682, { size: 13, mono: true, color: `rgba(125, 211, 252, ${glow})` });
+    const controls = this.stateFocus
+      ? 'Y quitter état   ↑ ↓ axe   ← → valeur   LB adaptatif   RB reset'
+      : '← → référence   ↑ ↓ couche   Y état   X couche   LB adaptatif';
+    UI.txt(ctx, controls, 70, 675, { size: 14, mono: true, color: '#a5b2c5' });
+    UI.txt(ctx, 'A lire   START pause   B stop   Échap retour hub', 70, 700, { size: 13, mono: true, color: '#8490a5' });
+    UI.txt(ctx, this.audio.isAdaptiveEnabled()
+      ? `DIRECTION ADAPTATIVE · ${this.audio.musicSection().toUpperCase()}`
+      : 'RÉFÉRENCE FIXE · DÉTERMINISTE', 1210, 700, { size: 12, mono: true, align: 'right', color: `rgba(125, 211, 252, ${glow})` });
   }
 }

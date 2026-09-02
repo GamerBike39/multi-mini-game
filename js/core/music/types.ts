@@ -13,6 +13,33 @@ export type GameMusic =
 
 export type ReferenceMusic = 'shooter' | 'survival' | 'fish';
 
+export type MusicalSection = 'intro' | 'groove' | 'build' | 'peak' | 'release';
+
+export type GameMusicEventName =
+  | 'playerHit'
+  | 'enemyKilled'
+  | 'combo'
+  | 'comboBreak'
+  | 'nearMiss'
+  | 'powerUp'
+  | 'waveStart'
+  | 'waveComplete'
+  | 'bossStart'
+  | 'bossDefeated'
+  | 'perfect'
+  | 'miss'
+  | 'fishBite'
+  | 'fishCaught'
+  | 'holeInOne'
+  | 'brickCombo'
+  | 'newHighScore';
+
+export interface GameMusicEvent {
+  type: GameMusicEventName;
+  strength?: number;
+  value?: number;
+}
+
 export type NoteDuration = '1n' | '2n' | '4n' | '8n' | '16n';
 
 export interface NoteEvent {
