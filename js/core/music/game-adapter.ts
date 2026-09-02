@@ -161,12 +161,13 @@ export class GameMusicAdapter {
       const speed = numberValue(source, 'speed', 380);
       const speedFactor = clamp01((speed - 300) / 480);
       const combo = clamp01(numberValue(source, 'eaten', numberValue(source, 'comboStep')) / 14);
+      const proximity = clamp01(numberValue(source, 'proxT') / 0.95);
       state.intensity = clamp01(0.28 + speedFactor * 0.55 + progress * 0.1);
-      state.tension = clamp01(0.2 + speedFactor * 0.38);
-      state.danger = clamp01(0.08 + speedFactor * 0.38);
-      state.momentum = clamp01(0.35 + speedFactor * 0.45 + combo * 0.15);
+      state.tension = clamp01(0.2 + speedFactor * 0.38 + proximity * 0.2);
+      state.danger = clamp01(0.08 + speedFactor * 0.38 + proximity * 0.3);
+      state.momentum = clamp01(0.35 + speedFactor * 0.45 + combo * 0.15 + proximity * 0.08);
       state.complexity = clamp01(0.25 + speedFactor * 0.38);
-      state.brightness = clamp01(0.48 + speedFactor * 0.3);
+      state.brightness = clamp01(0.48 + speedFactor * 0.3 + proximity * 0.12);
       state.calm = clamp01(0.32 - speedFactor * 0.16);
     } else if (this.profile.mood === 'cave') {
       const speed = numberValue(source, 'speedNow', numberValue(source, 'speed', 330));

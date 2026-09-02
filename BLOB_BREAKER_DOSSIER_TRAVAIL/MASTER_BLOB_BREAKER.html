@@ -1,0 +1,1567 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLOB BREAKER — Dossier de production</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg:#090b10; --panel:#11141b; --panel2:#171b24; --text:#e9edf4; --muted:#949dad;
+  --line:#2a303c; --accent:#fb7185; --code:#0a0c11;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.6 system-ui,-apple-system,Segoe UI,sans-serif}
+.layout{display:grid;grid-template-columns:260px minmax(0,1fr);min-height:100vh}
+aside{position:sticky;top:0;height:100vh;padding:28px 20px;border-right:1px solid var(--line);background:#0c0e14}
+.brand{font-weight:900;letter-spacing:.08em;font-size:14px;margin-bottom:6px}
+.sub{font-size:12px;color:var(--muted);margin-bottom:28px}
+nav a{display:block;padding:9px 10px;margin:4px 0;border-radius:8px;color:#cbd2dd;text-decoration:none}
+nav a:hover{background:var(--panel2);color:white}
+main{max-width:1100px;width:100%;padding:52px 6vw 120px}
+section{padding-bottom:64px;margin-bottom:48px;border-bottom:1px solid var(--line)}
+h1{font-size:clamp(30px,4vw,52px);line-height:1.08;margin:0 0 28px;letter-spacing:-.035em}
+h2{font-size:28px;margin:44px 0 16px}
+h3{font-size:19px;margin:30px 0 10px;color:#f5b1bc}
+p{max-width:850px}
+li{margin:5px 0 5px 22px;max-width:850px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:12px;padding:16px 18px;overflow:auto;max-width:900px}
+code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace}
+.table-wrap{overflow:auto;margin:16px 0 24px}
+table{border-collapse:collapse;width:100%;min-width:620px;background:var(--panel);border:1px solid var(--line)}
+th,td{padding:10px 12px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{background:var(--panel2);font-size:13px;text-transform:uppercase;letter-spacing:.04em}
+.check{padding:4px 0;color:#dfe4ec}
+strong{color:white}
+.note{color:var(--muted)}
+@media(max-width:850px){
+ .layout{display:block}
+ aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+ nav{display:flex;gap:4px;overflow:auto}
+ nav a{white-space:nowrap}
+ main{padding:32px 20px 80px}
+}
+@media print{
+ aside{display:none} .layout{display:block} main{max-width:none;padding:0} body{background:white;color:#111} section{page-break-before:always} pre,table{break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="layout">
+<aside>
+<div class="brand">BLOB BREAKER</div>
+<div class="sub">Dossier de production · Chantier A3 + B</div>
+<nav><a href='#ch1'>Vue d’ensemble</a><a href='#ch2'>A3 — Lisibilité</a><a href='#ch3'>B — Wall + Bumper</a><a href='#ch4'>B-LAB — Debug</a><a href='#ch5'>Plan Codex</a><a href='#ch6'>Planche d’assets</a></nav>
+</aside>
+<main>
+<section id='ch1'><h1>BLOB BREAKER — Dossier de production</h1>
+
+<h2>Objet</h2>
+
+<p>Ce dossier transforme le brainstorm validé en plan de travail directement exploitable pour faire évoluer `BLOB BREAKER`.</p>
+
+<p>Le périmètre volontairement retenu est :</p>
+
+<p>1. <strong>Chantier A3 — Lisibilité</strong></p>
+<li>rendre les 4 briques actuelles reconnaissables sans mémorisation de couleurs ;</li>
+<li>définir leurs micro-animations ;</li>
+<li>préserver le calme visuel au repos ;</li>
+<li>exploiter le Canvas et le moteur FX existants plutôt que créer des sprites d&#x27;effets.</li>
+
+<p>2. <strong>Chantier B — Géométrie</strong></p>
+<li>introduire une famille d&#x27;objets de niveau indépendante des briques ;</li>
+<li>implémenter `Wall` puis `Bumper` ;</li>
+<li>tester leur valeur de gameplay dans un laboratoire dédié avant d&#x27;ajouter Portal / Ghost / Switch / Moving.</li>
+
+<p>3. <strong>B-LAB — Debug &amp; validation</strong></p>
+<li>visualiser les collisions ;</li>
+<li>visualiser les normales et vitesses ;</li>
+<li>afficher une prédiction de trajectoire strictement réservée au debug ;</li>
+<li>disposer de scènes de test reproductibles et de quelques compteurs simples.</li>
+
+<h2>Décisions structurantes</h2>
+
+<h3>1. Ne pas transformer Wall et Bumper en `BrickKind`</h3>
+
+<p>Une brique est un <strong>objectif destructible</strong>.</p>
+<p>Un obstacle est un <strong>élément de géométrie / interaction</strong>.</p>
+
+<p>Créer une nouvelle famille évite de polluer :</p>
+<li>`hp` ;</li>
+<li>le score ;</li>
+<li>les drops ;</li>
+<li>`levelCleared()` ;</li>
+<li>les explosions ;</li>
+<li>les réactions spécifiques aux briques.</li>
+
+<p>Architecture cible minimale :</p>
+
+<pre><code>type ObstacleKind = &#x27;wall&#x27; | &#x27;bumper&#x27;;
+
+type BreakerObstacle =
+  | BreakerWall
+  | BreakerBumper;</code></pre>
+
+<h3>2. Pas de refonte générale de la physique dans le premier lot</h3>
+
+<p>Le jeu fonctionne aujourd&#x27;hui. Le but n&#x27;est pas de réécrire le moteur.</p>
+
+<li>les collisions actuelles balle/brique restent en place dans le premier lot ;</li>
+<li>une fonction robuste `circleVsAabb()` est ajoutée pour les nouveaux Walls ;</li>
+<li>une fonction `circleVsCircle()` est ajoutée pour les Bumpers ;</li>
+<li>l&#x27;unification complète des collisions peut venir plus tard si le prototype est validé.</li>
+
+<h3>3. La lisibilité précède la couleur</h3>
+
+<p>Ordre d&#x27;information obligatoire :</p>
+
+<p><strong>silhouette / structure → glyphe → micro-animation → couleur</strong></p>
+
+<p>Le comportement d&#x27;une brique doit rester identifiable en niveaux de gris.</p>
+
+<h3>4. Les FX restent procéduraux</h3>
+
+<p>Le moteur possède déjà :</p>
+<li>particules ;</li>
+<li>rings ;</li>
+<li>flash ;</li>
+<li>hitstop ;</li>
+<li>screenshake ;</li>
+<li>textes ;</li>
+<li>slow motion.</li>
+
+<p>Aucun sprite d&#x27;explosion, de trail ou de débris n&#x27;est requis pour ce chantier.</p>
+
+<h3>5. Scope explicitement hors lot</h3>
+
+<p>Ne pas implémenter maintenant :</p>
+<li>Portal ;</li>
+<li>Ghost ;</li>
+<li>Switch ;</li>
+<li>Reflector incliné ;</li>
+<li>Moving obstacles ;</li>
+<li>refonte des drops ;</li>
+<li>refonte générale du système de niveaux ;</li>
+<li>gros système d&#x27;analytics.</li>
+
+<p>Ces sujets restent dans la roadmap, mais seulement après validation de `Wall + Bumper`.</p>
+
+<p>---</p>
+
+<h2>Fichiers du dossier</h2>
+
+<li>`01_A3_LISIBILITE_MICRO_ANIMATIONS.md`</li>
+<li>`02_B_GEOMETRIE_WALL_BUMPER.md`</li>
+<li>`03_BLAB_DEBUG_VALIDATION.md`</li>
+<li>`04_PLAN_IMPLEMENTATION_CODEX.md`</li>
+<li>`05_SPEC_PLANCHE_ASSETS.md`</li>
+<li>`MASTER_BLOB_BREAKER.html`</li>
+
+<p>Le HTML est la version de lecture/navigation. Les Markdown sont conçus pour être donnés directement à un agent de code.</p>
+
+<h2>Référence code</h2>
+
+<p>Périmètre principal :</p>
+<li>`js/games/breaker.ts`</li>
+<li>`js/core/blob.ts`</li>
+<li>`js/core/fx.ts`</li>
+
+<p>Commandes de validation du projet :</p>
+<pre><code>npm run typecheck
+npm run build</code></pre></section><section id='ch2'><h1>Chantier A3 — Lisibilité et micro-animations</h1>
+
+<h2>1. Objectif</h2>
+
+<p>Le joueur doit pouvoir distinguer immédiatement :</p>
+
+<li>brique normale ;</li>
+<li>brique renforcée ;</li>
+<li>brique explosive ;</li>
+<li>brique gravitaire ;</li>
+
+<p>sans devoir mémoriser une correspondance de couleurs.</p>
+
+<p>La couleur reste utile, mais devient une information secondaire.</p>
+
+<h2>2. Principe de rendu</h2>
+
+<p>Chaque brique possède quatre couches de lecture :</p>
+
+<p>1. <strong>forme / masse</strong></p>
+<p>2. <strong>signe fonctionnel</strong></p>
+<p>3. <strong>animation d&#x27;état</strong></p>
+<p>4. <strong>couleur</strong></p>
+
+<p>Test obligatoire : le rendu doit rester compréhensible après conversion mentale en monochrome.</p>
+
+<h2>3. Budget d&#x27;intensité</h2>
+
+<div class='table-wrap'><table><thead><tr><th>Intensité</th><th>Usage</th></tr></thead><tbody>
+<tr><td>0/5</td><td>statique</td></tr>
+<tr><td>1/5</td><td>idle discret</td></tr>
+<tr><td>2/5</td><td>signal / anticipation</td></tr>
+<tr><td>3/5</td><td>impact</td></tr>
+<tr><td>4/5</td><td>activation / destruction</td></tr>
+<tr><td>5/5</td><td>climax exceptionnel</td></tr>
+</tbody></table></div>
+
+<p>Règle : une brique idle ne dépasse jamais 1/5.</p>
+
+<p>---</p>
+
+<h1>4. Langage des quatre briques</h1>
+
+<h2>NORMAL</h2>
+
+<h3>Signature</h3>
+<li>silhouette simple ;</li>
+<li>coins doux ;</li>
+<li>aucun glyphe de gameplay ;</li>
+<li>couleur de rang conservée.</li>
+
+<h3>Idle</h3>
+<li>intensité : 0/5 ;</li>
+<li>aucune pulsation ;</li>
+<li>aucun mouvement.</li>
+
+<h3>Hit</h3>
+<li>flash local très court : ~70 ms ;</li>
+<li>réaction globale : 100–140 ms ;</li>
+<li>squash maximum recommandé : 2–3 % ;</li>
+<li>pas de vibration persistante.</li>
+
+<h3>Destruction</h3>
+<li>4–8 fragments légers ;</li>
+<li>ring faible ;</li>
+<li>pas de gros bloom.</li>
+
+<p>La normale sert de <strong>niveau zéro visuel</strong>.</p>
+
+<p>---</p>
+
+<h2>REINFORCED</h2>
+
+<h3>Signature</h3>
+<li>double coque / bordure interne ;</li>
+<li>rivets ou marqueurs de structure ;</li>
+<li>aspect plus massif que la normale ;</li>
+<li>les HP ne sont plus le seul moyen de la reconnaître.</li>
+
+<h3>Idle</h3>
+<li>intensité 0–1/5 ;</li>
+<li>statique ;</li>
+<li>reflet local exceptionnel, toutes les 2,5 à 4 s maximum ;</li>
+<li>reflet non synchronisé entre briques.</li>
+
+<h3>Hit non destructif</h3>
+<li>180–240 ms ;</li>
+<li>compression 3–4 % ;</li>
+<li>vibration très courte :</li>
+<li>déplacement ±1,5 px maximum ;</li>
+<li>rotation ±0,4° maximum ;</li>
+<li>cicatrice persistante au point d&#x27;impact.</li>
+
+<h3>Destruction</h3>
+<li>4–6 gros fragments ;</li>
+<li>vitesse de fragments inférieure à une normale ;</li>
+<li>sensation recherchée : masse, pas spectacle.</li>
+
+<p>---</p>
+
+<h2>EXPLOSIVE</h2>
+
+<h3>Signature</h3>
+<li>gros noyau central identifiable ;</li>
+<li>noyau ≠ simple petit pictogramme décoratif ;</li>
+<li>comportement visible même si la couleur orange est retirée.</li>
+
+<h3>Idle</h3>
+<li>noyau uniquement ;</li>
+<li>cycle 1,5–1,8 s ;</li>
+<li>échelle du noyau ~90 % → 110 % → 90 % ;</li>
+<li>amplitude lumineuse faible ;</li>
+<li>phase déterministe différente selon la brique.</li>
+
+<h3>Queued / signal</h3>
+<p>C&#x27;est l&#x27;état le plus important à rendre lisible.</p>
+
+<p>Quand `queued === true` :</p>
+<li>intensité 2–3/5 ;</li>
+<li>pulsation accélérée ;</li>
+<li>anneau ou contraction interne ;</li>
+<li>aucune explosion prématurée.</li>
+
+<p>La propagation doit être lisible comme une séquence :</p>
+
+<p>`impact → signal → détonation → signal voisin → détonation voisine`</p>
+
+<h3>Hit direct</h3>
+<li>flash du noyau ~80 ms ;</li>
+<li>la brique ne doit pas sembler déjà explosée avant la vraie détonation.</li>
+
+<h3>Explosion isolée</h3>
+<li>durée principale ~300 ms ;</li>
+<li>intensité 4/5.</li>
+
+<h3>Réaction en chaîne</h3>
+<li>conserver les délais existants ;</li>
+<li>rendre le délai visible ;</li>
+<li>ne pas faire exploser visuellement toutes les briques au même instant.</li>
+
+<h3>Climax</h3>
+<p>Réservé à une chaîne notable :</p>
+<li>profondeur de chaîne élevée ou nombre d&#x27;explosives consécutives suffisant ;</li>
+<li>intensité 5/5 ;</li>
+<li>hitstop, flash, ring, particules et shake peuvent être renforcés ;</li>
+<li>réduire légèrement la luminosité des explosions secondaires pendant le climax pour préserver la lecture.</li>
+
+<p>Le climax est une récompense, pas l&#x27;état standard.</p>
+
+<p>---</p>
+
+<h2>GRAVITY</h2>
+
+<h3>Signature</h3>
+<li>poids visuel vers le bas ;</li>
+<li>chevrons descendants intégrés dans la structure ;</li>
+<li>le cyan est un renfort, pas l&#x27;identifiant principal.</li>
+
+<h3>Idle</h3>
+<li>corps statique ;</li>
+<li>flux / chevrons descendants de 2–4 px ;</li>
+<li>cycle 1,2–1,6 s ;</li>
+<li>intensité 1/5.</li>
+
+<h3>Hit / signal</h3>
+<li>80–120 ms ;</li>
+<li>accélération du flux ;</li>
+<li>bord inférieur pouvant descendre de ~2 px.</li>
+
+<h3>Détachement</h3>
+<p>Ajouter visuellement un micro-état :</p>
+
+<p>`idle → hit → detach → falling`</p>
+
+<p>Durée cible du detach : ~80 ms.</p>
+
+<p>Le but est de faire comprendre :</p>
+<p><strong>la brique cesse d&#x27;être une cible et devient une menace mobile.</strong></p>
+
+<h3>Falling</h3>
+<li>l&#x27;animation de mouvement suffit ;</li>
+<li>limiter la rotation visuelle à environ ±15° ;</li>
+<li>ne pas ajouter de clignotement permanent.</li>
+
+<h3>Impact paddle</h3>
+<p>Le jeu possède déjà un feedback FREEZE riche. Ne pas augmenter automatiquement le nombre d&#x27;effets.</p>
+
+<p>---</p>
+
+<h1>5. Animation phase</h1>
+
+<p>Ne pas synchroniser les idles.</p>
+
+<p>Ajouter une phase visuelle déterministe, calculée une seule fois lors de la création :</p>
+
+<pre><code>animPhase: number; // 0..1</code></pre>
+
+<p>Elle peut dériver de `cellNoise(level + seed, row, col)`.</p>
+
+<p>Utilisation :</p>
+
+<pre><code>const phase = this.time + br.animPhase * cycleDuration;</code></pre>
+
+<p>But :</p>
+<li>éviter un mur entier d&#x27;explosives qui pulse ensemble ;</li>
+<li>limiter le bruit visuel ;</li>
+<li>garder un comportement reproductible.</li>
+
+<p>---</p>
+
+<h1>6. État minimal à ajouter</h1>
+
+<p>Éviter une state machine lourde.</p>
+
+<p>Proposition :</p>
+
+<pre><code>interface BreakerBrick {
+  // existant...
+  animPhase: number;
+
+  // optionnel uniquement si nécessaire à la lisibilité :
+  detachT?: number;
+}</code></pre>
+
+<p>Pour l&#x27;explosive, utiliser autant que possible les états déjà existants :</p>
+<li>`queued`</li>
+<li>`exploded`</li>
+<li>`hitT`</li>
+<li>`fl`</li>
+
+<p>Si le rendu a besoin de connaître la progression exacte du délai d&#x27;explosion, étendre `PendingExplosion` :</p>
+
+<pre><code>interface PendingExplosion {
+  brick: BreakerBrick;
+  delay: number;
+  initialDelay: number;
+  depth: number;
+}</code></pre>
+
+<p>Le ratio visuel devient :</p>
+
+<pre><code>const queuedProgress = 1 - item.delay / item.initialDelay;</code></pre>
+
+<p>Ne pas créer un second système de timer si cette donnée suffit.</p>
+
+<p>---</p>
+
+<h1>7. Tests A3</h1>
+
+<h2>A3-01 — grille pure</h2>
+<p>Construire une scène de test :</p>
+
+<li>colonne Normal ;</li>
+<li>colonne Reinforced ;</li>
+<li>colonne Explosive ;</li>
+<li>colonne Gravity.</li>
+
+<p>Validation :</p>
+<li>identification &lt; 1 s ;</li>
+<li>aucune couleur indispensable.</li>
+
+<h2>A3-02 — mouvement</h2>
+<p>Même scène avec balle active.</p>
+
+<h2>A3-03 — multiball</h2>
+<p>3–4 balles + quelques hits simultanés.</p>
+
+<h2>A3-04 — chaîne</h2>
+<p>Plusieurs explosives adjacentes.</p>
+
+<p>Validation :</p>
+<li>propagation compréhensible ;</li>
+<li>balle encore suivable.</li>
+
+<h2>A3-05 — gravity</h2>
+<p>Plusieurs gravity tiles se détachent.</p>
+
+<p>Validation :</p>
+<li>distinction claire entre brique encore en grille et hazard en chute.</li>
+
+<p>---</p>
+
+<h1>8. Définition de terminé</h1>
+
+<p>A3 est validé si :</p>
+
+<li>les 4 types sont identifiables sans couleur ;</li>
+<li>l&#x27;écran reste calme quand rien ne se passe ;</li>
+<li>`queued` est perceptible avant l&#x27;explosion ;</li>
+<li>une gravity paraît se décrocher avant de tomber ;</li>
+<li>une grosse chaîne est spectaculaire sans masquer complètement la trajectoire de balle ;</li>
+<li>aucun asset raster n&#x27;a été nécessaire.</li></section><section id='ch3'><h1>Chantier B — Géométrie : Wall + Bumper</h1>
+
+<h2>1. But</h2>
+
+<p>Ajouter une deuxième couche au casse-brique :</p>
+
+<li>**Briques** = objectifs à détruire.</li>
+<li>**Obstacles** = géométrie qui modifie la trajectoire.</li>
+
+<p>Le premier prototype ne contient que :</p>
+
+<pre><code>type ObstacleKind = &#x27;wall&#x27; | &#x27;bumper&#x27;;</code></pre>
+
+<p>---</p>
+
+<h1>2. Modèle de données recommandé</h1>
+
+<p>Utiliser une union discriminée plutôt qu&#x27;une interface remplie de propriétés optionnelles.</p>
+
+<pre><code>interface BreakerWall {
+  id: number;
+  kind: &#x27;wall&#x27;;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface BreakerBumper {
+  id: number;
+  kind: &#x27;bumper&#x27;;
+  x: number;
+  y: number;
+  r: number;
+  boost: number;
+  pulseT: number;
+}
+
+type BreakerObstacle = BreakerWall | BreakerBumper;</code></pre>
+
+<p>Dans `BreakerGame` :</p>
+
+<pre><code>this.obstacles = [] as BreakerObstacle[];</code></pre>
+
+<p>Ne pas mettre Wall/Bumper dans `this.bricks`.</p>
+
+<p>---</p>
+
+<h1>3. Cycle de niveau</h1>
+
+<p>Séparer construction des briques et construction de la géométrie :</p>
+
+<pre><code>buildLevel(): void {
+  this.buildBricks();
+  this.buildObstacles();
+}</code></pre>
+
+<p>Pour le premier lot :</p>
+<li>niveaux normaux : `buildObstacles()` peut retourner `[]` ;</li>
+<li>B-LAB : layouts explicites ;</li>
+<li>intégration à la progression seulement après validation.</li>
+
+<p>`levelCleared()` ne doit jamais dépendre des obstacles.</p>
+
+<p>---</p>
+
+<h1>4. WALL</h1>
+
+<h2>Fonction</h2>
+<p>Le Wall :</p>
+<li>est indestructible ;</li>
+<li>ne possède pas de HP ;</li>
+<li>ne donne aucun point ;</li>
+<li>ne produit aucun drop ;</li>
+<li>ne compte pas pour le clear ;</li>
+<li>fait rebondir toutes les balles ;</li>
+<li>n&#x27;est jamais affecté par une explosion.</li>
+
+<h2>Rendu</h2>
+<p>Le Wall doit ressembler à de l&#x27;architecture, pas à une grosse brique.</p>
+
+<p>Principes :</p>
+<li>forme plus dense ;</li>
+<li>motif structurel / stries ;</li>
+<li>faible glow ;</li>
+<li>feedback d&#x27;impact 2/5 maximum.</li>
+
+<p>Le Wall doit supporter toutes les dimensions sans asset spécifique.</p>
+
+<h2>Laser</h2>
+<p>Choix V1 :</p>
+<p><strong>les Walls bloquent les lasers</strong>.</p>
+
+<p>Le laser est détruit à l&#x27;impact avec :</p>
+<li>petit spark ;</li>
+<li>aucun score ;</li>
+<li>aucun effet sur le Wall.</li>
+
+<p>Cela évite qu&#x27;une barrière physique soit traversée visuellement par les tirs.</p>
+
+<h2>Gravity tile en chute</h2>
+<p>Choix V1 :</p>
+<p><strong>une gravity tile détachée ignore les obstacles</strong>.</p>
+
+<p>Raison :</p>
+<li>ne pas transformer B1 en refonte de physique multi-corps ;</li>
+<li>conserver la mécanique actuelle.</li>
+
+<p>Documenter ce comportement. Le revisiter uniquement s&#x27;il paraît visuellement incohérent pendant les tests.</p>
+
+<p>---</p>
+
+<h1>5. Collision cercle / AABB pour Wall</h1>
+
+<p>Ajouter un helper dédié.</p>
+
+<p>Signature suggérée :</p>
+
+<pre><code>interface CollisionHit {
+  nx: number;
+  ny: number;
+  penetration: number;
+  contactX: number;
+  contactY: number;
+}
+
+circleVsAabb(
+  cx: number,
+  cy: number,
+  r: number,
+  boxX: number,
+  boxY: number,
+  boxW: number,
+  boxH: number
+): CollisionHit | null</code></pre>
+
+<p>Algorithme :</p>
+<p>1. trouver le point du rectangle le plus proche du centre de la balle ;</p>
+<p>2. calculer `dx`, `dy`, distance² ;</p>
+<p>3. si distance² &gt; r² : aucune collision ;</p>
+<p>4. si distance &gt; epsilon :</p>
+<li>normale = `(dx, dy) / distance` ;</li>
+<li>pénétration = `r - distance` ;</li>
+<p>5. si le centre est exactement sur/dans la boîte :</p>
+<li>choisir le côté le plus proche ;</li>
+<li>produire une normale cardinale cohérente.</li>
+
+<p>Réflexion générique :</p>
+
+<pre><code>const dot = vx * nx + vy * ny;
+if (dot &lt; 0) {
+  vx -= 2 * dot * nx;
+  vy -= 2 * dot * ny;
+}</code></pre>
+
+<p>Séparer ensuite la balle :</p>
+
+<pre><code>x += nx * penetration;
+y += ny * penetration;</code></pre>
+
+<p>Important :</p>
+<li>ne réfléchir que si la balle se déplace vers la surface (`dot &lt; 0`) ;</li>
+<li>toujours corriger la pénétration pour éviter le jitter.</li>
+
+<p>Pour le premier lot, ne pas remplacer immédiatement la collision des briques par ce helper.</p>
+
+<p>---</p>
+
+<h1>6. BUMPER</h1>
+
+<h2>Fonction</h2>
+<p>Le Bumper :</p>
+<li>est circulaire ;</li>
+<li>est indestructible ;</li>
+<li>renvoie la balle selon la normale du cercle ;</li>
+<li>produit un boost temporaire ;</li>
+<li>donne un feedback fort au contact ;</li>
+<li>ne participe pas au score dans la V1.</li>
+
+<h2>Collision cercle / cercle</h2>
+
+<pre><code>circleVsCircle(
+  ax: number,
+  ay: number,
+  ar: number,
+  bx: number,
+  by: number,
+  br: number
+): CollisionHit | null</code></pre>
+
+<p>Normale :</p>
+<li>du centre du bumper vers le centre de la balle.</li>
+
+<p>Séparation :</p>
+<li>replacer la balle juste à l&#x27;extérieur de `ball.r + bumper.r`.</li>
+
+<p>Réflexion :</p>
+<li>même formule vectorielle que pour Wall.</li>
+
+<h2>Cooldown par balle</h2>
+
+<p>Ajouter sur chaque balle :</p>
+
+<pre><code>lastBumperId?: number;
+lastBumperT?: number;
+bumperBoostT?: number;</code></pre>
+
+<p>Après impact :</p>
+
+<pre><code>ball.lastBumperId = bumper.id;
+ball.lastBumperT = 0.08;</code></pre>
+
+<p>Une nouvelle collision avec le même bumper est ignorée tant que `lastBumperT &gt; 0`, sauf correction de pénétration.</p>
+
+<p>---</p>
+
+<h1>7. Boost du Bumper</h1>
+
+<p>Ne jamais modifier `this.speed` à cause du Bumper.</p>
+
+<p>`this.speed` appartient à la progression globale du jeu.</p>
+
+<p>Proposition de départ :</p>
+
+<pre><code>const BUMPER_BOOST = 1.22;
+const BUMPER_BOOST_TIME = 0.45;</code></pre>
+
+<p>À l&#x27;impact :</p>
+<li>direction réfléchie ;</li>
+<li>magnitude immédiate = `this.speed * BUMPER_BOOST` ;</li>
+<li>`bumperBoostT = BUMPER_BOOST_TIME`.</li>
+
+<p>Puis retour progressif vers la vitesse cible.</p>
+
+<p>Helper recommandé :</p>
+
+<pre><code>targetBallSpeed(ball): number</code></pre>
+
+<p>Exemple :</p>
+
+<pre><code>const boostK = clamp(ball.bumperBoostT / BUMPER_BOOST_TIME, 0, 1);
+return this.speed * (1 + (BUMPER_BOOST - 1) * boostK);</code></pre>
+
+<p>À chaque frame :</p>
+<li>réduire `bumperBoostT` en temps réel ;</li>
+<li>tendre doucement la magnitude courante vers `targetBallSpeed(ball)`.</li>
+
+<p>`normSpeed()` doit utiliser `targetBallSpeed(ball)` afin qu&#x27;une destruction de brique ne supprime pas instantanément le boost.</p>
+
+<p>Valeurs à tuner dans B-LAB, pas à considérer comme définitives.</p>
+
+<p>---</p>
+
+<h1>8. Rendu Bumper</h1>
+
+<h2>Idle</h2>
+<li>respiration 2–3 % ;</li>
+<li>période ~2 s ;</li>
+<li>intensité 1/5.</li>
+
+<h2>Hit</h2>
+<p>Durée 180–250 ms :</p>
+<li>squash radial ;</li>
+<li>ring ;</li>
+<li>flash local ;</li>
+<li>petit burst ;</li>
+<li>son synthétique distinct ;</li>
+<li>rumble léger.</li>
+
+<p>Mettre :</p>
+
+<pre><code>bumper.pulseT = 0.25;</code></pre>
+
+<p>et dériver le squash/halo de ce timer.</p>
+
+<p>Ne pas créer de sprite.</p>
+
+<p>---</p>
+
+<h1>9. Ordre de collision balle</h1>
+
+<p>Dans la boucle d&#x27;update d&#x27;une balle libre :</p>
+
+<p>1. déplacement ;</p>
+<p>2. limites du monde ;</p>
+<p>3. paddle ;</p>
+<p>4. obstacles :</p>
+<li>Walls ;</li>
+<li>Bumpers ;</li>
+<p>5. briques ;</p>
+<p>6. anti-trajectoire horizontale ;</p>
+<p>7. sortie écran.</p>
+
+<p>La priorité exacte peut être ajustée si un cas de recouvrement apparaît, mais il faut garder un ordre déterministe.</p>
+
+<p>Ne pas autoriser un Wall et une brique à occuper volontairement la même surface dans les layouts V1.</p>
+
+<p>---</p>
+
+<h1>10. Interactions explicites V1</h1>
+
+<div class='table-wrap'><table><thead><tr><th>Interaction</th><th>Décision</th></tr></thead><tbody>
+<tr><td>balle ↔ Wall</td><td>rebond</td></tr>
+<tr><td>balle FLAME ↔ Wall</td><td>rebond</td></tr>
+<tr><td>balle ↔ Bumper</td><td>rebond + boost</td></tr>
+<tr><td>balle FLAME ↔ Bumper</td><td>rebond + boost</td></tr>
+<tr><td>laser ↔ Wall</td><td>laser détruit</td></tr>
+<tr><td>laser ↔ Bumper</td><td>ignoré en V1</td></tr>
+<tr><td>explosion ↔ Wall</td><td>aucun effet</td></tr>
+<tr><td>explosion ↔ Bumper</td><td>aucun effet</td></tr>
+<tr><td>gravity falling ↔ Wall</td><td>ignore</td></tr>
+<tr><td>gravity falling ↔ Bumper</td><td>ignore</td></tr>
+<tr><td>Wall ↔ clear level</td><td>ignoré</td></tr>
+<tr><td>Bumper ↔ clear level</td><td>ignoré</td></tr>
+</tbody></table></div>
+
+<p>Ces choix limitent volontairement la combinatoire pendant le prototype.</p>
+
+<p>---</p>
+
+<h1>11. Définition de terminé B1/B2</h1>
+
+<h2>Wall</h2>
+<li>aucune balle ne traverse à vitesse normale ;</li>
+<li>pas de jitter en contact ;</li>
+<li>multiball fonctionne ;</li>
+<li>FLAME rebondit ;</li>
+<li>laser est bloqué ;</li>
+<li>clear du niveau inchangé.</li>
+
+<h2>Bumper</h2>
+<li>direction de sortie cohérente quelle que soit la zone d&#x27;impact ;</li>
+<li>aucun double-hit perceptible ;</li>
+<li>boost perceptible mais contrôlable ;</li>
+<li>boost revient à la vitesse normale ;</li>
+<li>`this.speed` global n&#x27;est pas corrompu ;</li>
+<li>plusieurs balles peuvent toucher le même bumper indépendamment.</li>
+
+<h2>Performance</h2>
+<p>Pas d&#x27;allocation massive par frame dans la boucle de collision.</p>
+<p>Les helpers retournant des objets sont acceptables au stade prototype, mais peuvent être optimisés ensuite si le profiling le justifie.</p></section><section id='ch4'><h1>B-LAB — Debug, visualisation et validation</h1>
+
+<h2>1. Philosophie</h2>
+
+<p>B-LAB n&#x27;est pas un mode de jeu final.</p>
+
+<p>Il sert à répondre rapidement à :</p>
+<li>la collision est-elle correcte ?</li>
+<li>la trajectoire devient-elle intéressante ?</li>
+<li>le Bumper apporte-t-il réellement quelque chose ?</li>
+<li>la lisibilité A3 survit-elle au chaos réel ?</li>
+
+<p>Les outils de debug doivent être compilés uniquement en développement autant que possible.</p>
+
+<p>Le projet utilise Vite : protéger les fonctions réservées au lab avec :</p>
+
+<pre><code>if (import.meta.env.DEV) { ... }</code></pre>
+
+<p>---</p>
+
+<h1>2. Activation</h1>
+
+<p>Proposition simple et non intrusive :</p>
+
+<pre><code>?breakerLab=wall
+?breakerLab=corridor
+?breakerLab=bumper
+?breakerLab=billiard
+?breakerLab=chain</code></pre>
+
+<p>Dans `BreakerGame`, lire le paramètre uniquement en DEV.</p>
+
+<p>S&#x27;il est absent :</p>
+<li>comportement normal ;</li>
+<li>aucun coût de rendu debug.</li>
+
+<p>S&#x27;il est présent :</p>
+<li>utiliser le layout demandé ;</li>
+<li>afficher le panneau debug.</li>
+
+<p>L&#x27;utilisateur peut toujours sélectionner BLOB BREAKER normalement depuis le menu ; le paramètre ne nécessite pas de modifier le routage global dans le premier lot.</p>
+
+<p>---</p>
+
+<h1>3. Overlays debug</h1>
+
+<h2>3.1 Collision shapes</h2>
+<p>Afficher :</p>
+<li>AABB des Walls ;</li>
+<li>cercle des Bumpers ;</li>
+<li>cercle physique des balles ;</li>
+<li>AABB des briques uniquement si utile.</li>
+
+<p>Ne pas utiliser le glow du jeu pour ces formes.</p>
+
+<h2>3.2 Contact point</h2>
+<p>Au dernier contact :</p>
+<li>petite croix au point de contact ;</li>
+<li>durée ~0,35 s.</li>
+
+<h2>3.3 Normal</h2>
+<p>Afficher une flèche partant du contact :</p>
+<li>longueur ~24–36 px ;</li>
+<li>direction = normale utilisée pour la réflexion.</li>
+
+<p>C&#x27;est l&#x27;outil principal pour repérer une normale inversée ou un mauvais cas de coin.</p>
+
+<h2>3.4 Velocity vector</h2>
+<p>Pour chaque balle :</p>
+<li>ligne depuis le centre ;</li>
+<li>longueur proportionnelle à une petite fraction de la vitesse ;</li>
+<li>ne pas afficher pendant `stuck`.</li>
+
+<h2>3.5 Trajectory predictor</h2>
+<p>Debug uniquement.</p>
+
+<p>But : comparer intuition et résultat de la collision.</p>
+
+<p>Simulation :</p>
+<li>horizon : ~2 s ;</li>
+<li>maximum : 6 rebonds ;</li>
+<li>pas fixe : `1 / 120` ;</li>
+<li>prendre en compte :</li>
+<li>limites du monde ;</li>
+<li>Walls ;</li>
+<li>Bumpers ;</li>
+<li>ignorer :</li>
+<li>paddle ;</li>
+<li>briques ;</li>
+<li>gravity falling ;</li>
+<li>explosions.</li>
+
+<p>Pourquoi ignorer les briques :</p>
+<li>éviter un prédicteur illisible ;</li>
+<li>tester uniquement la nouvelle couche géométrique ;</li>
+<li>rester facile à maintenir.</li>
+
+<p>Utiliser les mêmes helpers `circleVsAabb` / `circleVsCircle` que la vraie physique afin que le debug ne représente pas une autre physique.</p>
+
+<p>---</p>
+
+<h1>4. Panneau de stats</h1>
+
+<p>Afficher dans B-LAB :</p>
+
+<pre><code>LAB: BILLIARD
+BALLS                 2
+WALL HITS            14
+BUMPER HITS           8
+BUMPER → BRICK        5
+BUMPER → EXPLOSIVE    2
+MAX COMBO             9</code></pre>
+
+<p>Compteurs proposés :</p>
+
+<pre><code>interface BreakerLabStats {
+  wallHits: number;
+  bumperHits: number;
+  bumperToBrick: number;
+  bumperToExplosive: number;
+  maxCombo: number;
+}</code></pre>
+
+<p>Pour `BUMPER → BRICK` :</p>
+<li>chaque balle garde `lastBumperActionT` ;</li>
+<li>si elle touche une brique moins de ~1,5 s après un Bumper, incrémenter une fois pour cette séquence.</li>
+
+<p>Ce n&#x27;est pas de l&#x27;analytics produit.</p>
+<p>Le but est simplement d&#x27;éviter de juger le Bumper uniquement au ressenti visuel.</p>
+
+<p>---</p>
+
+<h1>5. Layouts B-LAB</h1>
+
+<h2>LAB 01 — WALL</h2>
+
+<p>Question :</p>
+<p><strong>un obstacle indestructible modifie-t-il spontanément la façon de viser ?</strong></p>
+
+<p>Structure :</p>
+<li>briques simples en haut ;</li>
+<li>un bloc central ;</li>
+<li>pas de Bumper.</li>
+
+<p>Validation :</p>
+<li>trajectoires de contournement visibles ;</li>
+<li>aucun blocage permanent de balle.</li>
+
+<p>---</p>
+
+<h2>LAB 02 — CORRIDOR</h2>
+
+<p>Question :</p>
+<p><strong>la division du terrain en zones crée-t-elle de l&#x27;anticipation ?</strong></p>
+
+<p>Structure :</p>
+<li>deux murs verticaux ;</li>
+<li>trois couloirs ;</li>
+<li>briques réparties sur les zones.</li>
+
+<p>Observer :</p>
+<li>balle enfermée temporairement ;</li>
+<li>choix de renvoi gauche / centre / droite.</li>
+
+<p>---</p>
+
+<h2>LAB 03 — BUMPER</h2>
+
+<p>Question :</p>
+<p><strong>le contact est-il amusant en lui-même ?</strong></p>
+
+<p>Structure :</p>
+<li>briques simples ;</li>
+<li>un bumper central.</li>
+
+<p>Tuning :</p>
+<li>tester boost 1.00 / 1.12 / 1.22 / 1.30 via constante de debug ;</li>
+<li>valeur de départ recommandée pour intégration : 1.22.</li>
+
+<p>---</p>
+
+<h2>LAB 04 — BILLIARD</h2>
+
+<p>Question :</p>
+<p><strong>des enchaînements et trick-shots émergent-ils ?</strong></p>
+
+<p>Structure :</p>
+<li>deux bumpers ;</li>
+<li>deux murs ;</li>
+<li>briques en cible haute.</li>
+
+<p>Observer :</p>
+<li>rebonds consécutifs ;</li>
+<li>trajectoires mémorables ;</li>
+<li>nombre de `BUMPER → BRICK`.</li>
+
+<p>---</p>
+
+<h2>LAB 05 — CHAIN</h2>
+
+<p>Question :</p>
+<p><strong>la nouvelle géométrie amplifie-t-elle les réactions déjà fortes du jeu ?</strong></p>
+
+<p>Structure :</p>
+<li>poche de briques explosives ;</li>
+<li>murs guidant la trajectoire ;</li>
+<li>bumper permettant d&#x27;entrer dans la poche.</li>
+
+<p>Observer :</p>
+<li>Bumper → explosive ;</li>
+<li>lisibilité de la chaîne ;</li>
+<li>suivi de balle pendant le climax.</li>
+
+<p>---</p>
+
+<h1>6. Debug A3 dans B-LAB</h1>
+
+<p>Le lab doit également offrir une scène de lisibilité :</p>
+
+<pre><code>NORMAL | REINFORCED | EXPLOSIVE | GRAVITY</code></pre>
+
+<p>Puis permettre la vraie situation de stress :</p>
+<li>multiball ;</li>
+<li>chain explosive ;</li>
+<li>gravity tiles ;</li>
+<li>drops.</li>
+
+<p>Le stress test n&#x27;est pas une cible esthétique.</p>
+<p>Il sert à vérifier que le langage reste lisible quand l&#x27;écran est chargé.</p>
+
+<p>---</p>
+
+<h1>7. Cas de régression à tester</h1>
+
+<h2>Balle</h2>
+<li>balle stuck au paddle ;</li>
+<li>multiball ;</li>
+<li>giant ;</li>
+<li>flame ;</li>
+<li>slow.</li>
+
+<h2>Paddle</h2>
+<li>normal ;</li>
+<li>large ;</li>
+<li>small ;</li>
+<li>glue ;</li>
+<li>freeze.</li>
+
+<h2>Briques</h2>
+<li>normal ;</li>
+<li>reinforced 2 HP ;</li>
+<li>reinforced 3 HP ;</li>
+<li>explosive isolée ;</li>
+<li>explosive chain ;</li>
+<li>gravity.</li>
+
+<h2>Obstacles</h2>
+<li>contact frontal Wall ;</li>
+<li>coin Wall ;</li>
+<li>déplacement parallèle à un Wall ;</li>
+<li>contact Bumper au centre ;</li>
+<li>contact tangent au Bumper ;</li>
+<li>multiball simultané sur Bumper.</li>
+
+<h2>Laser</h2>
+<li>impact brique ;</li>
+<li>impact Wall ;</li>
+<li>aucune interaction Bumper V1.</li>
+
+<p>---</p>
+
+<h1>8. Critère de décision produit</h1>
+
+<p>Après le prototype, répondre à trois questions.</p>
+
+<h3>Wall</h3>
+<p>Est-ce que le joueur vise différemment ?</p>
+
+<h3>Bumper</h3>
+<p>Est-ce que toucher le Bumper procure un effet intéressant même sans récompense de score ?</p>
+
+<h3>Combinaison</h3>
+<p>Est-ce que Wall + Bumper produisent des trajectoires et réactions impossibles dans le jeu actuel ?</p>
+
+<p>Si les trois réponses sont oui :</p>
+<li>valider Chantier B ;</li>
+<li>passer à Moving ou Portal.</li>
+
+<p>Si Wall oui / Bumper non :</p>
+<li>conserver Wall ;</li>
+<li>tester Portal avant de complexifier Bumper.</li>
+
+<p>Si les deux sont faibles :</p>
+<li>ne pas ajouter d&#x27;autres obstacles avant d&#x27;avoir compris pourquoi.</li></section><section id='ch5'><h1>Plan d&#x27;implémentation — version Codex</h1>
+
+<h2>Contrainte générale</h2>
+
+<p>Ne pas transformer ce chantier en refactor global de `breaker.ts`.</p>
+
+<p>Objectif :</p>
+<li>petites modifications testables ;</li>
+<li>comportement existant préservé ;</li>
+<li>aucune dépendance supplémentaire ;</li>
+<li>`npm run typecheck` et `npm run build` doivent rester verts à chaque étape.</li>
+
+<p>---</p>
+
+<h1>LOT 0 — Préparation</h1>
+
+<h2>Tâches</h2>
+<p>1. Lire :</p>
+<li>`js/games/breaker.ts`</li>
+<li>`js/core/blob.ts`</li>
+<li>`js/core/fx.ts`</li>
+<p>2. Identifier les sections :</p>
+<li>interfaces ;</li>
+<li>`buildBricks`;</li>
+<li>`setBrickImpact`;</li>
+<li>`queueExplosion`;</li>
+<li>`updateExplosions`;</li>
+<li>`updateFallingTiles`;</li>
+<li>boucle de collision balle ;</li>
+<li>`drawBrick`;</li>
+<li>`render`.</li>
+<p>3. Ne pas changer le comportement avant d&#x27;avoir créé un diff mental clair.</p>
+
+<h2>Acceptance</h2>
+<li>aucune modification fonctionnelle.</li>
+
+<p>---</p>
+
+<h1>LOT 1 — A3 lisibilité</h1>
+
+<h2>Étape 1.1 — données visuelles</h2>
+<p>Ajouter :</p>
+<pre><code>animPhase: number;</code></pre>
+<p>sur `BreakerBrick`.</p>
+
+<p>Le calculer de façon déterministe lors de `buildBricks()`.</p>
+
+<p>Option :</p>
+<pre><code>detachT?: number;</code></pre>
+<p>uniquement si l&#x27;animation gravity ne peut pas être exprimée proprement avec les états actuels.</p>
+
+<h2>Étape 1.2 — normal</h2>
+<li>calme total en idle ;</li>
+<li>hit flash plus court visuellement ;</li>
+<li>ne pas augmenter les FX de destruction.</li>
+
+<h2>Étape 1.3 — reinforced</h2>
+<li>structure plus massive ;</li>
+<li>cicatrice existante conservée ;</li>
+<li>micro compression/vibration au hit ;</li>
+<li>pas de pulsation idle.</li>
+
+<h2>Étape 1.4 — explosive</h2>
+<li>noyau dominant ;</li>
+<li>pulse idle asynchrone ;</li>
+<li>rendu `queued` clairement différent ;</li>
+<li>si nécessaire ajouter `initialDelay` dans `PendingExplosion`.</li>
+
+<h2>Étape 1.5 — gravity</h2>
+<li>chevrons descendants ;</li>
+<li>micro detach avant falling ;</li>
+<li>rotation falling visuellement limitée.</li>
+
+<h2>Étape 1.6 — stress test</h2>
+<p>Tester :</p>
+<li>3–4 balles ;</li>
+<li>chaîne explosive ;</li>
+<li>gravity ;</li>
+<li>reinforced.</li>
+
+<h2>Acceptance</h2>
+<li>reconnaissance sans couleur ;</li>
+<li>pas de flash permanent ;</li>
+<li>queued lisible ;</li>
+<li>aucune régression gameplay.</li>
+
+<p>---</p>
+
+<h1>LOT 2 — Fondation obstacles + Wall</h1>
+
+<h2>Étape 2.1 — types</h2>
+<p>Ajouter :</p>
+
+<pre><code>interface BreakerWall { ... }
+interface BreakerBumper { ... }
+type BreakerObstacle = BreakerWall | BreakerBumper;</code></pre>
+
+<p>Ajouter :</p>
+<pre><code>this.obstacles = [] as BreakerObstacle[];</code></pre>
+
+<h2>Étape 2.2 — construction</h2>
+<p>Créer :</p>
+<pre><code>buildObstacles(): void
+buildLevel(): void</code></pre>
+
+<p>Remplacer les appels pertinents à `buildBricks()` par `buildLevel()` seulement si nécessaire.</p>
+
+<p>Attention :</p>
+<p>`nextLevel()` doit continuer à fonctionner sans obstacle tant que la progression normale n&#x27;utilise pas Chantier B.</p>
+
+<h2>Étape 2.3 — helper collision</h2>
+<p>Créer un helper robuste `circleVsAabb()`.</p>
+
+<p>Ne pas refactorer immédiatement la collision brick.</p>
+
+<h2>Étape 2.4 — Wall physics</h2>
+<p>Dans l&#x27;update balle :</p>
+<li>résoudre les Walls ;</li>
+<li>corriger pénétration ;</li>
+<li>réfléchir vitesse ;</li>
+<li>feedback faible ;</li>
+<li>compteur lab si actif.</li>
+
+<h2>Étape 2.5 — Wall rendering</h2>
+<p>Procédural Canvas :</p>
+<li>extensible ;</li>
+<li>architectural ;</li>
+<li>distinct d&#x27;une brique.</li>
+
+<h2>Étape 2.6 — lasers</h2>
+<p>Ajouter collision laser / Wall :</p>
+<li>bolt détruit ;</li>
+<li>spark faible ;</li>
+<li>aucune autre conséquence.</li>
+
+<h2>Acceptance</h2>
+<li>Wall indestructible ;</li>
+<li>clear inchangé ;</li>
+<li>FLAME rebondit ;</li>
+<li>multiball correct ;</li>
+<li>laser bloqué ;</li>
+<li>aucun jitter évident.</li>
+
+<p>---</p>
+
+<h1>LOT 3 — Bumper</h1>
+
+<h2>Étape 3.1 — helper</h2>
+<p>Créer `circleVsCircle()`.</p>
+
+<h2>Étape 3.2 — collision</h2>
+<li>normale bumper → balle ;</li>
+<li>séparation ;</li>
+<li>réflexion seulement si approche ;</li>
+<li>cooldown même bumper / même balle.</li>
+
+<h2>Étape 3.3 — boost</h2>
+<p>Ajouter sur les balles :</p>
+<pre><code>lastBumperId
+lastBumperT
+bumperBoostT</code></pre>
+
+<p>Créer :</p>
+<pre><code>targetBallSpeed(ball)</code></pre>
+
+<p>Adapter `normSpeed()` pour respecter le boost actif.</p>
+
+<h2>Étape 3.4 — feedback</h2>
+<li>`pulseT` sur Bumper ;</li>
+<li>squash ;</li>
+<li>ring ;</li>
+<li>burst limité ;</li>
+<li>son synthétique distinct ;</li>
+<li>rumble léger.</li>
+
+<h2>Acceptance</h2>
+<li>pas de double-hit ;</li>
+<li>direction cohérente ;</li>
+<li>boost temporaire ;</li>
+<li>vitesse globale intacte.</li>
+
+<p>---</p>
+
+<h1>LOT 4 — B-LAB</h1>
+
+<h2>Étape 4.1 — activation</h2>
+<p>DEV only :</p>
+<pre><code>?breakerLab=wall
+?breakerLab=corridor
+?breakerLab=bumper
+?breakerLab=billiard
+?breakerLab=chain</code></pre>
+
+<h2>Étape 4.2 — layouts</h2>
+<p>Créer des builders explicites.</p>
+<p>Ne pas injecter ces layouts dans la progression normale.</p>
+
+<h2>Étape 4.3 — debug draw</h2>
+<p>Ajouter :</p>
+<li>shapes ;</li>
+<li>point de contact ;</li>
+<li>normale ;</li>
+<li>vecteur vitesse ;</li>
+<li>prédiction trajectoire.</li>
+
+<h2>Étape 4.4 — stats</h2>
+<p>Ajouter :</p>
+<li>wallHits ;</li>
+<li>bumperHits ;</li>
+<li>bumperToBrick ;</li>
+<li>bumperToExplosive ;</li>
+<li>maxCombo.</li>
+
+<h2>Acceptance</h2>
+<li>aucune logique lab en production hors branches mortes/DEV ;</li>
+<li>prédiction utilise les mêmes helpers de collision ;</li>
+<li>overlay lisible ;</li>
+<li>pas de dépendance externe.</li>
+
+<p>---</p>
+
+<h1>LOT 5 — Tuning / décision</h1>
+
+<p>Aucun nouvel objet.</p>
+
+<p>Faire seulement :</p>
+<li>ajustement tailles ;</li>
+<li>boost ;</li>
+<li>cooldown ;</li>
+<li>feedback ;</li>
+<li>positions de lab ;</li>
+<li>intensités A3.</li>
+
+<p>Décision finale :</p>
+<li>Wall validé ?</li>
+<li>Bumper validé ?</li>
+<li>combinaison validée ?</li>
+
+<p>Ensuite seulement ouvrir un nouveau chantier :</p>
+<li>Moving ;</li>
+<li>ou Portal.</li>
+
+<p>---</p>
+
+<h1>Checklist de revue finale</h1>
+
+<h2>TypeScript</h2>
+<div class='check'>☐ pas de nouveaux `any` évitables</div>
+<div class='check'>☐ unions discriminées pour les obstacles</div>
+<div class='check'>☐ pas de propriété optionnelle générique inutile</div>
+
+<h2>Gameplay</h2>
+<div class='check'>☐ progression existante jouable</div>
+<div class='check'>☐ clear fonctionne</div>
+<div class='check'>☐ lives fonctionnent</div>
+<div class='check'>☐ drops fonctionnent</div>
+<div class='check'>☐ lasers fonctionnent</div>
+<div class='check'>☐ multiball fonctionne</div>
+<div class='check'>☐ flame fonctionne</div>
+<div class='check'>☐ slow fonctionne</div>
+<div class='check'>☐ glue fonctionne</div>
+
+<h2>Lisibilité</h2>
+<div class='check'>☐ 4 briques distinctes en monochrome</div>
+<div class='check'>☐ idle calme</div>
+<div class='check'>☐ queued explosive lisible</div>
+<div class='check'>☐ gravity detach lisible</div>
+
+<h2>Géométrie</h2>
+<div class='check'>☐ wall frontal</div>
+<div class='check'>☐ wall coin</div>
+<div class='check'>☐ bumper frontal</div>
+<div class='check'>☐ bumper tangent</div>
+<div class='check'>☐ multiball</div>
+<div class='check'>☐ pas de jitter</div>
+
+<h2>Build</h2>
+<pre><code>npm run typecheck
+npm run build</code></pre></section><section id='ch6'><h1>Spécification de la planche graphique — BLOB BREAKER</h1>
+
+<h2>1. Ce que la planche est</h2>
+
+<p>La planche n&#x27;est pas une sprite sheet d&#x27;effets.</p>
+
+<p>C&#x27;est une <strong>référence de langage visuel</strong> destinée à :</p>
+<li>guider le rendu Canvas ;</li>
+<li>fixer les silhouettes ;</li>
+<li>fixer les glyphes ;</li>
+<li>fixer les états ;</li>
+<li>servir de contrôle qualité.</li>
+
+<p>Le runtime peut rester 100 % procédural.</p>
+
+<p>---</p>
+
+<h1>2. Structure de la planche</h1>
+
+<h2>A — BRICKS / objectifs</h2>
+
+<p>Présenter :</p>
+
+<h3>Normal</h3>
+<li>idle</li>
+<li>hit</li>
+<li>destruction</li>
+
+<h3>Reinforced</h3>
+<li>idle</li>
+<li>hit 1</li>
+<li>damaged</li>
+<li>destruction</li>
+
+<h3>Explosive</h3>
+<li>idle</li>
+<li>queued</li>
+<li>hit</li>
+<li>explode</li>
+<li>chain climax</li>
+
+<h3>Gravity</h3>
+<li>idle</li>
+<li>signal</li>
+<li>detach</li>
+<li>falling</li>
+<li>paddle impact</li>
+
+<p>---</p>
+
+<h2>B — ARCHITECTURE</h2>
+
+<h3>Wall</h3>
+<p>Présenter :</p>
+<li>horizontal court ;</li>
+<li>horizontal long ;</li>
+<li>vertical ;</li>
+<li>coin visuel si nécessaire ;</li>
+<li>impact balle ;</li>
+<li>impact laser.</li>
+
+<p>Le Wall doit sembler être un morceau du niveau.</p>
+
+<p>---</p>
+
+<h2>C — MÉCANISMES</h2>
+
+<h3>Bumper</h3>
+<p>Présenter :</p>
+<li>idle ;</li>
+<li>hit ;</li>
+<li>compression ;</li>
+<li>rebound ring ;</li>
+<li>cooldown / retour.</li>
+
+<p>Le Bumper doit sembler interactif avant même d&#x27;être touché.</p>
+
+<p>---</p>
+
+<h1>3. Deux passes obligatoires</h1>
+
+<h2>PASS 1 — MONOCHROME</h2>
+
+<p>Aucune couleur fonctionnelle.</p>
+
+<p>Questions :</p>
+<li>explosive reconnue ?</li>
+<li>gravity reconnue ?</li>
+<li>reinforced reconnue ?</li>
+<li>Wall ≠ brique ?</li>
+<li>Bumper ≠ brique et ≠ Wall ?</li>
+
+<p>Tant que cette passe échoue, ne pas travailler la couleur.</p>
+
+<h2>PASS 2 — COULEUR</h2>
+
+<p>La palette de rang des briques est conservée.</p>
+
+<p>La couleur fonctionnelle devient un accent :</p>
+<li>explosive : noyau chaud ;</li>
+<li>gravity : chevrons froids ;</li>
+<li>reinforced : traitement de coque ;</li>
+<li>normal : aucun accent fonctionnel.</li>
+
+<p>---</p>
+
+<h1>4. Hiérarchie d&#x27;information</h1>
+
+<p>Toujours :</p>
+
+<p>1. silhouette / masse</p>
+<p>2. structure interne</p>
+<p>3. glyphe</p>
+<p>4. animation</p>
+<p>5. couleur</p>
+<p>6. FX</p>
+
+<p>Jamais :</p>
+<p><strong>couleur seule → comportement</strong></p>
+
+<p>---</p>
+
+<h1>5. Ce qui ne doit PAS être dessiné comme asset</h1>
+
+<p>Ne pas produire :</p>
+<li>particules ;</li>
+<li>explosion complète ;</li>
+<li>shockwave ;</li>
+<li>flash écran ;</li>
+<li>trails ;</li>
+<li>glow baked ;</li>
+<li>screenshake évidemment ;</li>
+<li>textes COMBO/BOOM/FREEZE ;</li>
+<li>multiples tailles de Wall ;</li>
+<li>multiples tailles de paddle.</li>
+
+<p>Ces éléments sont déjà mieux gérés procéduralement.</p>
+
+<p>---</p>
+
+<h1>6. Dimensions / adaptabilité</h1>
+
+<p>Les briques actuelles changent de taille selon les niveaux.</p>
+
+<p>La planche doit donc décrire des éléments <strong>scalables</strong>.</p>
+
+<p>Éviter un dessin reposant sur :</p>
+<li>un nombre fixe de pixels ;</li>
+<li>un détail trop fin ;</li>
+<li>un glyphe qui disparaît lorsque `tileW` descend.</li>
+
+<p>Tester visuellement au minimum :</p>
+<li>grande brique ~100 × 24 ;</li>
+<li>moyenne ~64 × 20 ;</li>
+<li>petite ~48 × 18.</li>
+
+<p>Un élément fonctionnel doit rester lisible à la petite taille.</p>
+
+<p>---</p>
+
+<h1>7. Règle de densité</h1>
+
+<p>Le jeu peut contenir :</p>
+<li>multiball ;</li>
+<li>lasers ;</li>
+<li>drops ;</li>
+<li>explosions ;</li>
+<li>combo ;</li>
+<li>gravity hazards.</li>
+
+<p>Donc :</p>
+<li>idle minimal ;</li>
+<li>pas de clignotement simultané ;</li>
+<li>peu de détails fins ;</li>
+<li>une seule signature forte par comportement.</li>
+
+<p>---</p>
+
+<h1>8. Livrables graphiques recommandés</h1>
+
+<p>La planche finale devrait contenir :</p>
+
+<p>1. <strong>Planche monochrome</strong></p>
+<p>2. <strong>Planche couleur</strong></p>
+<p>3. <strong>Strip d&#x27;états A3</strong></p>
+<p>4. <strong>Wall / Bumper</strong></p>
+<p>5. <strong>Stress test raisonnable</strong></p>
+<p>6. <strong>Stress test extrême</strong> clairement étiqueté comme test de lisibilité, pas comme cible esthétique.</p>
+
+<p>Aucun export raster runtime n&#x27;est requis tant que le rendu Canvas suffit.</p></section>
+</main>
+</div>
+</body>
+</html>

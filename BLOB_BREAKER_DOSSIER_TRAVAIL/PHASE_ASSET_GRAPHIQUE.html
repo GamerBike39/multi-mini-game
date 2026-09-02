@@ -1,0 +1,549 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BLOB BREAKER — Phase Asset Graphique</title>
+<style>
+:root {
+ --bg:#080a0f; --panel:#11151c; --panel2:#171c25; --text:#edf1f7; --muted:#98a2b3;
+ --line:#2b3340; --accent:#fb7185; --accent2:#7dd3fc;
+}
+*{box-sizing:border-box} html{scroll-behavior:smooth}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.62 system-ui,-apple-system,Segoe UI,sans-serif}
+.shell{display:grid;grid-template-columns:280px minmax(0,1fr);min-height:100vh}
+aside{position:sticky;top:0;height:100vh;padding:28px 20px;border-right:1px solid var(--line);background:#0b0e14}
+.brand{font-size:13px;font-weight:900;letter-spacing:.14em}
+.kicker{margin:5px 0 24px;color:var(--muted);font-size:12px}
+nav a{display:block;color:#cbd5e1;text-decoration:none;padding:8px 10px;border-radius:8px;margin:2px 0}
+nav a:hover{background:var(--panel2);color:white}
+main{width:min(1100px,100%);padding:48px 6vw 100px}
+h1{font-size:clamp(34px,5vw,58px);line-height:1.03;letter-spacing:-.045em;margin:0 0 28px}
+h2{font-size:28px;margin:50px 0 14px;border-top:1px solid var(--line);padding-top:28px}
+h3{font-size:18px;margin:28px 0 8px;color:#fda4af}
+p,li{max-width:860px}
+li{margin:5px 0 5px 21px}
+strong{color:white}
+pre{background:#07090d;border:1px solid var(--line);padding:16px 18px;border-radius:12px;overflow:auto;max-width:900px}
+code{font:13px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace;color:#dfe7f3}
+.check{padding:4px 0;color:#dbe4ef}
+.badge{display:inline-block;border:1px solid var(--line);padding:4px 8px;border-radius:999px;color:var(--muted);font-size:12px}
+.callout{border:1px solid var(--line);background:linear-gradient(135deg,#131722,#0e1118);padding:18px 20px;border-radius:14px;margin:20px 0}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:20px 0}
+.card{border:1px solid var(--line);background:var(--panel);padding:16px;border-radius:12px}
+@media(max-width:900px){
+ .shell{display:block} aside{position:relative;height:auto;border-right:0;border-bottom:1px solid var(--line)}
+ nav{display:flex;gap:4px;overflow:auto} nav a{white-space:nowrap} main{padding:28px 20px 80px}
+ .grid{grid-template-columns:1fr}
+}
+@media print{aside{display:none} .shell{display:block} main{width:auto;padding:0} body{background:white;color:#111} h2{page-break-before:auto} pre{break-inside:avoid}}
+</style>
+</head>
+<body>
+<div class="shell">
+<aside>
+<div class="brand">BLOB BREAKER</div>
+<div class="kicker">Phase asset graphique · plan de production</div>
+<nav>
+<a href="#principes">Principes</a>
+<a href="#strategie">Stratégie</a>
+<a href="#master">Planche maître</a>
+<a href="#bricks">Bricks</a>
+<a href="#wall">Wall</a>
+<a href="#bumper">Bumper</a>
+<a href="#hud">Drops & HUD</a>
+<a href="#ordre">Ordre de production</a>
+<a href="#qa">QA</a>
+</nav>
+</aside>
+<main>
+<div class="badge">AG0 → AG6</div>
+<h1>BLOB BREAKER — Plan de production des assets graphiques</h1>
+<h2>0. Objet du document</h2>
+<p>Ce document prépare la phase graphique pendant que le prototype fonctionnel est en cours d&#x27;intégration.</p>
+<p>Le but n&#x27;est pas de fabriquer une grosse sprite sheet figée. BLOB BREAKER doit conserver son identité procédurale et son rendu Canvas vivant.</p>
+<p>La phase asset doit produire un <strong>système graphique modulaire</strong> :</p>
+<li>des formes et silhouettes cohérentes ;</li>
+<li>des glyphes immédiatement lisibles ;</li>
+<li>des références d&#x27;états ;</li>
+<li>des règles de couleur ;</li>
+<li>des objets de level design clairement différenciés ;</li>
+<li>un langage HUD cohérent ;</li>
+<li>un guide d&#x27;intégration Canvas.</li>
+<p>Les animations de réaction, glow, rings, explosions, trails, déformations et particules restent majoritairement procédurales.</p>
+<p>---</p>
+<h1>1. Principes directeurs</h1>
+<h2>1.1 Hiérarchie de lecture</h2>
+<p>Toujours construire l&#x27;information dans cet ordre :</p>
+<p>1. silhouette / masse</p>
+<p>2. structure interne</p>
+<p>3. glyphe fonctionnel</p>
+<p>4. micro-animation</p>
+<p>5. couleur</p>
+<p>6. FX</p>
+<p>Une mécanique ne doit jamais reposer sur la couleur seule.</p>
+<h2>1.2 Test monochrome obligatoire</h2>
+<p>Tout asset gameplay doit rester identifiable en niveaux de gris.</p>
+<p>Questions à poser :</p>
+<li>Explosive identifiable ?</li>
+<li>Gravity identifiable ?</li>
+<li>Reinforced identifiable ?</li>
+<li>Wall clairement différent d&#x27;une brique ?</li>
+<li>Bumper clairement différent d&#x27;un Wall et d&#x27;une brique ?</li>
+<h2>1.3 Calme visuel au repos</h2>
+<p>Les assets idle doivent être discrets.</p>
+<p>Le spectacle vient de :</p>
+<li>l&#x27;impact ;</li>
+<li>l&#x27;activation ;</li>
+<li>la destruction ;</li>
+<li>les réactions en chaîne ;</li>
+<li>les interactions avec la géométrie.</li>
+<p>Pas de glow fort ou de clignotement permanent.</p>
+<h2>1.4 Scalabilité</h2>
+<p>Les briques changent de taille selon les niveaux.</p>
+<p>Tester au minimum :</p>
+<li>grande : ~100 × 24</li>
+<li>moyenne : ~64 × 20</li>
+<li>petite : ~48 × 18</li>
+<p>Les signes fonctionnels doivent rester lisibles à la plus petite taille.</p>
+<p>---</p>
+<h1>2. Stratégie de production</h1>
+<h2>2.1 Ce qui devient un asset ou une référence graphique</h2>
+<li>silhouette des briques ;</li>
+<li>structure de coque reinforced ;</li>
+<li>noyau explosive ;</li>
+<li>chevrons gravity ;</li>
+<li>langage architectural Wall ;</li>
+<li>noyau/anneaux du Bumper ;</li>
+<li>pictogrammes Drops ;</li>
+<li>pictogrammes HUD ;</li>
+<li>états de référence ;</li>
+<li>palettes et règles de contraste.</li>
+<h2>2.2 Ce qui reste procédural</h2>
+<p>Ne pas produire comme sprites runtime :</p>
+<li>particules ;</li>
+<li>débris génériques ;</li>
+<li>explosions complètes ;</li>
+<li>shockwaves ;</li>
+<li>flash écran ;</li>
+<li>trails ;</li>
+<li>glow dynamique ;</li>
+<li>screenshake ;</li>
+<li>wobble ;</li>
+<li>squash/stretch ;</li>
+<li>textes COMBO / BOOM / FREEZE ;</li>
+<li>multiples tailles de Wall ;</li>
+<li>multiples tailles de paddle.</li>
+<p>Règle :</p>
+<p><strong>asset = identité</strong></p>
+<p><strong>code = mouvement et vie</strong></p>
+<p>---</p>
+<h1>3. Architecture de la planche maître</h1>
+<p>La master sheet est organisée en 7 zones.</p>
+<h2>Zone 01 — Règles du langage</h2>
+<p>Présenter :</p>
+<li>hiérarchie de lecture ;</li>
+<li>test monochrome ;</li>
+<li>densité maximale ;</li>
+<li>principe &quot;une signature forte par mécanique&quot;.</li>
+<h2>Zone 02 — Bricks / objectifs</h2>
+<p>Colonnes :</p>
+<li>Normal</li>
+<li>Reinforced</li>
+<li>Explosive</li>
+<li>Gravity</li>
+<p>Lignes :</p>
+<li>Idle</li>
+<li>Signal</li>
+<li>Hit</li>
+<li>Active</li>
+<li>Destruction</li>
+<p>Toutes les cellules ne sont pas forcément utilisées.</p>
+<h2>Zone 03 — Architecture</h2>
+<h3>Wall</h3>
+<p>Présenter :</p>
+<li>horizontal court ;</li>
+<li>horizontal long ;</li>
+<li>vertical ;</li>
+<li>impact balle ;</li>
+<li>impact laser.</li>
+<p>Le Wall doit sembler être un morceau du niveau, pas une grosse brique.</p>
+<h2>Zone 04 — Mécanismes</h2>
+<h3>Bumper</h3>
+<p>Présenter :</p>
+<li>idle ;</li>
+<li>compression ;</li>
+<li>hit ;</li>
+<li>rebound ;</li>
+<li>retour au repos.</li>
+<p>Le Bumper doit paraître interactif avant même d&#x27;être touché.</p>
+<h2>Zone 05 — Glyphes isolés</h2>
+<p>Créer une banque indépendante :</p>
+<li>reinforced shell ;</li>
+<li>rivets ;</li>
+<li>explosive core ;</li>
+<li>explosive queued ring ;</li>
+<li>gravity chevrons ;</li>
+<li>gravity detach marker ;</li>
+<li>bumper core ;</li>
+<li>wall structural motif.</li>
+<p>Objectif :</p>
+<p>permettre une intégration Canvas par couches.</p>
+<h2>Zone 06 — Drops + HUD</h2>
+<h3>Drops existants</h3>
+<li>MULTI</li>
+<li>LARGE</li>
+<li>SLOW</li>
+<li>LASER</li>
+<li>GLUE</li>
+<li>FLAME</li>
+<li>GIANT</li>
+<li>SMALL</li>
+<h3>HUD</h3>
+<li>vie ;</li>
+<li>multiball ;</li>
+<li>laser ;</li>
+<li>glue ;</li>
+<li>flame ;</li>
+<li>giant ;</li>
+<li>slow ;</li>
+<li>large ;</li>
+<li>small ;</li>
+<li>freeze.</li>
+<p>Les pictogrammes doivent rester lisibles à petite taille.</p>
+<h2>Zone 07 — Scènes de validation</h2>
+<p>Prévoir :</p>
+<li>grille monochrome ;</li>
+<li>grille couleur ;</li>
+<li>scène gameplay calme ;</li>
+<li>stress test raisonnable ;</li>
+<li>stress test extrême ;</li>
+<li>scène Wall ;</li>
+<li>scène Bumper ;</li>
+<li>scène Wall + Bumper + explosives.</li>
+<p>---</p>
+<h1>4. Inventaire précis des livrables graphiques</h1>
+<h2>4.1 Bricks</h2>
+<h3>NORMAL</h3>
+<p>Livrables :</p>
+<li>base monochrome ;</li>
+<li>base couleur ;</li>
+<li>hit reference ;</li>
+<li>destruction reference.</li>
+<p>Contraintes :</p>
+<li>silhouette simple ;</li>
+<li>aucune signature animée idle ;</li>
+<li>sert de référence neutre.</li>
+<h3>REINFORCED</h3>
+<p>Livrables :</p>
+<li>base monochrome ;</li>
+<li>base couleur ;</li>
+<li>shell overlay ;</li>
+<li>rivets overlay ;</li>
+<li>hit state ;</li>
+<li>damaged state ;</li>
+<li>destruction reference.</li>
+<p>Contraintes :</p>
+<li>impression de masse ;</li>
+<li>pas de pulsation ;</li>
+<li>dommage lisible sans les HP.</li>
+<h3>EXPLOSIVE</h3>
+<p>Livrables :</p>
+<li>base monochrome ;</li>
+<li>base couleur ;</li>
+<li>core idle ;</li>
+<li>queued state ;</li>
+<li>hit state ;</li>
+<li>explosion reference ;</li>
+<li>chain climax reference.</li>
+<p>Contraintes :</p>
+<li>noyau central très dominant ;</li>
+<li>queued immédiatement perceptible ;</li>
+<li>la couleur chaude ne doit pas être le seul indice.</li>
+<h3>GRAVITY</h3>
+<p>Livrables :</p>
+<li>base monochrome ;</li>
+<li>base couleur ;</li>
+<li>chevrons ;</li>
+<li>signal state ;</li>
+<li>detach state ;</li>
+<li>falling state ;</li>
+<li>paddle impact reference.</li>
+<p>Contraintes :</p>
+<li>lecture &quot;vers le bas&quot; immédiate ;</li>
+<li>mouvement idle faible ;</li>
+<li>distinction nette entre brique en grille et hazard en chute.</li>
+<p>---</p>
+<h1>5. Wall</h1>
+<h2>5.1 Identité</h2>
+<p>Catégorie visuelle :</p>
+<p><strong>ARCHITECTURE</strong></p>
+<p>Le Wall :</p>
+<li>ne ressemble pas à une brique ;</li>
+<li>possède une structure interne répétable ;</li>
+<li>garde un faible niveau de contraste ;</li>
+<li>doit accepter toutes les longueurs.</li>
+<h2>5.2 Livrables</h2>
+<li>motif architectural monochrome ;</li>
+<li>motif couleur ;</li>
+<li>cap gauche / centre / cap droit si nécessaire ;</li>
+<li>variante verticale si le motif n&#x27;est pas rotation-safe ;</li>
+<li>impact balle reference ;</li>
+<li>impact laser reference.</li>
+<h2>5.3 Recommandation d&#x27;intégration</h2>
+<p>Préférer :</p>
+<li>dessin Canvas procédural ;</li>
+<li>répétition d&#x27;un motif ;</li>
+<li>9-slice logique si nécessaire.</li>
+<p>Éviter :</p>
+<li>un PNG par taille.</li>
+<p>---</p>
+<h1>6. Bumper</h1>
+<h2>6.1 Identité</h2>
+<p>Catégorie visuelle :</p>
+<p><strong>MÉCANISME</strong></p>
+<p>Il doit être :</p>
+<li>rond ;</li>
+<li>lisible ;</li>
+<li>élastique ;</li>
+<li>énergique ;</li>
+<li>plus expressif qu&#x27;un Wall.</li>
+<h2>6.2 Livrables</h2>
+<li>silhouette monochrome ;</li>
+<li>version couleur ;</li>
+<li>core ;</li>
+<li>anneau ;</li>
+<li>idle ;</li>
+<li>hit ;</li>
+<li>compression ;</li>
+<li>rebound ;</li>
+<li>cooldown/return.</li>
+<h2>6.3 Intégration</h2>
+<p>Recommandation :</p>
+<p>Bumper comme composant Canvas composé de :</p>
+<p>1. body</p>
+<p>2. core</p>
+<p>3. ring(s)</p>
+<p>4. procedural squash</p>
+<p>5. procedural hit ring</p>
+<p>6. procedural particles</p>
+<p>Pas besoin de sprite animé complet.</p>
+<p>---</p>
+<h1>7. Drops et HUD</h1>
+<h2>7.1 Problème actuel à éviter</h2>
+<p>Les drops ne doivent pas dépendre de lettres comme seule identification à long terme.</p>
+<h2>7.2 Direction</h2>
+<p>Créer un pictogramme simple par pouvoir.</p>
+<p>Exemples conceptuels :</p>
+<li>MULTI : trois points / trois balles</li>
+<li>LARGE : paddle avec flèches extérieures</li>
+<li>SMALL : paddle avec flèches intérieures</li>
+<li>SLOW : horloge / vague ralentie</li>
+<li>LASER : double rayon</li>
+<li>GLUE : lien / goutte / accroche</li>
+<li>FLAME : flamme</li>
+<li>GIANT : balle + halo / flèches d&#x27;expansion</li>
+<h2>7.3 Bonus / malus</h2>
+<p>Préparer dès maintenant un langage de polarité, même si la logique gameplay n&#x27;est pas refactorée immédiatement.</p>
+<p>Proposition :</p>
+<li>bonus : contenant doux / positif</li>
+<li>malus : contenant angulaire / instable</li>
+<li>neutre / chaos : contenant spécifique</li>
+<p>`SMALL` devra visuellement être perçu comme un effet potentiellement négatif.</p>
+<p>---</p>
+<h1>8. Format source et exports</h1>
+<h2>8.1 Source recommandée</h2>
+<p>Privilégier :</p>
+<li>SVG pour glyphes et formes simples ;</li>
+<li>Affinity Designer/Photo pour planches de présentation ;</li>
+<li>PNG/WebP pour previews seulement.</li>
+<h2>8.2 Runtime</h2>
+<p>Ne pas imposer l&#x27;utilisation des SVG runtime.</p>
+<p>Les SVG servent de :</p>
+<li>référence ;</li>
+<li>source vectorielle ;</li>
+<li>base de mesure.</li>
+<p>Le moteur Canvas peut reconstruire les formes en code si cela reste plus performant et flexible.</p>
+<h2>8.3 Nommage</h2>
+<p>Convention proposée :</p>
+<pre><code>brick_normal_base.svg
+brick_reinforced_shell.svg
+brick_reinforced_rivets.svg
+brick_explosive_core.svg
+brick_explosive_queued.svg
+brick_gravity_chevrons.svg
+
+wall_pattern.svg
+bumper_core.svg
+bumper_ring.svg
+
+drop_multi.svg
+drop_large.svg
+drop_small.svg
+drop_slow.svg
+drop_laser.svg
+drop_glue.svg
+drop_flame.svg
+drop_giant.svg</code></pre>
+<p>Versions de planches :</p>
+<pre><code>blob-breaker-master-monochrome-v01.png
+blob-breaker-master-color-v01.png
+blob-breaker-states-v01.png
+blob-breaker-hud-drops-v01.png</code></pre>
+<p>---</p>
+<h1>9. Ordre de production</h1>
+<h2>AG0 — Validation du prototype</h2>
+<p>Attendre seulement les résultats nécessaires du prototype :</p>
+<li>forme réelle du Wall ;</li>
+<li>diamètre/feedback réel du Bumper ;</li>
+<li>tailles minimales réellement utilisées.</li>
+<p>Le travail monochrome peut démarrer avant.</p>
+<h2>AG1 — Master monochrome</h2>
+<p>Produire :</p>
+<li>4 briques ;</li>
+<li>Wall ;</li>
+<li>Bumper ;</li>
+<li>glyphes isolés.</li>
+<p>Gate :</p>
+<p>tout doit être reconnaissable sans couleur.</p>
+<h2>AG2 — Master couleur</h2>
+<p>Réintroduire :</p>
+<li>palette de rang ;</li>
+<li>accents fonctionnels ;</li>
+<li>contraste.</li>
+<p>Gate :</p>
+<p>la couleur améliore la lecture mais ne devient jamais indispensable.</p>
+<h2>AG3 — États</h2>
+<p>Produire les strips :</p>
+<li>idle ;</li>
+<li>signal ;</li>
+<li>hit ;</li>
+<li>active ;</li>
+<li>destruction ;</li>
+<li>queued ;</li>
+<li>detach ;</li>
+<li>falling.</li>
+<p>Gate :</p>
+<p>chaque état doit être transposable en animation Canvas.</p>
+<h2>AG4 — Drops + HUD</h2>
+<p>Créer :</p>
+<li>8 pictogrammes drops ;</li>
+<li>états HUD correspondants ;</li>
+<li>langage bonus / malus.</li>
+<h2>AG5 — Guide intégration Canvas</h2>
+<p>Documenter :</p>
+<li>ordre de dessin ;</li>
+<li>couches ;</li>
+<li>échelles ;</li>
+<li>marges internes ;</li>
+<li>contrastes ;</li>
+<li>état animé ;</li>
+<li>fallback petite taille.</li>
+<h2>AG6 — Validation terrain</h2>
+<p>Créer :</p>
+<li>scène calme ;</li>
+<li>stress test raisonnable ;</li>
+<li>stress test extrême ;</li>
+<li>scène Wall ;</li>
+<li>scène Bumper ;</li>
+<li>scène chaîne explosive + géométrie.</li>
+<p>Gate final :</p>
+<p>la balle reste prioritaire visuellement.</p>
+<p>---</p>
+<h1>10. Règles d&#x27;intégration Canvas</h1>
+<h2>10.1 Brick render stack</h2>
+<p>Ordre conseillé :</p>
+<pre><code>1. base shape
+2. structural overlay
+3. functional glyph
+4. damage layer
+5. state animation
+6. local glow
+7. hit feedback
+8. global FX</code></pre>
+<h2>10.2 Petites tailles</h2>
+<p>Si la largeur &lt; seuil défini :</p>
+<li>réduire les détails ;</li>
+<li>garder le glyphe ;</li>
+<li>garder la silhouette ;</li>
+<li>supprimer les micro-rivets ou textures fines ;</li>
+<li>ne jamais réduire le signe fonctionnel au point qu&#x27;il disparaisse.</li>
+<h2>10.3 Couleur</h2>
+<p>Conserver la palette de rang pour le corps.</p>
+<p>Accent fonctionnel :</p>
+<li>explosive : chaud ;</li>
+<li>gravity : froid ;</li>
+<li>reinforced : traitement de matériau / contraste ;</li>
+<li>normal : aucun accent spécial.</li>
+<h2>10.4 Animation</h2>
+<p>Les assets ne doivent jamais contenir une animation &quot;baked&quot; si :</p>
+<li>l&#x27;échelle varie ;</li>
+<li>la durée dépend du gameplay ;</li>
+<li>le code possède déjà l&#x27;information de timing.</li>
+<p>---</p>
+<h1>11. Checklist QA graphique</h1>
+<h2>Lisibilité</h2>
+<div class='check'>☐ Normal identifiable</div>
+<div class='check'>☐ Reinforced identifiable</div>
+<div class='check'>☐ Explosive identifiable</div>
+<div class='check'>☐ Gravity identifiable</div>
+<div class='check'>☐ Wall ≠ brick</div>
+<div class='check'>☐ Bumper ≠ Wall</div>
+<div class='check'>☐ Bumper ≠ brick</div>
+<h2>Monochrome</h2>
+<div class='check'>☐ aucune mécanique dépend de la couleur</div>
+<div class='check'>☐ glyphes lisibles à petite taille</div>
+<h2>Mouvement</h2>
+<div class='check'>☐ idle calme</div>
+<div class='check'>☐ queued visible</div>
+<div class='check'>☐ detach gravity visible</div>
+<div class='check'>☐ bumper hit lisible</div>
+<h2>Densité</h2>
+<div class='check'>☐ pas de détails inutiles</div>
+<div class='check'>☐ pas de glow baked</div>
+<div class='check'>☐ la balle reste prioritaire</div>
+<h2>Scalabilité</h2>
+<div class='check'>☐ 100×24</div>
+<div class='check'>☐ 64×20</div>
+<div class='check'>☐ 48×18</div>
+<h2>Intégration</h2>
+<div class='check'>☐ forme reconstructible en Canvas</div>
+<div class='check'>☐ overlays séparables</div>
+<div class='check'>☐ nomenclature claire</div>
+<div class='check'>☐ pas d&#x27;asset par taille</div>
+<p>---</p>
+<h1>12. Définition de terminé de la phase asset</h1>
+<p>La phase asset est terminée lorsque :</p>
+<p>1. la master monochrome est validée ;</p>
+<p>2. la master couleur est validée ;</p>
+<p>3. les strips d&#x27;états sont validés ;</p>
+<p>4. Wall et Bumper ont un langage stable ;</p>
+<p>5. Drops/HUD utilisent des pictogrammes cohérents ;</p>
+<p>6. le guide Canvas permet à un agent d&#x27;intégrer chaque élément sans interprétation artistique ;</p>
+<p>7. les stress tests restent lisibles ;</p>
+<p>8. les éléments décoratifs ne prennent pas le dessus sur la balle et les interactions ;</p>
+<p>9. aucun asset inutilement figé n&#x27;a été créé ;</p>
+<li>les choix graphiques restent compatibles avec les résultats du B-LAB.</li>
+<p>---</p>
+<h1>13. Livrables finaux</h1>
+<p>À la fin, conserver :</p>
+<li>`MASTER_MONOCHROME`</li>
+<li>`MASTER_COLOR`</li>
+<li>`STATES`</li>
+<li>`WALL_BUMPER`</li>
+<li>`HUD_DROPS`</li>
+<li>`CANVAS_INTEGRATION_GUIDE`</li>
+<li>`VALIDATION_SCENES`</li>
+<li>dossier des SVG sources si réellement utiles au runtime ou à la documentation.</li>
+<p>Le système doit rester suffisamment modulaire pour accueillir ensuite :</p>
+<li>Moving ;</li>
+<li>Portal ;</li>
+<li>Ghost ;</li>
+<li>Switch ;</li>
+<li>Reflector.</li>
+<p>Ces futures mécaniques devront réutiliser le même langage :</p>
+<p><strong>objectif / architecture / mécanisme / état / accent fonctionnel</strong>.</p>
+</main>
+</div>
+</body>
+</html>

@@ -1,5 +1,5 @@
 // BLOB RUN — auto-runner : saut variable (maintien), coyote time, buffer de saut,
-// duck pour passer sous les barres, marteaux pneumatiques... non, des scies.
+// plateformes flottantes, duck pour passer sous les barres, scies.
 
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
@@ -19,8 +19,16 @@ const JUMP_POSE_RELAX_TIME = 0.27;
 const COYOTE_TIME = 0.11;
 const JUMP_BUFFER_TIME = 0.13;
 const MAX_JUMPS = 2;
+const RUNNER_BPM = 138;
 
-type RunnerObstacleType = 'spike' | 'block' | 'bar' | 'ceiling' | 'saw' | 'gap';
+function runnerSeedFromLocation(): number {
+  const raw = new URLSearchParams(location.search).get('runnerSeed');
+  const requested = raw === null ? Number.NaN : Number(raw);
+  if (Number.isFinite(requested)) return (Math.trunc(requested) >>> 0) || 1;
+  return (Math.floor(Math.random() * 0x100000000) >>> 0) || 1;
+}
+
+type RunnerObstacleType = 'spike' | 'block' | 'platform' | 'bar' | 'ceiling' | 'saw' | 'gap';
 
 interface RunnerObstacle {
   type: RunnerObstacleType;
@@ -31,6 +39,15 @@ interface RunnerObstacle {
   r?: number;
   base?: number;
   ang?: number;
+  minClearance?: number;
+  nearAwarded?: boolean;
+}
+
+interface RunnerSpeedLine {
+  x: number;
+  y: number;
+  length: number;
+  depth: number;
 }
 
 export class RunnerGame extends BaseGame {
@@ -40,13 +57,19 @@ export class RunnerGame extends BaseGame {
     desc: 'Saute. Baisse-toi. Vite.', controls: 'A sauter · A en l’air = double saut · B duck',
     keys: "Espace / K",
     hint: 'A = tapote pour un saut court, maintiens pour sauter haut · A en l’air = double saut · B = se baisser',
-    unit: 'm', ranks: [900, 550, 320, 150, 0],
+    unit: 'pts', ranks: [900, 550, 320, 150, 0],
   };
 
   constructor(engine: EngineLike) {
     super(engine);
+    this.seed = runnerSeedFromLocation();
+    this.rngState = this.seed;
     this.blob.x = PX; this.blob.y = GY - 22; this.blob.r = 22;
+    // La traînée générique suit les positions d'écran du blob. Comme le
+    // runner le maintient sur un axe fixe, elle devenait une colonne verticale
+    // et déraillait visuellement pendant le duck.
     this.blob.trailOn = false;
+    this.blob.speedMorph = 0.48;
     this.vy = 0;
     this.onGround = true;
     this.coyote = 0;
@@ -60,13 +83,50 @@ export class RunnerGame extends BaseGame {
     this.jumpT = 0;
     this.jumpReleased = false;
     this.jumpCount = 0;
+    this.patternHistory = [] as string[];
+    this.bonusScore = 0;
+    this.combo = 0;
+    this.comboT = 0;
+    this.proxT = 0;
+    this.nearMisses = 0;
+    this.eaten = 0;
     this.bgDots = [];
-    for (let i = 0; i < 40; i++) this.bgDots.push({ x: Math.random() * 1280, y: Math.random() * 560, z: 0.2 + Math.random() * 0.6 });
+    for (let i = 0; i < 40; i++) this.bgDots.push({ x: this.rng() * 1280, y: this.rng() * 560, z: 0.2 + this.rng() * 0.6 });
+    this.speedLines = [] as RunnerSpeedLine[];
+    for (let i = 0; i < 13; i++) {
+      this.speedLines.push({
+        x: this.rng() * 1480 - 80,
+        y: 150 + this.rng() * 360,
+        length: 22 + this.rng() * 48,
+        depth: 0.25 + this.rng() * 0.75,
+      });
+    }
     this.tickOff = 0;
   }
 
   meters(): number { return this.dist / 45; }
   r(): number { return 22 - this.duck * 9; }
+  difficulty(): number { return Math.max(0, Math.min(1, (this.meters() - 70) / 520)); }
+  beatDistance(): number { return Math.max(132, Math.min(205, this.speed * 60 / RUNNER_BPM)); }
+  speedFactor(): number { return Math.max(0, Math.min(1, (this.speed - 380) / 400)); }
+  totalScore(): number { return this.meters() + this.bonusScore; }
+
+  rng(): number {
+    let t = (this.rngState = (this.rngState + 0x6D2B79F5) >>> 0);
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
+  }
+
+  choosePattern(pool: string[]): string {
+    const recent = this.patternHistory.slice(-2);
+    const available = pool.filter((pattern) => !recent.includes(pattern));
+    const source = available.length ? available : pool;
+    const pattern = source[Math.floor(this.rng() * source.length)] ?? 's1';
+    this.patternHistory.push(pattern);
+    if (this.patternHistory.length > 8) this.patternHistory.shift();
+    return pattern;
+  }
 
   update(dt: number): void {
     if (this.baseUpdate(dt)) return;
@@ -74,6 +134,13 @@ export class RunnerGame extends BaseGame {
 
     this.speed = Math.min(780, 380 + this.meters() * 1.15);
     this.dist += this.speed * dt;
+    this.comboT = Math.max(0, this.comboT - dt);
+    if (this.comboT <= 0) {
+      this.combo = 0;
+      this.eaten = 0;
+    }
+    this.proxT = Math.max(0, this.proxT - dt * 2.8);
+    this.score = this.totalScore();
 
     // duck
     const wasGround = this.onGround;
@@ -121,15 +188,15 @@ export class RunnerGame extends BaseGame {
     this.vy += g * dt;
     b.y += this.vy * dt;
 
-    // Supports : sol, fossés et plateformes. On choisit la surface la plus
-    // haute traversée pendant cette frame pour rendre les retombées stables.
+    // Supports : sol, fossés, blocs et plateformes. Les plateformes sont
+    // traversables par-dessous et ne captent le blob qu'en descente.
     this.onGround = false;
     let supportY = Number.POSITIVE_INFINITY;
     if (this.floorOpenAtPlayer()) {
       if (b.y + b.r >= GY) supportY = GY;
     }
     for (const o of this.obs) {
-      if (o.type !== 'block') continue;
+      if (o.type !== 'block' && o.type !== 'platform') continue;
       const oy = o.y ?? GY - (o.h ?? 0);
       const ow = o.w ?? 0;
       if (PX + b.r * 0.7 < o.x || PX - b.r * 0.7 > o.x + ow) continue;
@@ -174,6 +241,7 @@ export class RunnerGame extends BaseGame {
 
     // collisions
     if (this.state === 'play') this.checkHits();
+    if (this.state === 'play') this.updateNearMisses();
 
     // jalons
     if (this.meters() >= this.milestone) {
@@ -189,23 +257,19 @@ export class RunnerGame extends BaseGame {
       d.x -= this.speed * (0.15 + d.z * 0.35) * dt;
       if (d.x < -4) { d.x = 1284; d.y = Math.random() * 560; }
     }
-    this.tickOff = (this.tickOff + this.speed * dt) % 80;
-
-    // lignes de vitesse
-    if (this.speed > 560 && Math.random() < 0.5) {
-      this.fx.parts.push({
-        x: 1300, y: Math.random() * 720, vx: -this.speed * 1.6, vy: 0,
-        life: 0.3, maxLife: 0.3, size: 2, color: '#ffffff', drag: 1, grav: 0, shape: 'spark', rot: 0, vr: 0,
-      });
+    for (const line of this.speedLines as RunnerSpeedLine[]) {
+      line.x -= this.speed * (0.42 + line.depth * 0.58) * dt;
+      if (line.x < -line.length - 30) line.x = 1280 + line.depth * 150;
     }
+    this.tickOff = (this.tickOff + this.speed * dt) % 80;
 
     b.vx = this.speed;
     b.vy = this.vy;
-    b.scared = false;
+    b.scared = this.proxT > 0.7;
     this.updateBlobPose(dt);
     b.update(dt);
 
-    this.fx.zoom = 1 - Math.min(0.11, Math.max(0, (this.speed - 400) * 0.00028));
+    this.fx.zoom = 1 - Math.min(0.14, Math.max(0, (this.speed - 400) * 0.00035));
   }
 
   private startJump(doubleJump: boolean): void {
@@ -261,23 +325,146 @@ export class RunnerGame extends BaseGame {
     // Blob ajoute aussi un squash lié à sa vitesse et à son impact. On en
     // tient compte ici pour que le bas du contour reste réellement posé sur
     // le support, même pendant le duck.
-    const motionK = Math.min(1, Math.hypot(this.blob.vx, this.blob.vy) / 620);
+    const motionK = Math.min(1, Math.hypot(this.blob.vx, this.blob.vy) / 620 * this.blob.speedMorph);
     const renderJig = Math.max(0, this.blob.jig - dt * 4.5);
     const motionScaleY = 1 - motionK * 0.18 - renderJig * 0.35;
     const groundOffset = this.onGround ? this.blob.r * (1 - motionScaleY * scaleY) : 0;
     this.blob.setPose(scaleX, scaleY, liquid, groundOffset);
   }
 
+  obstacleWidth(o: RunnerObstacle): number {
+    return o.w ?? (o.r ? o.r * 2 : 60);
+  }
+
+  obstacleClearance(o: RunnerObstacle): number | null {
+    const r = this.blob.r;
+    if (o.type === 'spike') {
+      const base = o.base ?? 0;
+      const ow = o.w ?? 36;
+      const oh = o.h ?? 36;
+      const cx = o.x + ow / 2;
+      const bx = cx - ow * 0.22;
+      const by = GY - base - oh * 0.62;
+      return this.distanceToRect(PX, this.blob.y, bx, by, ow * 0.44, oh * 0.62) - r * 0.82;
+    }
+    if (o.type === 'bar' || o.type === 'ceiling') {
+      return this.distanceToRect(PX, this.blob.y, o.x, o.y ?? GY, o.w ?? 0, o.h ?? 0) - r * 0.9;
+    }
+    if (o.type === 'saw') {
+      return Math.hypot(PX - o.x, this.blob.y - (o.y ?? GY)) - r * 0.9 - (o.r ?? 17) * 0.85;
+    }
+    return null;
+  }
+
+  updateNearMisses(): void {
+    const limit = 52 + this.difficulty() * 18;
+    for (const o of this.obs) {
+      if (o.type !== 'spike' && o.type !== 'bar' && o.type !== 'ceiling' && o.type !== 'saw') continue;
+      const width = this.obstacleWidth(o);
+      const clearance = this.obstacleClearance(o);
+      if (clearance === null) continue;
+
+      if (o.x < PX + 160 && o.x + width > PX - 110) {
+        o.minClearance = Math.min(o.minClearance ?? Number.POSITIVE_INFINITY, clearance);
+        const sensor = 1 - Math.max(0, Math.min(1, clearance / 86));
+        this.proxT = Math.max(this.proxT, sensor);
+      }
+
+      if (!o.nearAwarded && o.x + width < PX - 18) {
+        o.nearAwarded = true;
+        const minClearance = o.minClearance ?? Number.POSITIVE_INFINITY;
+        if (minClearance >= 4 && minClearance < limit) this.rewardNearMiss(minClearance, limit);
+      }
+    }
+  }
+
+  rewardNearMiss(clearance: number, limit: number): void {
+    const risk = Math.max(0, Math.min(1, 1 - clearance / limit));
+    this.combo = Math.min(8, this.combo + 1);
+    this.comboT = 2.6;
+    this.eaten = this.combo;
+    const reward = Math.round((24 + risk * 56) * (1 + (this.combo - 1) * 0.16));
+    this.bonusScore += reward;
+    this.score = this.totalScore();
+    this.nearMisses += 1;
+    this.proxT = Math.max(this.proxT, 0.95);
+
+    this.audio.coin(this.combo - 1);
+    if (risk > 0.72) this.audio.perfect();
+    else this.audio.good();
+    this.musicEvent('nearMiss', 0.3 + risk * 0.7);
+    this.input.rumble(0.1 + risk * 0.18, 0.04);
+    this.fx.stop(0.025);
+    this.fx.flash(this.accent, 0.08 + risk * 0.08);
+    this.fx.ring(PX, this.blob.y, { r0: this.blob.r + 8, r1: this.blob.r + 46 + risk * 20, color: risk > 0.72 ? '#f2c94c' : this.accent, life: 0.28, width: 2.5 });
+    this.fx.burst(PX, this.blob.y, { n: 6, speed: [40, 150], colors: [this.accent, '#f2c94c'], size: [2, 4], life: 0.28 });
+    this.fx.text(PX, Math.max(150, this.blob.y - 44), '+' + reward + '  NEAR x' + this.combo, {
+      color: risk > 0.72 ? '#f2c94c' : this.accent,
+      size: 18,
+      life: 0.8,
+      vy: -38,
+      mono: true,
+    });
+  }
+
+  renderSpeedStreaks(ctx: CanvasRenderingContext2D, speedFactor: number): void {
+    if (speedFactor <= 0.02) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (const line of this.speedLines as RunnerSpeedLine[]) {
+      const length = line.length * (0.18 + speedFactor * 0.78);
+      ctx.globalAlpha = (0.018 + speedFactor * 0.085) * (0.45 + line.depth * 0.55);
+      ctx.strokeStyle = line.depth > 0.7 ? '#d9ff8a' : '#8fbf76';
+      ctx.lineWidth = 0.7 + speedFactor * (0.6 + line.depth * 0.7);
+      ctx.beginPath();
+      // Le point y reste fixe : les traits défilent horizontalement et ne
+      // donnent plus l'impression de tomber dans le décor.
+      ctx.moveTo(line.x - length, line.y);
+      ctx.lineTo(line.x, line.y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  renderBlobStreaks(ctx: CanvasRenderingContext2D, speedFactor: number): void {
+    if (speedFactor <= 0.02) return;
+    const bodyHeight = Math.max(8, this.blob.r * this.blob.poseY);
+    const centerY = this.blob.y + this.blob.poseOffsetY;
+    const maxLength = 12 + speedFactor * 30;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 3; i++) {
+      const depth = i / 3;
+      const length = maxLength * (1 - depth * 0.5);
+      ctx.globalAlpha = (0.035 + speedFactor * 0.11) * (1 - depth * 0.65);
+      ctx.strokeStyle = i === 0 ? '#d9ff8a' : this.accent;
+      ctx.lineWidth = Math.max(1, bodyHeight * (0.1 - depth * 0.018));
+      const y = centerY + (i - 1) * bodyHeight * 0.34;
+      ctx.beginPath();
+      ctx.moveTo(PX - this.blob.r * 0.18 - length, y);
+      ctx.lineTo(PX - this.blob.r * 0.18, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   spawnPattern(): void {
     const m = this.meters();
+    const difficulty = this.difficulty();
     const pool: string[] = [];
     pool.push('s1');
     if (m > 90) pool.push('s2', 'block');
-    if (m > 150) pool.push('shortHop', 'gapShort');
-    if (m > 230) pool.push('s3', 'bar', 'saw', 'blockSpike', 'gapLong');
-    if (m > 420) pool.push('combo1', 'combo2', 'stairs', 'ceilingGap', 'gapStep');
-    const p = pool[(Math.random() * pool.length) | 0];
+    if (m > 130) pool.push('shortHop', 'gapShort', 'platformRun');
+    if (m > 170) pool.push('duckTunnel');
+    if (m > 230) pool.push('s3', 'bar', 'saw', 'blockSpike', 'gapLong', 'rhythm');
+    if (m > 340) pool.push('platformGap', 'zigzag');
+    if (m > 460) pool.push('combo1', 'combo2', 'stairs', 'ceilingGap', 'gapStep', 'platformChain');
+    if (difficulty > 0.72) pool.push('rhythm', 'duckTunnel', 'platformGap');
+    const p = this.choosePattern(pool);
     const startX = 1340;
+    const beat = this.beatDistance();
     let endX = startX;
     const place = (o: Omit<RunnerObstacle, 'x'>, at = endX): void => {
       const obstacle = { ...o, x: at } as RunnerObstacle;
@@ -291,12 +478,17 @@ export class RunnerGame extends BaseGame {
     };
 
     if (p === 's1') place({ type: 'spike', w: 36, h: 36 });
-    else if (p === 's2') { place({ type: 'spike', w: 36, h: 36 }); place({ type: 'spike', w: 36, h: 36 }); }
-    else if (p === 's3') { for (let i = 0; i < 3; i++) place({ type: 'spike', w: 36, h: 36 }); }
+    else if (p === 's2') {
+      place({ type: 'spike', w: 36, h: 36 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(beat * 0.74));
+    }
+    else if (p === 's3') {
+      for (let i = 0; i < 3; i++) place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(i * beat * 0.68));
+    }
     else if (p === 'block') place({ type: 'block', w: 60, h: 60 });
     else if (p === 'stairs') {
       place({ type: 'block', w: 60, h: 60 });
-      place({ type: 'block', w: 60, h: 120 }, startX + 90);
+      place({ type: 'block', w: 60, h: 120 }, startX + Math.max(90, Math.round(beat * 0.55)));
     } else if (p === 'blockSpike') {
       place({ type: 'block', w: 70, h: 60 });
       place({ type: 'spike', w: 36, h: 36, base: 60 });
@@ -313,26 +505,66 @@ export class RunnerGame extends BaseGame {
     } else if (p === 'gapStep') {
       place({ type: 'gap', w: 230 });
       place({ type: 'block', w: 90, h: 60 }, startX + 230);
+    } else if (p === 'platformRun') {
+      const platformW = Math.round(beat * 1.8);
+      place({ type: 'platform', y: GY - 120, w: platformW, h: 18 });
+      place({ type: 'spike', w: 36, h: 36, base: 120 }, startX + Math.round(beat * 1.1));
+      endX = Math.max(endX, startX + platformW);
+    } else if (p === 'platformGap') {
+      const gapW = Math.round(beat * 2.85);
+      place({ type: 'gap', w: gapW });
+      place({ type: 'platform', y: GY - 130, w: Math.round(beat * 1.8), h: 18 }, startX + Math.round(beat * 0.28));
+      place({ type: 'platform', y: GY - 90, w: Math.round(beat * 0.95), h: 18 }, startX + Math.round(beat * 2.18));
+      endX = Math.max(endX, startX + Math.round(beat * 3.18));
+    } else if (p === 'platformChain') {
+      place({ type: 'gap', w: Math.round(beat * 3.7) });
+      place({ type: 'platform', y: GY - 80, w: Math.round(beat * 1.02), h: 18 }, startX + Math.round(beat * 0.1));
+      place({ type: 'platform', y: GY - 170, w: Math.round(beat * 1.15), h: 18 }, startX + Math.round(beat * 1.4));
+      place({ type: 'platform', y: GY - 100, w: Math.round(beat * 1.1), h: 18 }, startX + Math.round(beat * 2.85));
+      endX = Math.max(endX, startX + Math.round(beat * 3.95));
+    } else if (p === 'duckTunnel') {
+      const tunnelW = Math.round(beat * 1.38);
+      // Le plafond descend presque jusqu'à la barre : la route haute est
+      // réellement fermée et la seule réponse lisible est de se liquéfier
+      // sous la fenêtre basse, comme une vraie contrainte de niveau.
+      place({ type: 'bar', y: GY - 66, w: tunnelW, h: 30 });
+      place({ type: 'ceiling', y: GY - 280, w: tunnelW, h: 245 }, startX);
+      endX = Math.max(endX, startX + tunnelW);
+    } else if (p === 'rhythm') {
+      place({ type: 'spike', w: 36, h: 36 });
+      place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(beat * 0.82));
+      place({ type: 'bar', y: GY - 66, w: Math.round(beat * 0.82), h: 30 }, startX + Math.round(beat * 1.72));
+      place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(beat * 2.9));
+      endX = Math.max(endX, startX + Math.round(beat * 3.2));
+    } else if (p === 'zigzag') {
+      const gapW = Math.round(beat * 3.55);
+      place({ type: 'gap', w: gapW });
+      place({ type: 'platform', y: GY - 100, w: Math.round(beat * 1.05), h: 18 }, startX + Math.round(beat * 0.08));
+      place({ type: 'platform', y: GY - 190, w: Math.round(beat * 1.08), h: 18 }, startX + Math.round(beat * 1.35));
+      place({ type: 'platform', y: GY - 110, w: Math.round(beat * 1.05), h: 18 }, startX + Math.round(beat * 2.75));
+      endX = Math.max(endX, startX + Math.round(beat * 3.85));
     } else if (p === 'saw') {
       placeSaw(startX + 17);
     } else if (p === 'combo1') {
       place({ type: 'spike', w: 36, h: 36 });
-      place({ type: 'spike', w: 36, h: 36 }, startX + 226);
+      place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(beat * 1.36));
     } else if (p === 'combo2') {
       place({ type: 'bar', y: GY - 66, w: 92, h: 30 });
-      place({ type: 'spike', w: 36, h: 36 }, startX + 352);
+      place({ type: 'spike', w: 36, h: 36 }, startX + Math.round(beat * 2.12));
     } else if (p === 'ceilingGap') {
       place({ type: 'ceiling', y: GY - 180, w: 190, h: 24 });
       place({ type: 'spike', w: 36, h: 36 }, startX + 78);
       place({ type: 'gap', w: 300 }, startX + 240);
     }
     const width = endX - startX;
-    this.spawnGap = width + this.speed * (0.55 + Math.random() * 0.5) + 90;
+    const breathingRoom = 0.82 - difficulty * 0.23 + this.rng() * (0.18 - difficulty * 0.06);
+    this.spawnGap = width + this.speed * breathingRoom + 90 - difficulty * 30;
   }
 
   nextObstacleLabel(o: any): string {
     if (o.type === 'spike') return o.base ? 'PIQUE EN HAUTEUR' : 'PIQUES';
     if (o.type === 'block') return 'BLOC';
+    if (o.type === 'platform') return 'PLATEFORME · SAUTE';
     if (o.type === 'ceiling') return 'PLAFOND · TAPOTE';
     if (o.type === 'gap') return (o.w ?? 0) >= 280 ? 'GOUFFRE · SAUT LONG' : 'GOUFFRE · SAUT';
     if (o.type === 'bar') return 'BARRE · BAISSE-TOI';
@@ -365,10 +597,14 @@ export class RunnerGame extends BaseGame {
     }
   }
 
-  circleRect(cx: number, cy: number, cr: number, x: number, y: number, w: number, h: number): boolean {
+  distanceToRect(cx: number, cy: number, x: number, y: number, w: number, h: number): number {
     const nx = Math.max(x, Math.min(cx, x + w));
     const ny = Math.max(y, Math.min(cy, y + h));
-    return Math.hypot(cx - nx, cy - ny) < cr;
+    return Math.hypot(cx - nx, cy - ny);
+  }
+
+  circleRect(cx: number, cy: number, cr: number, x: number, y: number, w: number, h: number): boolean {
+    return this.distanceToRect(cx, cy, x, y, w, h) < cr;
   }
 
   die(): void {
@@ -380,7 +616,7 @@ export class RunnerGame extends BaseGame {
     this.fx.burst(PX, this.blob.y, { n: 26, speed: [100, 520], colors: [this.accent, '#ffffff', '#ff5470'], size: [2, 6], life: 0.7 });
     this.fx.ring(PX, this.blob.y, { r0: 10, r1: 110, color: this.accent, life: 0.4 });
     this.blob.dead = true;
-    this.score = this.meters();
+    this.score = this.totalScore();
     this.over();
   }
 
@@ -431,6 +667,28 @@ export class RunnerGame extends BaseGame {
       ctx.stroke();
     }
     ctx.restore();
+
+    // À haute vitesse, le décor se transforme en tunnel de traits. La phase
+    // dépend du temps de jeu, mais la géométrie des obstacles reste seedée.
+    const speedFactor = this.speedFactor();
+    this.renderSpeedStreaks(ctx, speedFactor);
+
+    if (this.proxT > 0.05) {
+      const sensor = Math.round(this.proxT * 100);
+      UI.panel(ctx, 24, 102, 178, 34, {
+        radius: 17,
+        fill: 'rgba(30, 9, 14, 0.78)',
+        stroke: this.proxT > 0.7 ? '#ff5470cc' : '#f2c94caa',
+        lineWidth: 1.5,
+      });
+      UI.txt(ctx, 'CAPTEUR  ' + sensor + '%', 113, 125, {
+        size: 12,
+        align: 'center',
+        mono: true,
+        color: this.proxT > 0.7 ? '#ff9aaa' : '#f2c94c',
+        weight: 900,
+      });
+    }
 
     // Télégraphe de la prochaine menace : le joueur sait quoi lire avant que
     // l'obstacle n'arrive à sa hauteur.
@@ -495,6 +753,31 @@ export class RunnerGame extends BaseGame {
         ctx.lineWidth = 2;
         UI.roundRect(ctx, o.x, o.y ?? GY - oh, o.w ?? 0, oh, 6);
         ctx.fill(); ctx.stroke();
+      } else if (o.type === 'platform') {
+        const oy = o.y ?? GY - (o.h ?? 18);
+        const ow = o.w ?? 0;
+        const oh = o.h ?? 18;
+        ctx.save();
+        ctx.shadowColor = this.accent;
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = '#182b16';
+        ctx.strokeStyle = this.accent;
+        ctx.lineWidth = 2;
+        UI.roundRect(ctx, o.x, oy, ow, oh, 7);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.stroke();
+        ctx.fillStyle = '#d9ff8a';
+        ctx.fillRect(o.x + 9, oy + 2, Math.max(0, ow - 18), 3);
+        ctx.strokeStyle = this.accent + '55';
+        ctx.lineWidth = 1;
+        for (let x = o.x + 18; x < o.x + ow - 10; x += 34) {
+          ctx.beginPath();
+          ctx.moveTo(x, oy + oh);
+          ctx.lineTo(x - 8, oy + oh + 12);
+          ctx.stroke();
+        }
+        ctx.restore();
       } else if (o.type === 'bar' || o.type === 'ceiling') {
         ctx.fillStyle = '#ff5470';
         ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 12;
@@ -528,18 +811,34 @@ export class RunnerGame extends BaseGame {
       }
     }
 
+    this.renderBlobStreaks(ctx, speedFactor);
     this.blob.render(ctx);
+    if (this.proxT > 0.05) {
+      ctx.save();
+      const pulse = 1 + Math.sin(this.time * 18) * 0.08;
+      ctx.globalAlpha = 0.18 + this.proxT * 0.34;
+      ctx.strokeStyle = this.proxT > 0.7 ? '#ff5470' : '#f2c94c';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(PX, this.blob.y, (this.blob.r + 12 + this.proxT * 10) * pulse, 0, 6.2832);
+      ctx.stroke();
+      ctx.restore();
+    }
     this.fx.drawWorld(ctx);
     this.fx.endWorld(ctx);
 
     // HUD
     UI.txt(ctx, Math.floor(this.meters()) + ' m', 640, 62, { size: 42, align: 'center', mono: true, weight: 700, shadow: true });
-    UI.txt(ctx, 'RECORD ' + UI.getBest(this.meta.id) + ' m', 640, 88, { size: 14, align: 'center', color: '#7c8698' });
+    UI.txt(ctx, 'SEED ' + this.seed.toString(16).toUpperCase().padStart(8, '0'), 24, 38, { size: 11, mono: true, color: '#71815f', weight: 700 });
+    UI.txt(ctx, 'RECORD ' + UI.getBest(this.meta.id) + ' pts', 640, 88, { size: 14, align: 'center', color: '#7c8698' });
     UI.drawHUD(ctx, {
       accent: this.accent,
-      score: this.meters(),
+      score: this.score,
       unit: this.meta.unit,
-      extra: () => UI.txt(ctx, Math.round(this.speed) + ' px/s', 1252, 87, { size: 12, align: 'right', color: '#5f6b52', mono: true }),
+      extra: () => {
+        UI.txt(ctx, Math.round(this.speed) + ' px/s', 1252, 87, { size: 12, align: 'right', color: '#5f6b52', mono: true });
+        if (this.combo > 0) UI.txt(ctx, 'NEAR x' + this.combo, 1252, 105, { size: 11, align: 'right', color: '#f2c94c', mono: true, weight: 900 });
+      },
     });
     this.drawCommon(ctx);
   }
