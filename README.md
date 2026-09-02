@@ -1,18 +1,47 @@
 # BLOB ARCADE
 
 Collection de 10 mini-jeux jouables à la manette (ou au clavier), en HTML5/Canvas —
-zéro dépendance, zéro asset : tous les sons sont synthétisés (WebAudio) et tous les
-graphismes sont dessinés à la volée. DA minimal : des blobs.
+zéro dépendance runtime, zéro asset : tous les sons sont synthétisés (WebAudio) et
+tous les graphismes sont dessinés à la volée. DA minimal : des blobs.
 
 ## Lancer
 
-Double-clique sur `jouer.bat` (ouvre le serveur + le navigateur), ou :
+Installe les dépendances une fois :
 
 ```
-python -m http.server 8123
+npm install
 ```
 
-puis ouvre http://localhost:8123
+Puis double-clique sur `jouer.bat` (ouvre Vite + le navigateur), ou :
+
+```
+npm run dev
+```
+
+Puis ouvre http://localhost:5173
+
+Pour générer la version distribuable : `npm run build`, puis `npm run preview` pour
+la tester localement.
+
+`npm run typecheck` vérifie les modules TypeScript sans générer de fichiers. La
+migration est progressive : le moteur, l'audio, les réglages, l'UI commune et le
+point d'entrée sont en TypeScript ; les jeux et les démos peuvent encore être
+convertis un par un.
+
+## Héberger sur Vercel
+
+Le projet est une application statique : aucun serveur Python n'est nécessaire en
+production. Il suffit d'importer le dépôt dans Vercel ; la configuration utilise
+`npm run build` et publie le dossier `dist`.
+
+Avec la CLI Vercel :
+
+```
+npx vercel
+```
+
+Le jeu reste entièrement exécuté dans le navigateur. Les scores et réglages sont
+stockés dans le `localStorage` du navigateur de chaque joueur.
 
 > Un serveur local est nécessaire (modules ES). Chrome/Edge recommandés pour les
 > vibrations de manette (XInput).
@@ -61,8 +90,9 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 ## Structure
 
 ```
-js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages
-js/games/   rhythm, survival, shooter, runner, cave, simon, snake, breaker, golf, fish
-js/menu.js  hub (fiche plein écran + grille globale)
+js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
+js/games/   rhythm, survival, shooter, runner, cave, simon, snake, breaker, golf, fish (JS, migration progressive)
+js/main.ts  point d'entrée navigateur
+js/menu.js  hub (fiche plein écran + grille globale, migration à venir)
 js/demos.js démos simulées (attract mode) de la fiche
 ```

@@ -1,8 +1,8 @@
 // BLOB SNAKE — serpent sur grille 32×18, pas discrets interpolés entre cells.
 // Lucioles = points + accélération ; fruit doré = 5× ; murs et queue mortels.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 const CELL = 40, COLS = 32, ROWS = 18;       // 32×40=1280, 18×40=720 : plein écran
 const STEP0 = 0.15, STEP_MIN = 0.075, STEP_DEC = 0.004;

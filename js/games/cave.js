@@ -1,8 +1,8 @@
 // CAVE RACER — tunnel procédural déterministe (somme de sinus), de plus en plus serré.
 // Bonus de "near-miss" le long des parois, orbes en chaîne, boost risqué.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 const COL = 32;
 

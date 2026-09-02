@@ -1,35 +1,62 @@
 // Le blob : rond tremblant avec squash & stretch, yeux, trail, impulsions d'impact.
 // Les jeux possèdent la physique ; le blob ne fait qu'intégrer le rendu à partir de (x, y, vx, vy).
 
+interface BlobOptions {
+  x?: number;
+  y?: number;
+  r?: number;
+  color?: string;
+}
+
+interface TrailPoint {
+  x: number;
+  y: number;
+}
+
 export class Blob {
-  constructor({ x = 640, y = 360, r = 22, color = '#7dd3fc' } = {}) {
-    this.x = x; this.y = y;
-    this.vx = 0; this.vy = 0;
+  x: number;
+  y: number;
+  vx = 0;
+  vy = 0;
+  r: number;
+  color: string;
+  t = Math.random() * 10;
+  jig = 0;
+  trailOn = false;
+  trail: TrailPoint[] = [];
+  lookX = 0;
+  lookY = 0;
+  blink = 0;
+  blinkT = 2 + Math.random() * 3;
+  scared = false;
+  dead = false;
+  hideTrail = false;
+
+  constructor({ x = 640, y = 360, r = 22, color = '#7dd3fc' }: BlobOptions = {}) {
+    this.x = x;
+    this.y = y;
     this.r = r;
     this.color = color;
-    this.t = Math.random() * 10;
-    this.jig = 0;            // impulsion d'impact (wobble rapide)
-    this.trailOn = false;
-    this.trail = [];
-    this.lookX = 0; this.lookY = 0;
-    this.blink = 0; this.blinkT = 2 + Math.random() * 3;
-    this.scared = false;
-    this.dead = false;       // écrasé / mort : dessin à plat
-    this.hideTrail = false;
   }
 
-  punch(p = 0.3) { this.jig = Math.min(0.6, this.jig + p); }
+  punch(amount = 0.3): void {
+    this.jig = Math.min(0.6, this.jig + amount);
+  }
 
-  update(dt) {
+  update(dt: number): void {
     this.t += dt;
     this.jig = Math.max(0, this.jig - dt * 4.5);
     this.blinkT -= dt;
-    if (this.blinkT <= 0) { this.blink = 0.12; this.blinkT = 2.2 + Math.random() * 3.5; }
+    if (this.blinkT <= 0) {
+      this.blink = 0.12;
+      this.blinkT = 2.2 + Math.random() * 3.5;
+    }
     if (this.blink > 0) this.blink -= dt;
 
     const sp = Math.hypot(this.vx, this.vy);
     if (sp > 30) {
-      const tx = this.vx / sp, ty = this.vy / sp;
+      const tx = this.vx / sp;
+      const ty = this.vy / sp;
       this.lookX += (tx - this.lookX) * Math.min(1, dt * 8);
       this.lookY += (ty - this.lookY) * Math.min(1, dt * 8);
     }
@@ -41,7 +68,7 @@ export class Blob {
     }
   }
 
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     const r = this.r;
 
     if (this.trail.length > 2) {
@@ -62,7 +89,7 @@ export class Blob {
 
     const sp = Math.hypot(this.vx, this.vy);
     const k = this.dead ? 0 : Math.min(1, sp / 620);
-    const ang = sp > 10 ? Math.atan2(this.vy, this.vx) : 0;
+    const angle = sp > 10 ? Math.atan2(this.vy, this.vx) : 0;
     const sx = 1 + k * 0.30 + this.jig * 0.4;
     const sy = 1 - k * 0.18 - this.jig * 0.35;
 
@@ -71,18 +98,22 @@ export class Blob {
     if (this.dead) {
       ctx.scale(1.5, 0.18);
     } else {
-      ctx.rotate(ang); ctx.scale(sx, sy); ctx.rotate(-ang);
+      ctx.rotate(angle);
+      ctx.scale(sx, sy);
+      ctx.rotate(-angle);
     }
 
-    // contour tremblant
+    // Contour tremblant.
     ctx.beginPath();
     const N = 16;
     for (let i = 0; i <= N; i++) {
       const a = (i / N) * 6.2832;
       const wob = 0.07 * Math.sin(this.t * 6 + i * 2.1) + this.jig * 0.6 * Math.sin(this.t * 32 + i * 1.7);
       const rr = r * (1 + wob);
-      const px = Math.cos(a) * rr, py = Math.sin(a) * rr;
-      if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+      const px = Math.cos(a) * rr;
+      const py = Math.sin(a) * rr;
+      if (i === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
     }
     ctx.closePath();
     ctx.shadowColor = this.color;
@@ -91,15 +122,16 @@ export class Blob {
     ctx.fill();
     ctx.shadowBlur = 0;
 
-    // ombre interne légère pour le volume
+    // Ombre interne légère pour le volume.
     ctx.beginPath();
     ctx.arc(-r * 0.18, -r * 0.22, r * 0.72, 0, 6.2832);
     ctx.fillStyle = '#ffffff22';
     ctx.fill();
 
-    // yeux
+    // Yeux.
     if (!this.dead) {
-      const ex = this.lookX * r * 0.28, ey = this.lookY * r * 0.28;
+      const ex = this.lookX * r * 0.28;
+      const ey = this.lookY * r * 0.28;
       const er = r * 0.16;
       const bl = this.blink > 0 ? 0.15 : 1;
       const sc = this.scared ? 1.35 : 1;
@@ -117,10 +149,13 @@ export class Blob {
       ctx.strokeStyle = '#0b0e14';
       ctx.lineWidth = 2.5;
       for (const side of [-1, 1]) {
-        const cx = side * r * 0.34, cy = -r * 0.1;
+        const cx = side * r * 0.34;
+        const cy = -r * 0.1;
         ctx.beginPath();
-        ctx.moveTo(cx - 4, cy - 4); ctx.lineTo(cx + 4, cy + 4);
-        ctx.moveTo(cx + 4, cy - 4); ctx.lineTo(cx - 4, cy + 4);
+        ctx.moveTo(cx - 4, cy - 4);
+        ctx.lineTo(cx + 4, cy + 4);
+        ctx.moveTo(cx + 4, cy - 4);
+        ctx.lineTo(cx - 4, cy + 4);
         ctx.stroke();
       }
     }

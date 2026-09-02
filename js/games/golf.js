@@ -1,8 +1,8 @@
 // BLOB GOLF — mini-golf 9 trous faits main : visée au stick (lissée), coup chargé au A,
 // rebonds restitués sur les murs, bunkers de sable qui freinent, trou capturé à vitesse douce.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 // Bordure fermée de 20 px, commune à tous les trous
 const BORD = [

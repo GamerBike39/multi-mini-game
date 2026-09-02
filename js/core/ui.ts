@@ -3,21 +3,84 @@
 const SANS = '"Segoe UI", system-ui, sans-serif';
 const MONO = 'Consolas, "Courier New", monospace';
 
-export function txt(ctx, str, x, y, o = {}) {
-  const size = o.size ?? 24;
-  ctx.font = `${o.weight ?? 800} ${size}px ${o.mono ? MONO : SANS}`;
-  ctx.textAlign = o.align ?? 'left';
-  ctx.textBaseline = o.baseline ?? 'alphabetic';
-  ctx.globalAlpha = o.alpha ?? 1;
-  if (o.shadow) { ctx.fillStyle = '#00000066'; ctx.fillText(str, x + 2, y + 2); }
-  ctx.fillStyle = o.color ?? '#e8ecf2';
+interface TextOptions {
+  size?: number;
+  weight?: number;
+  mono?: boolean;
+  align?: CanvasTextAlign;
+  baseline?: CanvasTextBaseline;
+  alpha?: number;
+  shadow?: boolean;
+  color?: string;
+}
+
+interface PanelOptions {
+  radius?: number;
+  fill?: string;
+  stroke?: string;
+  lineWidth?: number;
+}
+
+interface GridOptions {
+  gap?: number;
+  off?: number;
+  offY?: number;
+  alpha?: number;
+  color?: string;
+}
+
+export interface GameStats {
+  plays?: number;
+  time?: number;
+  total?: number;
+  last?: number;
+  wins?: number;
+}
+
+export interface SaveBestResult {
+  best: number;
+  isNew: boolean;
+}
+
+interface GameOverOptions {
+  accent: string;
+  title?: string;
+  score: number;
+  unit?: string;
+  best: number;
+  isNew?: boolean;
+  rankLabel: string;
+}
+
+interface HudOptions {
+  accent: string;
+  score: number;
+  unit?: string;
+  time?: number | null;
+  extra?: (() => void) | null;
+}
+
+export function txt(ctx: CanvasRenderingContext2D, str: string, x: number, y: number, options: TextOptions = {}): void {
+  const size = options.size ?? 24;
+  ctx.font = `${options.weight ?? 800} ${size}px ${options.mono ? MONO : SANS}`;
+  ctx.textAlign = options.align ?? 'left';
+  ctx.textBaseline = options.baseline ?? 'alphabetic';
+  ctx.globalAlpha = options.alpha ?? 1;
+  if (options.shadow) {
+    ctx.fillStyle = '#00000066';
+    ctx.fillText(str, x + 2, y + 2);
+  }
+  ctx.fillStyle = options.color ?? '#e8ecf2';
   ctx.fillText(str, x, y);
   ctx.globalAlpha = 1;
 }
 
-export function roundRect(ctx, x, y, w, h, r) {
+export function roundRect(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number): void {
   ctx.beginPath();
-  if (ctx.roundRect) { ctx.roundRect(x, y, w, h, r); return; }
+  if (ctx.roundRect) {
+    ctx.roundRect(x, y, w, h, r);
+    return;
+  }
   r = Math.min(r, w / 2, h / 2);
   ctx.moveTo(x + r, y);
   ctx.arcTo(x + w, y, x + w, y + h, r);
@@ -27,107 +90,144 @@ export function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
-export function panel(ctx, x, y, w, h, o = {}) {
-  roundRect(ctx, x, y, w, h, o.radius ?? 16);
-  ctx.fillStyle = o.fill ?? 'rgba(8, 11, 18, 0.85)';
+export function panel(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, options: PanelOptions = {}): void {
+  roundRect(ctx, x, y, w, h, options.radius ?? 16);
+  ctx.fillStyle = options.fill ?? 'rgba(8, 11, 18, 0.85)';
   ctx.fill();
-  if (o.stroke) {
-    ctx.strokeStyle = o.stroke;
-    ctx.lineWidth = o.lineWidth ?? 2;
+  if (options.stroke) {
+    ctx.strokeStyle = options.stroke;
+    ctx.lineWidth = options.lineWidth ?? 2;
     ctx.stroke();
   }
 }
 
-export function grid(ctx, { gap = 64, off = 0, offY = 0, alpha = 0.05, color = '#8ab4ff' } = {}) {
+export function grid(ctx: CanvasRenderingContext2D, { gap = 64, off = 0, offY = 0, alpha = 0.05, color = '#8ab4ff' }: GridOptions = {}): void {
   ctx.save();
   ctx.globalAlpha = alpha;
   ctx.strokeStyle = color;
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let x = -(off % gap); x < 1280; x += gap) { ctx.moveTo(x, 0); ctx.lineTo(x, 720); }
-  for (let y = -(offY % gap); y < 720; y += gap) { ctx.moveTo(0, y); ctx.lineTo(1280, y); }
+  for (let x = -(off % gap); x < 1280; x += gap) {
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 720);
+  }
+  for (let y = -(offY % gap); y < 720; y += gap) {
+    ctx.moveTo(0, y);
+    ctx.lineTo(1280, y);
+  }
   ctx.stroke();
   ctx.restore();
 }
 
-export function vignette(ctx) {
-  const g = ctx.createRadialGradient(640, 360, 340, 640, 360, 780);
-  g.addColorStop(0, 'rgba(0,0,0,0)');
-  g.addColorStop(1, 'rgba(0,0,0,0.42)');
-  ctx.fillStyle = g;
+export function vignette(ctx: CanvasRenderingContext2D): void {
+  const gradient = ctx.createRadialGradient(640, 360, 340, 640, 360, 780);
+  gradient.addColorStop(0, 'rgba(0,0,0,0)');
+  gradient.addColorStop(1, 'rgba(0,0,0,0.42)');
+  ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 1280, 720);
 }
 
 // ---------- records ----------
-export function getBest(id) {
-  try { return +localStorage.getItem('blobArcade.best.' + id) || 0; } catch (e) { return 0; }
+export function getBest(id: string): number {
+  try {
+    return Number(localStorage.getItem('blobArcade.best.' + id) ?? 0) || 0;
+  } catch {
+    return 0;
+  }
 }
-export function saveBest(id, val) {
+
+export function saveBest(id: string, val: number): SaveBestResult {
   const prev = getBest(id);
   const isNew = val > prev;
-  if (isNew) { try { localStorage.setItem('blobArcade.best.' + id, String(Math.floor(val))); } catch (e) {} }
+  if (isNew) {
+    try {
+      localStorage.setItem('blobArcade.best.' + id, String(Math.floor(val)));
+    } catch {
+      // Persistance indisponible : le score courant reste affichable.
+    }
+  }
   return { best: Math.max(prev, val), isNew };
 }
 
 // ---------- statistiques de jeu (par jeu, persistées) ----------
 // { plays: parties terminées, time: secondes jouées, total: somme des scores,
 //   last: dernier score, wins: parties gagnées }
-export function getStats(id) {
-  try { return JSON.parse(localStorage.getItem('blobArcade.stat.' + id)) || {}; } catch (e) { return {}; }
-}
-function saveStats(id, st) {
-  try { localStorage.setItem('blobArcade.stat.' + id, JSON.stringify(st)); } catch (e) { /* pas grave */ }
-}
-export function addStat(id, { score = 0, time = 0, win = false } = {}) {
-  const st = getStats(id);
-  st.plays = (st.plays || 0) + 1;
-  st.time = (st.time || 0) + Math.max(0, time || 0);
-  st.total = (st.total || 0) + Math.max(0, score || 0);
-  st.last = Math.floor(score || 0);
-  if (win) st.wins = (st.wins || 0) + 1;
-  saveStats(id, st);
-  return st;
-}
-export function addTime(id, t) {
-  if (!(t > 0)) return;
-  const st = getStats(id);
-  st.time = (st.time || 0) + t;
-  saveStats(id, st);
-}
-
-export function fmtTime(s) {
-  s = Math.max(0, Math.round(s));
-  if (s < 60) return s + ' s';
-  const m = Math.round(s / 60);
-  if (m < 60) return m + ' min';
-  return Math.floor(m / 60) + ' h ' + String(m % 60).padStart(2, '0');
-}
-
-// découpe un texte en lignes tenant sur maxW (à appeler avec la police déjà définie)
-export function wrap(ctx, str, maxW) {
-  const words = String(str).split(' ');
-  const lines = [];
-  let cur = '';
-  for (const w of words) {
-    const test = cur ? cur + ' ' + w : w;
-    if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
-    else cur = test;
+export function getStats(id: string): GameStats {
+  try {
+    return JSON.parse(localStorage.getItem('blobArcade.stat.' + id) || '{}') as GameStats;
+  } catch {
+    return {};
   }
-  if (cur) lines.push(cur);
+}
+
+function saveStats(id: string, stats: GameStats): void {
+  try {
+    localStorage.setItem('blobArcade.stat.' + id, JSON.stringify(stats));
+  } catch {
+    // Persistance indisponible : pas de drame.
+  }
+}
+
+export function addStat(id: string, { score = 0, time = 0, win = false }: { score?: number; time?: number; win?: boolean } = {}): GameStats {
+  const stats = getStats(id);
+  stats.plays = (stats.plays || 0) + 1;
+  stats.time = (stats.time || 0) + Math.max(0, time || 0);
+  stats.total = (stats.total || 0) + Math.max(0, score || 0);
+  stats.last = Math.floor(score || 0);
+  if (win) stats.wins = (stats.wins || 0) + 1;
+  saveStats(id, stats);
+  return stats;
+}
+
+export function addTime(id: string, time: number): void {
+  if (!(time > 0)) return;
+  const stats = getStats(id);
+  stats.time = (stats.time || 0) + time;
+  saveStats(id, stats);
+}
+
+export function fmtTime(seconds: number): string {
+  seconds = Math.max(0, Math.round(seconds));
+  if (seconds < 60) return seconds + ' s';
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return minutes + ' min';
+  return Math.floor(minutes / 60) + ' h ' + String(minutes % 60).padStart(2, '0');
+}
+
+// Découpe un texte en lignes tenant sur maxW (à appeler avec la police déjà définie).
+export function wrap(ctx: CanvasRenderingContext2D, str: string, maxW: number): string[] {
+  const words = String(str).split(' ');
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const test = current ? current + ' ' + word : word;
+    if (ctx.measureText(test).width > maxW && current) {
+      lines.push(current);
+      current = word;
+    } else {
+      current = test;
+    }
+  }
+  if (current) lines.push(current);
   return lines;
 }
 
-const RANK_COLORS = { S: '#ffd166', A: '#a3e635', B: '#38bdf8', C: '#94a3b8', D: '#64748b' };
-export function rank(table, val) {
+const RANK_COLORS: Record<string, string> = { S: '#ffd166', A: '#a3e635', B: '#38bdf8', C: '#94a3b8', D: '#64748b' };
+
+export function rank(table: readonly number[], val: number): string {
   const letters = ['S', 'A', 'B', 'C', 'D'];
-  for (let i = 0; i < letters.length; i++) if (val >= (table[i] ?? 0)) return letters[i];
+  for (let i = 0; i < letters.length; i++) {
+    if (val >= (table[i] ?? 0)) return letters[i];
+  }
   return 'D';
 }
 
-export function fmt(n) { return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+export function fmt(n: number): string {
+  return String(Math.floor(n)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
 
 // ---------- écrans communs ----------
-export function drawGameOver(ctx, { accent, title = 'GAME OVER', score, unit = 'pts', best, isNew, rankLabel }) {
+export function drawGameOver(ctx: CanvasRenderingContext2D, { accent, title = 'GAME OVER', score, unit = 'pts', best, isNew, rankLabel }: GameOverOptions): void {
   ctx.fillStyle = 'rgba(2, 3, 8, 0.62)';
   ctx.fillRect(0, 0, 1280, 720);
   panel(ctx, 330, 190, 620, 330, { radius: 22, stroke: accent + '66', lineWidth: 2 });
@@ -136,7 +236,6 @@ export function drawGameOver(ctx, { accent, title = 'GAME OVER', score, unit = '
   txt(ctx, 'SCORE', 640, 292, { size: 14, align: 'center', color: '#8b95a8' });
   txt(ctx, fmt(score) + ' ' + unit, 640, 352, { size: 56, align: 'center', mono: true, weight: 700 });
 
-  // rang
   ctx.beginPath();
   ctx.arc(878, 330, 46, 0, 6.2832);
   ctx.strokeStyle = RANK_COLORS[rankLabel] ?? '#fff';
@@ -157,7 +256,7 @@ export function drawGameOver(ctx, { accent, title = 'GAME OVER', score, unit = '
 
 const PAUSE_ITEMS = ['Reprendre', 'Rejouer', 'Réglages', 'Quitter'];
 
-export function drawPause(ctx, accent, sel = 0) {
+export function drawPause(ctx: CanvasRenderingContext2D, accent: string, sel = 0): void {
   ctx.fillStyle = 'rgba(2, 3, 8, 0.68)';
   ctx.fillRect(0, 0, 1280, 720);
   txt(ctx, 'PAUSE', 640, 248, { size: 50, align: 'center', color: accent, weight: 900 });
@@ -168,16 +267,21 @@ export function drawPause(ctx, accent, sel = 0) {
       panel(ctx, 640 - 150, y - 26, 300, 44, { radius: 12, fill: 'rgba(255,255,255,0.07)', stroke: accent + 'aa' });
     }
     txt(ctx, (isSel ? '▸  ' : '') + PAUSE_ITEMS[i], 640, y + 4, {
-      size: isSel ? 24 : 19, align: 'center', color: isSel ? '#ffffff' : '#8b95a8', weight: isSel ? 900 : 700,
+      size: isSel ? 24 : 19,
+      align: 'center',
+      color: isSel ? '#ffffff' : '#8b95a8',
+      weight: isSel ? 900 : 700,
     });
   }
   txt(ctx, '↑ ↓  choisir      A  valider      B / Échap  reprendre      Backspace  quitter', 640, 560, {
-    size: 14, align: 'center', color: '#6a7488',
+    size: 14,
+    align: 'center',
+    color: '#6a7488',
   });
 }
 
-// Glyphe vectoriel d'un jeu (utilisé par le menu, la fiche et les vignettes)
-export function gameGlyph(ctx, id, x, y, col) {
+// Glyphe vectoriel d'un jeu (utilisé par le menu, la fiche et les vignettes).
+export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, y: number, col: string): void {
   ctx.save();
   ctx.translate(x, y);
   ctx.strokeStyle = col;
@@ -210,10 +314,9 @@ export function gameGlyph(ctx, id, x, y, col) {
     ctx.beginPath(); ctx.arc(0, -26, 30, Math.PI * 0.15, Math.PI * 0.85); ctx.stroke();
     ctx.beginPath(); ctx.arc(0, 0, 5, 0, 6.2832); ctx.fill();
   } else if (id === 'simon') {
-    // losange de 4 pads, celui du haut allumé
-    const p = [[0, -15], [-15, 0], [15, 0], [0, 15]];
+    const points: readonly (readonly [number, number])[] = [[0, -15], [-15, 0], [15, 0], [0, 15]];
     for (let i = 0; i < 4; i++) {
-      ctx.beginPath(); ctx.arc(p[i][0], p[i][1], 8, 0, 6.2832);
+      ctx.beginPath(); ctx.arc(points[i][0], points[i][1], 8, 0, 6.2832);
       if (i === 0) ctx.fill(); else ctx.stroke();
     }
   } else if (id === 'snake') {
@@ -243,18 +346,17 @@ export function gameGlyph(ctx, id, x, y, col) {
   ctx.restore();
 }
 
-export function drawHint(ctx, str, t) {
-  const a = Math.min(1, t / 0.8);
-  ctx.globalAlpha = a * 0.92;
-  const w = ctx.measureText(str).width;
+export function drawHint(ctx: CanvasRenderingContext2D, str: string, time: number): void {
+  const alpha = Math.min(1, time / 0.8);
+  ctx.globalAlpha = alpha * 0.92;
   ctx.font = '800 19px ' + SANS;
-  const wpx = ctx.measureText(str).width + 56;
-  panel(ctx, 640 - wpx / 2, 636, wpx, 46, { radius: 23 });
+  const width = ctx.measureText(str).width + 56;
+  panel(ctx, 640 - width / 2, 636, width, 46, { radius: 23 });
   txt(ctx, str, 640, 666, { size: 19, align: 'center', color: '#dfe6f0' });
   ctx.globalAlpha = 1;
 }
 
-export function drawHUD(ctx, { accent, score, unit = 'pts', time = null, extra = null }) {
+export function drawHUD(ctx: CanvasRenderingContext2D, { accent, score, unit = 'pts', time = null, extra = null }: HudOptions): void {
   txt(ctx, fmt(score), 1252, 44, { size: 26, align: 'right', mono: true, weight: 700, shadow: true });
   txt(ctx, unit, 1252, 64, { size: 12, align: 'right', color: '#7c8698' });
   if (time !== null) {

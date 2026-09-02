@@ -3,8 +3,8 @@
 // 3 bandes de profondeur (léger/haut → lourd/bas), ~4 % de légendaires dorés.
 // 90 s, score en grammes, plus haut = mieux.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 const SURFACE = 110;                    // y de la mer
 const BX = 130, BY = 78;                // blob pêcheur sur sa bouée

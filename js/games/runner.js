@@ -1,8 +1,8 @@
 // BLOB RUN — auto-runner : saut variable (maintien), coyote time, buffer de saut,
 // duck pour passer sous les barres, marteaux pneumatiques... non, des scies.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 const GY = 600;           // sol
 const PX = 320;           // x écran du joueur

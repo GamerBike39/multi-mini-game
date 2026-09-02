@@ -5,10 +5,10 @@
 //  - GRILLE (globale): la grille de cartes d'origine, conservée pour la vue d'ensemble.
 // A lance depuis les deux vues ; X / clic ouvre la fiche ; B/Échap revient à la grille.
 
-import { Fx } from './core/fx.js';
-import { Blob } from './core/blob.js';
+import { Fx } from './core/fx.ts';
+import { Blob } from './core/blob.ts';
 import { Demo } from './demos.js';
-import * as UI from './core/ui.js';
+import * as UI from './core/ui.ts';
 
 // grille (vue globale)
 const COLS = 5;

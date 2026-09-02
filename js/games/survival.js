@@ -1,8 +1,8 @@
 // SURVIBLOB — arène, esquive au stick, dash qui traverse les chasseurs.
 // Chaque spawn est télégraphié, chaque impact est éxagéré (hitstop, shake, rumble).
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 const M = 70; // marge arène
 const AW = 1280 - M * 2, AH = 720 - M * 2;

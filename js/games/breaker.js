@@ -2,9 +2,9 @@
 // grille 10×6, drops (MULTI / LARGE / SLOW), combo à pitch montant.
 // Tout est dessiné au canvas, tous les sons sont synthétisés.
 
-import { BaseGame } from '../core/game.js';
-import { Blob } from '../core/blob.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import { Blob } from '../core/blob.ts';
+import * as UI from '../core/ui.ts';
 
 const WALL = 20;             // marge de jeu (murs latéraux + plafond)
 const PAD_Y = 660;           // y du paddle

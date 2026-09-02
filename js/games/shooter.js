@@ -1,8 +1,8 @@
 // BLOBBLASTER — twin-stick : stick gauche bouge, stick droit vise (tir auto).
 // Clavier : le tir vise tout seul l'ennemi le plus proche.
 
-import { BaseGame } from '../core/game.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import * as UI from '../core/ui.ts';
 
 export class ShooterGame extends BaseGame {
   static meta = {

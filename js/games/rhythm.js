@@ -5,9 +5,9 @@
 // Deux sources : séquenceur généré (la batterie EST le chart) ou piste locale
 // analysée dans le navigateur (le son original joue).
 
-import { BaseGame } from '../core/game.js';
-import { analyzeBuffer } from '../core/analyzer.js';
-import * as UI from '../core/ui.js';
+import { BaseGame } from '../core/game.ts';
+import { analyzeBuffer } from '../core/analyzer.ts';
+import * as UI from '../core/ui.ts';
 
 const HIT_Y = 580;
 const SPAWN_Y = -60;

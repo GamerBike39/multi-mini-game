@@ -2,7 +2,7 @@
 // dessinée en fond de la fiche du menu. Zéro logique de jeu réelle : ce sont des
 // vignettes scriptées qui reprennent le langage visuel de chaque jeu (blobs, accents).
 
-import { Blob } from './core/blob.js';
+import { Blob } from './core/blob.ts';
 
 const TAU = Math.PI * 2;
 const rand = (a, b) => a + Math.random() * (b - a);
