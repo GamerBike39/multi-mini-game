@@ -3,9 +3,11 @@
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, VolumeKey } from './types';
+import type { AudioLike, MusicLayerName, VolumeKey } from './types';
 import { InstrumentRack } from './music/instrument-rack';
+import { ReferencePlayer } from './music/reference-player';
 import { MusicTransport } from './music/transport';
+import type { ReferenceMusic } from './music/types';
 
 type HatMode = 'off' | '8ths' | '16ths';
 type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
@@ -89,6 +91,7 @@ export class AudioSys implements AudioLike {
   chart: ChartEvent[] | null = null;
   chartPtr = 0;
   pendingMood: [string, MusicOptions] | null = null;
+  pendingReference: ReferenceMusic | null = null;
   musicStart = 0;
   step = 0;
   /** Horloge musicale commune ; aucune création de node n'est déléguée ici. */
@@ -107,6 +110,7 @@ export class AudioSys implements AudioLike {
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
   instrumentRack: InstrumentRack | null = null;
+  referencePlayer: ReferencePlayer | null = null;
 
   trackMode = false;
   trackCountIn = 0;
@@ -188,6 +192,7 @@ export class AudioSys implements AudioLike {
         fx: this.musicFxBus,
       },
     });
+    this.referencePlayer = new ReferencePlayer(this.transport, this.instrumentRack);
     return true;
   }
 
@@ -197,12 +202,20 @@ export class AudioSys implements AudioLike {
     if (!context) return;
     if (context.state === 'suspended') {
       context.resume().then(() => {
-        if (this.pendingMood) {
+        if (this.pendingReference) {
+          const reference = this.pendingReference;
+          this.pendingReference = null;
+          this.startReference(reference);
+        } else if (this.pendingMood) {
           const [name, options] = this.pendingMood;
           this.pendingMood = null;
           this.startMusic(name, options);
         }
       }).catch(() => {});
+    } else if (context.state === 'running' && this.pendingReference) {
+      const reference = this.pendingReference;
+      this.pendingReference = null;
+      this.startReference(reference);
     } else if (context.state === 'running' && this.pendingMood) {
       const [name, options] = this.pendingMood;
       this.pendingMood = null;
@@ -331,6 +344,7 @@ export class AudioSys implements AudioLike {
     // Contexte pas encore débloqué (modale d'intro pas cliquée) : on mémorise,
     // sinon la musique se cale sur une horloge gelée et ne démarre jamais proprement.
     if (context.state !== 'running') {
+      this.pendingReference = null;
       this.pendingMood = [name, options];
       return;
     }
@@ -348,6 +362,29 @@ export class AudioSys implements AudioLike {
     this.scheduleAhead();
   }
 
+  /** Lance une partition de référence, sans chart gameplay ni variation. */
+  startReference(reference: ReferenceMusic): void {
+    if (!this.ensure()) return;
+    const context = this.ctx;
+    if (!context || !this.referencePlayer) return;
+    if (context.state !== 'running') {
+      this.pendingMood = null;
+      this.pendingReference = reference;
+      return;
+    }
+    this.stopMusic();
+    const composition = this.referencePlayer.start(reference);
+    this.mood = { bpm: composition.bpm, root: 0, kick: [], snare: [], hat: 'off', bass: null, pad: false };
+    this.musicStart = context.currentTime + 0.12;
+    this.step = 0;
+    this.transport.start(composition.bpm, this.musicStart, { loopBars: composition.bars });
+    this.chart = null;
+    this.chartPtr = 0;
+    this.musicOn = true;
+    this.timer = window.setInterval(() => this.scheduleAhead(), 55);
+    this.scheduleAhead();
+  }
+
   stopMusic(): void {
     if (this.timer !== null) {
       clearInterval(this.timer);
@@ -355,6 +392,7 @@ export class AudioSys implements AudioLike {
     }
     this.musicOn = false;
     this.transport.stop();
+    this.referencePlayer?.stop();
     this.chart = null;
     this.trackMode = false;
     this.stopTrack();
@@ -440,6 +478,12 @@ export class AudioSys implements AudioLike {
     const mood = this.mood;
     const horizon = context.currentTime + 0.2;
 
+    if (this.referencePlayer?.isPlaying()) {
+      this.referencePlayer.scheduleAhead(context.currentTime, horizon - context.currentTime);
+      this.step = this.transport.absoluteStep;
+      return;
+    }
+
     if (this.chart) {
       while (this.chartPtr < this.chart.length) {
         const event = this.chart[this.chartPtr];
@@ -474,5 +518,32 @@ export class AudioSys implements AudioLike {
   songTime(): number {
     if (!this.ctx || !this.musicOn) return 0;
     return this.transport.transportTime(this.ctx.currentTime);
+  }
+
+  pauseMusic(): void {
+    if (!this.ctx || !this.musicOn) return;
+    if (this.trackMode) this.pauseTrack();
+    else this.transport.pause(this.ctx.currentTime);
+  }
+
+  resumeMusic(): void {
+    if (!this.ctx || !this.musicOn) return;
+    if (this.trackMode) this.resumeTrack();
+    else this.transport.resume(this.ctx.currentTime);
+  }
+
+  musicBpm(): number { return this.musicOn ? this.transport.bpm : 0; }
+  musicBeat(): number { return this.musicOn && this.ctx ? this.transport.beatAt(this.ctx.currentTime) : 0; }
+  musicBar(): number { return this.musicOn && this.ctx ? this.transport.barAt(this.ctx.currentTime) : 0; }
+  musicStep(): number { return this.musicOn && this.ctx ? this.transport.stepAt(this.ctx.currentTime) : 0; }
+  musicPhrase(): number { return this.musicOn && this.ctx ? this.transport.phraseAt(this.ctx.currentTime) : 0; }
+  musicTransportTime(): number { return this.musicOn && this.ctx ? this.transport.transportTime(this.ctx.currentTime) : 0; }
+
+  setMusicLayerPresence(layer: MusicLayerName, value: number): void {
+    this.instrumentRack?.[layer].setPresence(value, this.ctx?.currentTime);
+  }
+
+  setMusicLayerBrightness(layer: MusicLayerName, value: number): void {
+    this.instrumentRack?.[layer].setBrightness(value, this.ctx?.currentTime);
   }
 }

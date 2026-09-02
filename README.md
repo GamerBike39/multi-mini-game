@@ -77,6 +77,10 @@ manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la ré
 (`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160) et aux filtres CRT
 et bruit avec intensités réglables.
 
+Validation musicale : la route `/music-test` permet d'écouter les références
+déterministes Shooter, Survival et Fish, de mettre le transport en pause, et de
+désactiver temporairement chaque couche pour la validation du mix.
+
 Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en pause ou la
 reprennent ; l'item « Quitter » permet de revenir au hub.
 

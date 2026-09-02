@@ -11,6 +11,7 @@ import { SnakeGame } from './games/snake';
 import { BreakerGame } from './games/breaker';
 import { GolfGame } from './games/golf';
 import { FishingGame } from './games/fish';
+import { MusicTestApp } from './music-test';
 import type { AppLike, GameConstructor } from './core/types';
 
 declare global {
@@ -46,7 +47,8 @@ function element<T extends HTMLElement>(id: string): T {
 const engine = new Engine(element<HTMLCanvasElement>('game'));
 engine.input.setBlocked(true);
 engine.menuFactory = () => new Menu(engine, GAMES) as AppLike;
-engine.setApp(engine.menuFactory());
+const musicTestRoute = location.pathname === '/music-test' || new URLSearchParams(location.search).has('music-test');
+engine.setApp(musicTestRoute ? new MusicTestApp(engine) : engine.menuFactory());
 engine.start();
 
 window.__engine = engine; // debug console

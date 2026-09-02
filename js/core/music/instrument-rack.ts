@@ -4,7 +4,18 @@
 // événements horodatés et les rend sur le sous-bus correspondant. Les sources
 // courtes sont suivies jusqu'à leur fin afin de pouvoir être nettoyées.
 
-export type MusicDrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
+export type MusicDrumKind =
+  | 'kick'
+  | 'snare'
+  | 'clap'
+  | 'tick'
+  | 'hat'
+  | 'hatClosed'
+  | 'hatOpen'
+  | 'music'
+  | 'rim'
+  | 'tom'
+  | 'shaker';
 export type InstrumentName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx';
 
 export interface InstrumentRackBuses {
@@ -17,7 +28,7 @@ export interface InstrumentRackBuses {
 }
 
 export interface MusicInstrument {
-  trigger(note: string | number, time: number, duration: number, velocity?: number): void;
+  trigger(note: string | number | readonly number[], time: number, duration: number, velocity?: number): void;
   setBrightness(value: number, time?: number): void;
   setPresence(value: number, time?: number): void;
   dispose(): void;
@@ -45,7 +56,7 @@ interface NoiseOptions {
 
 type VoiceRenderer = (
   voice: RackVoice,
-  note: string | number,
+  note: string | number | readonly number[],
   time: number,
   duration: number,
   velocity: number,
@@ -67,7 +78,7 @@ class RackVoice implements MusicInstrument {
     private readonly render: VoiceRenderer,
   ) {}
 
-  trigger(note: string | number, time: number, duration: number, velocity = 1): void {
+  trigger(note: string | number | readonly number[], time: number, duration: number, velocity = 1): void {
     if (!Number.isFinite(time) || !Number.isFinite(duration) || duration <= 0) return;
     const level = clamp01(velocity) * this.presence;
     if (level <= 0.0001) return;
@@ -175,10 +186,24 @@ export class InstrumentRack {
       } else if (kind === 'snare') {
         voice.scheduleNoise({ time, duration: 0.13, frequency: 1800, type: 'bandpass', q: 0.8, volume: 0.3 * velocity });
         voice.scheduleTone({ f: 190, type: 'triangle', time, duration: 0.05, volume: 0.15 * velocity });
+      } else if (kind === 'clap') {
+        voice.scheduleNoise({ time, duration: 0.08, frequency: 2100, type: 'bandpass', q: 0.7, volume: 0.24 * velocity });
       } else if (kind === 'tick') {
         voice.scheduleTone({ f: 1175, type: 'square', time, duration: 0.05, volume: 0.1 * velocity });
+      } else if (kind === 'rim') {
+        voice.scheduleTone({ f: 1550, f1: 980, type: 'triangle', time, duration: 0.045, volume: 0.12 * velocity });
+      } else if (kind === 'tom') {
+        voice.scheduleTone({ f: 230, f1: 110, type: 'sine', time, duration: 0.19, volume: 0.2 * velocity });
       } else {
-        voice.scheduleNoise({ time, duration: Math.min(0.04, duration), frequency: 7500, type: 'highpass', volume: 0.15 * velocity });
+        const open = kind === 'hatOpen';
+        const shaker = kind === 'shaker';
+        voice.scheduleNoise({
+          time,
+          duration: Math.min(open ? 0.12 : 0.04, duration),
+          frequency: shaker ? 5200 : 7500,
+          type: 'highpass',
+          volume: (shaker ? 0.2 : 0.15) * velocity,
+        });
       }
     });
 
@@ -190,10 +215,14 @@ export class InstrumentRack {
     });
 
     this.harmony = new RackVoice(context, buses.harmony, noiseBuffer, (voice, note, time, duration, velocity) => {
-      const root = typeof note === 'number' ? note : Number(note);
-      if (!Number.isFinite(root)) return;
-      for (const interval of [0, 3, 7, 12]) {
-        voice.scheduleTone({ f: midiHz(root + interval), type: 'sawtooth', time, duration: duration * 0.95, volume: 0.028 * velocity, attack: 0.4 });
+      const roots = Array.isArray(note)
+        ? note
+        : [typeof note === 'number' ? note : Number(note)];
+      const notes = Array.isArray(note) ? roots : roots.flatMap((root) => [root, root + 3, root + 7, root + 12]);
+      for (const midi of notes) {
+        if (Number.isFinite(midi)) {
+          voice.scheduleTone({ f: midiHz(midi), type: 'sawtooth', time, duration: duration * 0.95, volume: 0.028 * velocity, attack: 0.4 });
+        }
       }
     });
 
@@ -227,6 +256,10 @@ export class InstrumentRack {
 
   triggerPad(time: number, root: number, duration: number, velocity = 1): void {
     this.harmony.trigger(root, time, duration, velocity);
+  }
+
+  triggerChord(time: number, notes: readonly number[], duration: number, velocity = 1): void {
+    this.harmony.trigger(notes, time, duration, velocity);
   }
 
   dispose(): void {

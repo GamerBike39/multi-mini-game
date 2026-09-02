@@ -1,3 +1,5 @@
+import type { ReferenceMusic } from './music/types';
+
 export const ACTIONS = [
   'a', 'b', 'x', 'y',
   'up', 'down', 'left', 'right',
@@ -116,6 +118,8 @@ export interface TrackLikeOptions {
   bpm?: number;
 }
 
+export type MusicLayerName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx';
+
 export interface AudioLike {
   ctx: AudioContext | null;
   muted: boolean;
@@ -156,6 +160,17 @@ export interface AudioLike {
   trackPos(): number;
   songTime(): number;
   drum(kind: string, t: number): void;
+  startReference(reference: ReferenceMusic): void;
+  pauseMusic(): void;
+  resumeMusic(): void;
+  musicBpm(): number;
+  musicBeat(): number;
+  musicBar(): number;
+  musicStep(): number;
+  musicPhrase(): number;
+  musicTransportTime(): number;
+  setMusicLayerPresence(layer: MusicLayerName, value: number): void;
+  setMusicLayerBrightness(layer: MusicLayerName, value: number): void;
 }
 
 export interface SettingsLike {
