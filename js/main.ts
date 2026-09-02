@@ -1,7 +1,7 @@
 import { Engine } from './core/engine';
 import { Menu } from './menu';
 import { analyzeBuffer } from './core/analyzer';
-import { RhythmGame } from './games/rhythm.js';
+import { RhythmGame } from './games/rhythm';
 import { SurvivalGame } from './games/survival';
 import { ShooterGame } from './games/shooter';
 import { RunnerGame } from './games/runner';

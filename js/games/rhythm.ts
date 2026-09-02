@@ -5,9 +5,78 @@
 // Deux sources : séquenceur généré (la batterie EST le chart) ou piste locale
 // analysée dans le navigateur (le son original joue).
 
-import { BaseGame } from '../core/game.ts';
-import { analyzeBuffer } from '../core/analyzer.ts';
-import * as UI from '../core/ui.ts';
+import { BaseGame } from '../core/game';
+import { analyzeBuffer, type AudioAnalysis } from '../core/analyzer';
+import * as UI from '../core/ui';
+import type { Action, EngineLike, GameMeta, InputTap } from '../core/types';
+
+type DifficultyKey = 'facile' | 'normal' | 'difficile' | 'expert';
+type SceneMode = 'classique' | 'morphing';
+type RhythmState = 'select' | 'loading' | 'calib' | 'play' | 'over';
+type LayoutKey = 'classic' | 'fan' | 'rise' | 'orbit';
+type ChartDrum = 'kick' | 'snare' | 'hat' | 'music' | 'tick';
+
+interface Difficulty {
+  label: string;
+  lanes: 3 | 4;
+  fallT: number;
+  drain: number;
+  regen: number;
+  hat: readonly number[];
+}
+
+interface Point {
+  x: number;
+  y: number;
+}
+
+interface LayoutDefinition {
+  blob: Point;
+  columns?: boolean;
+  hit(i: number, n: number): Point;
+  spawn(i: number, n: number): Point;
+}
+
+interface ChartEvent {
+  t: number;
+  lane: number;
+  drum: ChartDrum;
+  dur: number;
+}
+
+interface RuntimeNote extends ChartEvent {
+  judged: boolean;
+  x: number;
+  y: number;
+  p: number;
+}
+
+interface HoldNote {
+  lane: number;
+  end: number;
+  x: number;
+  y: number;
+  color: string;
+  done: boolean;
+}
+
+interface PlaylistEntry {
+  name: string;
+  bytes: ArrayBuffer;
+  buffer?: AudioBuffer;
+  analysis: AudioAnalysis;
+  duration: number;
+}
+
+interface MusicOption {
+  name: string;
+  custom: boolean;
+}
+
+interface CalibrationResult {
+  ms: number;
+  n: number;
+}
 
 const HIT_Y = 580;
 const SPAWN_Y = -60;
@@ -16,19 +85,19 @@ const SPB = 60 / BPM;
 const START_BEAT = 8;
 const TOTAL_BEATS = 256;
 const W_PERF = 0.05, W_GREAT = 0.10, W_GOOD = 0.15; // fenêtres de jugement (s)
-const LANE_HUES = [330, 42, 155, 199];
+const LANE_HUES = [330, 42, 155, 199] as const;
 
 const HOLDS_ENABLED = false; // appuis longs en attente d'un meilleur calibrage
-const STAGE_NAMES = ['PULSE', 'BALANCEMENT', 'ROTATION', 'COULEURS', 'GELÉE', 'VERTIGO'];
+const STAGE_NAMES = ['PULSE', 'BALANCEMENT', 'ROTATION', 'COULEURS', 'GELÉE', 'VERTIGO'] as const;
 const STAGE_EVERY = 14;      // s entre deux effets scéniques
 const LAYOUT_EVERY = 16;     // s par scène (mode Morphing)
 const MORPH_DUR = 2.5;       // durée d'une transition de layout
-const LAYOUT_ORDER = ['classic', 'fan', 'rise', 'orbit'];
-const LAYOUT_NAMES = { classic: 'COLONNES', fan: 'ÉVENTAIL', rise: 'ASCENSION', orbit: 'ORBITE' };
-const CAL_TAP_ACTIONS = new Set(['a', 'b', 'x', 'y', 'left', 'right', 'up', 'down', 'lb', 'rb']);
+const LAYOUT_ORDER: readonly LayoutKey[] = ['classic', 'fan', 'rise', 'orbit'];
+const LAYOUT_NAMES: Record<LayoutKey, string> = { classic: 'COLONNES', fan: 'ÉVENTAIL', rise: 'ASCENSION', orbit: 'ORBITE' };
+const CAL_TAP_ACTIONS = new Set<Action>(['a', 'b', 'x', 'y', 'left', 'right', 'up', 'down', 'lb', 'rb']);
 
 // Chaque difficulté : nb de colonnes, vitesse de chute, énergie, densité par phase.
-const DIFFS = {
+const DIFFS: Record<DifficultyKey, Difficulty> = {
   facile: {
     label: 'FACILE', lanes: 3, fallT: 1.8, drain: 8, regen: 3.5,
     hat: [0, 0, .15, .25, .35, .4, .45],
@@ -46,19 +115,19 @@ const DIFFS = {
     hat: [.25, .45, .6, .72, .8, .85, .9],
   },
 };
-const DIFF_ORDER = ['facile', 'normal', 'difficile', 'expert'];
+const DIFF_ORDER: readonly DifficultyKey[] = ['facile', 'normal', 'difficile', 'expert'];
 
-const laneXs = (n) => (n === 3 ? [540, 640, 740] : [490, 590, 690, 790]);
-const laneActionsFor = (n) => (n === 3
+const laneXs = (n: number): number[] => (n === 3 ? [540, 640, 740] : [490, 590, 690, 790]);
+const laneActionsFor = (n: number): Action[][] => (n === 3
   ? [['left', 'x'], ['down', 'up', 'a', 'b'], ['right', 'y']]  // ◀ ▼(▲) ▶
   : [['left', 'x'], ['down', 'a'], ['up', 'y'], ['right', 'b']]);
-const laneGlyphs = (n) => (n === 3 ? ['◀', '▼', '▶'] : ['◀', '▼', '▲', '▶']);
-const laneFaces = (n) => (n === 3 ? ['X', 'A', 'Y'] : ['X', 'A', 'Y', 'B']);
-const trunc = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+const laneGlyphs = (n: number): string[] => (n === 3 ? ['◀', '▼', '▶'] : ['◀', '▼', '▲', '▶']);
+const laneFaces = (n: number): string[] => (n === 3 ? ['X', 'A', 'Y'] : ['X', 'A', 'Y', 'B']);
+const trunc = (s: string, n: number): string => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 // Layouts : position du blob, point de frappe et point d'apparition par lane.
 // La note voyage en ligne droite de spawn → hit ; le morphing interpole deux layouts.
-const LAYOUTS = {
+const LAYOUTS: Record<LayoutKey, LayoutDefinition> = {
   classic: {
     blob: { x: 640, y: 656 },
     columns: true,
@@ -66,6 +135,7 @@ const LAYOUTS = {
     spawn: (i, n) => ({ x: laneXs(n)[i], y: SPAWN_Y }),
   },
   fan: {
+    columns: false,
     blob: { x: 640, y: 640 },
     hit: (i, n) => {
       const a = (i / (n - 1) - 0.5) * 0.9;
@@ -95,85 +165,106 @@ const LAYOUTS = {
 };
 
 export class RhythmGame extends BaseGame {
-  static meta = {
+  static meta: GameMeta = {
     id: 'beat', name: 'BLOB BEAT', accent: '#f472b6', mood: 'rhythm',
     desc: 'Calé sur le kick', controls: 'Stick / ◀▼▶ / X A Y B',
     keys: "Flèches · U L J K (Espace / J)",
     hint: 'Frappe quand la note touche le cercle',
     unit: 'pts', ranks: [40000, 24000, 12000, 5000, 0],
   };
-  static lastDiff = 'normal';
-  static lastScene = 'classique';
-  static playlist = [];   // {name, bytes, buffer|null, analysis, duration}
+  static lastDiff: DifficultyKey = 'normal';
+  static lastScene: SceneMode = 'classique';
+  static playlist: PlaylistEntry[] = [];
   static musicIdx = 0;    // 0 = générée, 1..N = playlist
 
-  constructor(engine) {
+  diffKey: DifficultyKey;
+  diff: Difficulty;
+  sceneMode: SceneMode;
+  override state: RhythmState = 'select';
+  selRow = 0;
+  navRep = 0;
+  pvL = false;
+  pvR = false;
+  pvU = false;
+  pvD = false;
+  pvX = false;
+  pvC = false;
+  offsetMs: number;
+  musicIdx: number;
+  isCustom = false;
+  trackName = 'Générée';
+  loadingMsg: string | null = null;
+  chart: ChartEvent[] = [];
+  chartIdx = 0;
+  notes: RuntimeNote[] = [];
+  holds: HoldNote[] = [];
+  LANES: number[] = laneXs(3);
+  laneActions: Action[][] = laneActionsFor(3);
+  fallT = 1.6;
+  spb = SPB;
+  countIn = 0;
+  songEnd = 0;
+  combo = 0;
+  maxCombo = 0;
+  mult = 1;
+  comboPop = 0;
+  energy = 100;
+  pulse = 0;
+  lastLane = -1;
+  prevStickLane = -1;
+  songTNow = 0;
+  laneFlash = [0, 0, 0, 0];
+  stage = 0;
+  effW = [0, 0, 0, 0, 0, 0];
+  effHue = 0;
+  effWob = 0;
+  layFrom: LayoutKey = 'classic';
+  layTo: LayoutKey = 'classic';
+  _mk = 1;
+  laySeg = 0;
+  blobBaseX = 640;
+  blobBaseY = 656;
+  calTaps: number[] = [];
+  calTicks: number[] = [];
+  calNext = 0;
+  calResult: CalibrationResult | null = null;
+  calEndT = 0;
+  anchorPerf = 0;
+  anchorAudio = 0;
+  _fbStart?: number;
+
+  constructor(engine: EngineLike) {
     super(engine);
     this.diffKey = RhythmGame.lastDiff;
-    this.diff = null;
-    this.sceneMode = RhythmGame.lastScene;   // 'classique' | 'morphing'
-    this.state = 'select';   // 'select' | 'loading' | 'calib' | 'play'
-    this.selRow = 0;
-    this.navRep = 0;
-    this.pvL = false; this.pvR = false; this.pvU = false; this.pvD = false;
-    this.pvX = false; this.pvC = false;
-    this.offsetMs = Math.max(-120, Math.min(120, +localStorage.getItem('blobArcade.beat.offset') || 0));
+    this.diff = DIFFS[this.diffKey];
+    this.sceneMode = RhythmGame.lastScene;
+    this.offsetMs = Math.max(-120, Math.min(120, Number(localStorage.getItem('blobArcade.beat.offset')) || 0));
     this.musicIdx = RhythmGame.musicIdx;
-    this.isCustom = false;
-    this.trackName = 'Générée';
-    this.loadingMsg = null;
-    this.notes = [];
-    this.holds = [];
-    this.chartIdx = 0;
-    this.combo = 0; this.maxCombo = 0; this.mult = 1; this.comboPop = 0;
-    this.energy = 100;
-    this.pulse = 0;
-    this.lastLane = -1;
-    this.prevStickLane = -1;
-    this.songTNow = 0;
-    this.laneFlash = [0, 0, 0, 0];
-    // effets scéniques progressifs
-    this.stage = 0;
-    this.effW = [0, 0, 0, 0, 0, 0];
-    this.effHue = 0;
-    this.effWob = 0;
-    // morphing des layouts
-    this.layFrom = 'classic'; this.layTo = 'classic';
-    this._mk = 1;
-    this.laySeg = 0;
-    this.blobBaseX = 640; this.blobBaseY = 656;
-    // calibration
-    this.calTaps = [];
-    this.calTicks = [];
-    this.calNext = 0;
-    this.calResult = null;
-    this.calEndT = 0;
-    this.anchorPerf = 0; this.anchorAudio = 0;
     this.blob.x = 640; this.blob.y = 560; this.blob.r = 24;
   }
 
-  enter() { /* pas de musique avant la confirmation */ }
+  enter(): void { /* pas de musique avant la confirmation */ }
 
   // ---------- choix de la piste ----------
-  musicOptions() {
+  musicOptions(): MusicOption[] {
     return [{ name: 'Générée', custom: false }, ...RhythmGame.playlist.map((p) => ({ name: p.name, custom: true }))];
   }
-  currentEntry() {
+  currentEntry(): PlaylistEntry | null {
     const opts = this.musicOptions();
     const opt = opts[Math.min(this.musicIdx, opts.length - 1)];
     return opt?.custom ? RhythmGame.playlist[this.musicIdx - 1] : null;
   }
-  clampMusicIdx() { this.musicIdx = Math.max(0, Math.min(this.musicIdx, this.musicOptions().length - 1)); }
+  clampMusicIdx(): void { this.musicIdx = Math.max(0, Math.min(this.musicIdx, this.musicOptions().length - 1)); }
 
-  setDiff(k) { if (k !== this.diffKey) { this.diffKey = k; this.audio.uiMove(); } }
-  setScene(s) { if (s !== this.sceneMode) { this.sceneMode = s; this.audio.uiMove(); } }
-  setOffset(delta) {
+  setDiff(k: DifficultyKey): void { if (k !== this.diffKey) { this.diffKey = k; this.audio.uiMove(); } }
+  setScene(s: SceneMode): void { if (s !== this.sceneMode) { this.sceneMode = s; this.audio.uiMove(); } }
+  setOffset(delta: number): void {
     this.offsetMs = Math.max(-120, Math.min(120, this.offsetMs + delta));
-    try { localStorage.setItem('blobArcade.beat.offset', String(this.offsetMs)); } catch (e) {}
+    try { localStorage.setItem('blobArcade.beat.offset', String(this.offsetMs)); } catch { /* stockage indisponible */ }
     this.audio.uiMove();
   }
 
-  confirm() {
+  confirm(): void {
     const entry = this.currentEntry();
     this.diff = DIFFS[this.diffKey];
     this.LANES = laneXs(this.diff.lanes);
@@ -201,12 +292,14 @@ export class RhythmGame extends BaseGame {
     this.audio.startMusic('rhythm', { chart: this.chart });
   }
 
-  async launchCustom(entry) {
+  async launchCustom(entry: PlaylistEntry): Promise<void> {
     this.state = 'loading';
     try {
       this.loadingMsg = 'Décodage : ' + entry.name;
+      const context = this.audio.ctx;
+      if (!context) throw new Error('Contexte audio indisponible');
       let buffer = entry.buffer;
-      if (!buffer) buffer = await this.audio.ctx.decodeAudioData(entry.bytes.slice(0));
+      if (!buffer) buffer = await context.decodeAudioData(entry.bytes.slice(0));
       entry.buffer = buffer;
       const bpm = entry.analysis.bpm || 120;
       const spb = Math.max(0.4, Math.min(0.72, 60 / bpm));
@@ -225,31 +318,32 @@ export class RhythmGame extends BaseGame {
       this.state = 'play';
       this.loadingMsg = null;
       this.audio.startTrack(buffer, { countIn, bpm });
-    } catch (err) {
+    } catch (err: unknown) {
       this.loadingMsg = null;
       this.state = 'select';
-      this.eng.showError('Audio illisible : ' + (err?.message || err));
+      this.eng.showError('Audio illisible : ' + (err instanceof Error ? err.message : String(err)));
     }
   }
 
   // appelé par main.js après le sélecteur de fichiers / dossier
-  async onFilesChosen(files) {
+  async onFilesChosen(files: File[]): Promise<void> {
     const list = [...files].filter((f) =>
-      /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|webm)$/i.test(f.name) || (f.type && f.type.startsWith('audio')));
+      /\.(mp3|wav|ogg|oga|m4a|aac|flac|opus|webm)$/i.test(f.name) || f.type.startsWith('audio'));
     if (!list.length) { this.eng.showError('Aucun fichier audio dans la sélection'); return; }
-    if (!this.audio.ctx) { this.eng.showError('Clique une fois pour activer le son, puis recharge les pistes'); return; }
+    const context = this.audio.ctx;
+    if (!context) { this.eng.showError('Clique une fois pour activer le son, puis recharge les pistes'); return; }
     this.state = 'loading';
     for (let i = 0; i < list.length; i++) {
       const f = list[i];
       try {
         this.loadingMsg = `Analyse ${i + 1}/${list.length} : ${f.name}`;
         const bytes = await f.arrayBuffer();
-        const buf = await this.audio.ctx.decodeAudioData(bytes.slice(0));
+        const buf = await context.decodeAudioData(bytes.slice(0));
         await new Promise((r) => setTimeout(r, 30)); // laisse peindre l'UI
         const analysis = await analyzeBuffer(buf);
         RhythmGame.playlist.push({ name: f.name.replace(/\.[^.]+$/, ''), bytes, analysis, duration: buf.duration });
-      } catch (err) {
-        this.eng.showError('Piste ignorée — ' + f.name + ' : ' + (err?.message || err));
+      } catch (err: unknown) {
+        this.eng.showError('Piste ignorée — ' + f.name + ' : ' + (err instanceof Error ? err.message : String(err)));
       }
     }
     this.loadingMsg = null;
@@ -258,13 +352,13 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- charts (une seule note par instant : le blob circule) ----------
-  buildChart(d) {
-    const events = [];
-    for (let b = 4; b < START_BEAT; b++) events.push({ t: b * SPB, lane: -1, drum: 'tick' });
+  buildChart(d: Difficulty): ChartEvent[] {
+    const events: ChartEvent[] = [];
+    for (let b = 4; b < START_BEAT; b++) events.push({ t: b * SPB, lane: -1, drum: 'tick', dur: 0 });
     const lanes = [0, 1, 2, 3].slice(0, d.lanes);
     const freeUntil = new Array(d.lanes).fill(0);
     let last = -1, run = 0;
-    const pick = (free) => {
+    const pick = (free: number[]): number => {
       if (!free.length) return -1;
       let cand = run >= 2 ? free.filter((l) => l !== last) : free;
       if (!cand.length) cand = free;
@@ -295,38 +389,39 @@ export class RhythmGame extends BaseGame {
   }
 
   // chart depuis l'analyse d'une piste : onsets → notes selon la difficulté
-  buildChartFromAnalysis(an, d, countIn) {
+  buildChartFromAnalysis(an: AudioAnalysis, d: Difficulty, countIn: number): ChartEvent[] {
     const key = this.diffKey;
-    const perSec = { facile: 2, normal: 3, difficile: 5, expert: 7 }[key];
-    const minGap = { facile: 0.42, normal: 0.3, difficile: 0.22, expert: 0.17 }[key];
+    const perSec: Record<DifficultyKey, number> = { facile: 2, normal: 3, difficile: 5, expert: 7 };
+    const minGap: Record<DifficultyKey, number> = { facile: 0.42, normal: 0.3, difficile: 0.22, expert: 0.17 };
     const lanes = d.lanes;
 
     // 1. densité : les K onsets les plus forts par seconde
-    const bySec = new Map();
+    const bySec = new Map<number, AudioAnalysis['onsets']>();
     for (const o of an.onsets) {
       const s = Math.floor(o.t);
-      if (!bySec.has(s)) bySec.set(s, []);
-      bySec.get(s).push(o);
+      const bucket = bySec.get(s);
+      if (bucket) bucket.push(o);
+      else bySec.set(s, [o]);
     }
-    const kept = [];
+    const kept: AudioAnalysis['onsets'] = [];
     for (const arr of bySec.values()) {
       arr.sort((a, b) => b.s - a.s);
-      kept.push(...arr.slice(0, perSec));
+      kept.push(...arr.slice(0, perSec[key]));
     }
     kept.sort((a, b) => a.t - b.t);
 
     // 2. une seule note par instant : on garde l'impact le plus fort de chaque groupe
-    const spaced = [];
+    const spaced: AudioAnalysis['onsets'] = [];
     let lastT = -9;
     for (const o of kept) {
-      if (o.t - lastT >= minGap) { spaced.push(o); lastT = o.t; }
+      if (o.t - lastT >= minGap[key]) { spaced.push(o); lastT = o.t; }
     }
 
     // 3. lanes : bande préférée + variation
-    const events = [];
+    const events: ChartEvent[] = [];
     let last = -1, run = 0;
     const busy = new Array(lanes).fill(-1);
-    const pref = { 0: 0, 1: Math.floor((lanes - 1) / 2), 2: lanes - 1 };
+    const pref: Record<number, number> = { 0: 0, 1: Math.floor((lanes - 1) / 2), 2: lanes - 1 };
     for (const o of spaced) {
       let lane = pref[o.band];
       if (Math.random() < 0.35) lane = Math.max(0, Math.min(lanes - 1, lane + (Math.random() < 0.5 ? -1 : 1)));
@@ -343,7 +438,7 @@ export class RhythmGame extends BaseGame {
     return events;
   }
 
-  songT() {
+  songT(): number {
     const a = this.audio;
     let raw;
     if (a.trackMode) raw = a.trackPos() + (a.trackCountIn || 0);
@@ -357,18 +452,18 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- géométrie des trajectoires ----------
-  pathPos(lay, lane, p) {
+  pathPos(lay: LayoutKey, lane: number, p: number): Point {
     const L = LAYOUTS[lay], n = this.diff.lanes;
     const a = L.spawn(lane, n), b = L.hit(lane, n);
     return { x: a.x + (b.x - a.x) * p, y: a.y + (b.y - a.y) * p };
   }
-  hitPos(lane) {
+  hitPos(lane: number): Point {
     const n = this.diff.lanes, k = this._mk;
     const L = LAYOUTS[this.layFrom], B = LAYOUTS[this.layTo];
     const a = L.hit(lane, n), b = B.hit(lane, n);
     return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k };
   }
-  notePos(n, songT) {
+  notePos(n: RuntimeNote, songT: number): Point & { p: number } {
     const p = 1 - (n.t - songT) / this.fallT;
     const k = this._mk;
     const a = this.pathPos(this.layFrom, n.lane, p);
@@ -377,37 +472,37 @@ export class RhythmGame extends BaseGame {
     return { x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, p };
   }
 
-  yAt(t, songT) { return HIT_Y - ((t - songT) / this.fallT) * (HIT_Y - SPAWN_Y); }
+  yAt(t: number, songT: number): number { return HIT_Y - ((t - songT) / this.fallT) * (HIT_Y - SPAWN_Y); }
 
-  stickLane() {
+  stickLane(): number {
     const x = this.input.moveX, y = this.input.moveY;
     if (Math.hypot(x, y) < 0.4) return -1;
     if (Math.abs(x) > Math.abs(y)) return x > 0 ? this.diff.lanes - 1 : 0;
     return this.diff.lanes === 3 ? 1 : (y > 0 ? 1 : 2);
   }
 
-  laneHeld(i) {
+  laneHeld(i: number): boolean {
     const I = this.input;
     if (this.laneActions[i].some((act) => I.down(act))) return true;
     return this.stickLane() === i;
   }
 
-  laneCol(i) {
+  laneCol(i: number): string {
     const h = (LANE_HUES[i] + this.effHue + 360) % 360;
     return `hsl(${h}, 85%, 66%)`;
   }
 
   // déformation latérale "gelée" (fonction de y : notes et récepteurs restent alignés)
-  wobX(y) { return Math.sin(y * 0.012 + this.time * 1.5) * this.effWob; }
+  wobX(y: number): number { return Math.sin(y * 0.012 + this.time * 1.5) * this.effWob; }
 
-  onPauseChange(paused) {
+  override onPauseChange = (paused: boolean): void => {
     if (this.audio.trackMode) {
       if (paused) this.audio.pauseTrack();
       else this.audio.resumeTrack();
     }
-  }
+  };
 
-  update(dt) {
+  update(dt: number): void {
     if (this.state === 'select') return this.updateSelect(dt);
     if (this.state === 'loading') { this.time += dt; return; }
     if (this.state === 'calib') return this.updateCalib(dt);
@@ -415,7 +510,7 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- écran de sélection ----------
-  updateSelect(dt) {
+  updateSelect(dt: number): void {
     this.time += dt;
     this.pulse = Math.max(0, 1 - ((this.time * 2) % 1) * 2.6);
     const I = this.input;
@@ -464,7 +559,7 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- calibration au métronome ----------
-  enterCalib() {
+  enterCalib(): void {
     if (!this.audio.ctx) { this.eng.showError('Active le son d\'abord (clique à l\'écran d\'intro)'); return; }
     this.state = 'calib';
     this.calTaps = [];
@@ -474,7 +569,7 @@ export class RhythmGame extends BaseGame {
     this.calNext = this.audio.ctx.currentTime + 0.5;
   }
 
-  updateCalib(dt) {
+  updateCalib(dt: number): void {
     this.time += dt;
     const c = this.audio.ctx;
     if (!c) { this.state = 'select'; return; }
@@ -488,11 +583,11 @@ export class RhythmGame extends BaseGame {
     }
     while (this.calTicks.length > 24) this.calTicks.shift();
 
-    const taps = this.input.taps.splice(0);
-    for (const t of taps) {
-      if (!CAL_TAP_ACTIONS.has(t.a)) continue;
-      const at = this.anchorAudio + (t.t - this.anchorPerf) / 1000;
-      let best = null, bd = 1e9;
+    const taps: InputTap[] = this.input.taps.splice(0);
+    for (const tap of taps) {
+      if (!CAL_TAP_ACTIONS.has(tap.a)) continue;
+      const at = this.anchorAudio + (tap.t - this.anchorPerf) / 1000;
+      let best: number | null = null, bd = 1e9;
       for (const tk of this.calTicks) {
         const d = Math.abs(at - tk);
         if (d < bd) { bd = d; best = tk; }
@@ -517,7 +612,7 @@ export class RhythmGame extends BaseGame {
     }
   }
 
-  finishCalib() {
+  finishCalib(): void {
     const mean = this.calTaps.reduce((a, b) => a + b, 0) / this.calTaps.length;
     const ms = Math.max(-120, Math.min(120, Math.round((mean * 1000) / 5) * 5));
     this.offsetMs = ms;
@@ -528,14 +623,14 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- jeu ----------
-  updatePlay(dt) {
+  updatePlay(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const songT = this.songT();
     this.songTNow = songT;
 
     while (this.chartIdx < this.chart.length && this.chart[this.chartIdx].t - songT < this.fallT) {
       const ev = this.chart[this.chartIdx];
-      if (ev.lane >= 0) this.notes.push({ ...ev, judged: false, y: SPAWN_Y });
+      if (ev.lane >= 0) this.notes.push({ ...ev, judged: false, x: 0, y: SPAWN_Y, p: 0 });
       this.chartIdx++;
     }
 
@@ -610,7 +705,7 @@ export class RhythmGame extends BaseGame {
     }
     this.holds = this.holds.filter((h) => !h.done);
 
-    const pressed = new Set();
+    const pressed = new Set<number>();
     for (let i = 0; i < this.laneActions.length; i++) {
       for (const act of this.laneActions[i]) if (this.input.pressed(act)) pressed.add(i);
     }
@@ -644,9 +739,9 @@ export class RhythmGame extends BaseGame {
     this.blob.update(dt);
   }
 
-  tryLane(li, songT) {
+  tryLane(li: number, songT: number): void {
     this.lastLane = li;
-    let best = null, bestD = 1e9;
+    let best: RuntimeNote | null = null, bestD = 1e9;
     for (const n of this.notes) {
       if (n.judged || n.lane !== li) continue;
       const d = Math.abs(songT - n.t);
@@ -665,10 +760,10 @@ export class RhythmGame extends BaseGame {
     this.fx.burst(hp.x, hp.y, { n: 12, speed: [80, 360], colors: [col, '#ffffff'], size: [2, 4.5], life: 0.45, shape: 'spark' });
     this.blob.punch(0.4);
     this.gradeHit(hp.x, hp.y, col, bestD, best.t, songT);
-    if (best.dur > 0) this.holds.push({ lane: li, end: best.t + best.dur, x: hp.x, y: hp.y, color: col });
+    if (best.dur > 0) this.holds.push({ lane: li, end: best.t + best.dur, x: hp.x, y: hp.y, color: col, done: false });
   }
 
-  gradeHit(x, y, col, bestD, noteT, songT) {
+  gradeHit(x: number, y: number, col: string, bestD: number, noteT: number, songT: number): void {
     if (bestD <= W_PERF) {
       this.score += 150 * this.mult;
       this.audio.perfect();
@@ -685,7 +780,7 @@ export class RhythmGame extends BaseGame {
     }
   }
 
-  dropHold(h) {
+  dropHold(h: HoldNote): void {
     this.combo = 0;
     this.mult = 1;
     this.energy -= this.diff.drain * 0.5;
@@ -697,7 +792,7 @@ export class RhythmGame extends BaseGame {
     if (this.energy <= 0) { this.energy = 0; this.over(); this.audio.stopMusic(); }
   }
 
-  completeHold(h) {
+  completeHold(h: HoldNote): void {
     this.score += 60 * this.mult;
     this.combo++;
     this.maxCombo = Math.max(this.maxCombo, this.combo);
@@ -708,7 +803,7 @@ export class RhythmGame extends BaseGame {
     this.fx.text(h.x, h.y - 64, 'TENU !', { color: h.color, size: 20 });
   }
 
-  judgeMiss(n) {
+  judgeMiss(n: RuntimeNote): void {
     n.judged = true;
     this.combo = 0;
     this.mult = 1;
@@ -721,7 +816,7 @@ export class RhythmGame extends BaseGame {
     if (this.energy <= 0) { this.energy = 0; this.over(); this.audio.stopMusic(); }
   }
 
-  over(win = false) {
+  override over(win = false): void {
     super.over(win);
     this.audio.stopMusic();
     if (Math.floor(this.score) > UI.getBest(this.meta.id)) {
@@ -730,14 +825,14 @@ export class RhythmGame extends BaseGame {
   }
 
   // ---------- rendu ----------
-  render(ctx) {
+  render(ctx: CanvasRenderingContext2D): void {
     if (this.state === 'select') return this.renderSelect(ctx);
     if (this.state === 'loading') return this.renderLoading(ctx);
     if (this.state === 'calib') return this.renderCalib(ctx);
     return this.renderPlay(ctx);
   }
 
-  renderSelect(ctx) {
+  renderSelect(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0b0812';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -784,7 +879,7 @@ export class RhythmGame extends BaseGame {
     UI.txt(ctx, 'Record ' + d.label + ' : ' + (best > 0 ? UI.fmt(best) + ' pts' : '—'), 640, 682, { size: 14, align: 'center', mono: true, color: '#f9a8d4' });
   }
 
-  renderLoading(ctx) {
+  renderLoading(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0b0812';
     ctx.fillRect(0, 0, 1280, 720);
     const dots = '.'.repeat(1 + (Math.floor(this.time * 3) % 3));
@@ -792,7 +887,7 @@ export class RhythmGame extends BaseGame {
     UI.txt(ctx, trunc(this.loadingMsg || '…', 60), 640, 376, { size: 18, align: 'center', color: '#c3cbd8' });
   }
 
-  renderCalib(ctx) {
+  renderCalib(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0b0812';
     ctx.fillRect(0, 0, 1280, 720);
 
@@ -837,7 +932,7 @@ export class RhythmGame extends BaseGame {
     UI.txt(ctx, 'B retour' + (this.calResult ? '' : '   ·   16 frappes suffisent'), 640, 656, { size: 14, align: 'center', color: '#7c8698' });
   }
 
-  renderPlay(ctx) {
+  renderPlay(ctx: CanvasRenderingContext2D): void {
     ctx.fillStyle = '#0b0812';
     ctx.fillRect(0, 0, 1280, 720);
 

@@ -71,6 +71,7 @@ export interface InputLike {
   aimY: number;
   padConnected: boolean;
   vibration: boolean;
+  readonly taps: InputTap[];
   gesture(): void;
   setBlocked(blocked: boolean): void;
   down(action: Action): boolean;
@@ -148,6 +149,7 @@ export interface AudioLike {
   explode(big?: number): void;
   musicOn: boolean;
   trackMode: boolean;
+  trackCountIn: number;
   startTrack(buffer: AudioBuffer, options?: TrackLikeOptions): void;
   pauseTrack(): void;
   resumeTrack(): void;
@@ -212,4 +214,5 @@ export interface EngineLike {
   readonly screenFilters: ScreenFilters;
   setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void;
   setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void;
+  showError(message: unknown): void;
 }
