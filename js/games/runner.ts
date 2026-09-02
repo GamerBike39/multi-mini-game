@@ -172,6 +172,13 @@ export class RunnerGame extends BaseGame {
     this.spawnGap = width + this.speed * (0.55 + Math.random() * 0.5) + 90;
   }
 
+  nextObstacleLabel(o: any): string {
+    if (o.type === 'spike') return o.base ? 'PIQUE EN HAUTEUR' : 'PIQUES';
+    if (o.type === 'block') return 'BLOC';
+    if (o.type === 'bar') return 'BARRE · BAISSE-TOI';
+    return 'SCIE · SAUTE';
+  }
+
   checkHits(): void {
     const b = this.blob, r = b.r;
     for (const o of this.obs) {
@@ -219,6 +226,14 @@ export class RunnerGame extends BaseGame {
 
     this.fx.world(ctx);
 
+    // Horizon en couches : le sol gagne de la profondeur à mesure que la
+    // vitesse augmente, sans détourner l'œil des obstacles.
+    const horizon = ctx.createLinearGradient(0, 120, 0, GY);
+    horizon.addColorStop(0, 'rgba(163,230,53,0.02)');
+    horizon.addColorStop(1, 'rgba(163,230,53,0.10)');
+    ctx.fillStyle = horizon;
+    ctx.fillRect(0, 120, 1280, GY - 120);
+
     ctx.fillStyle = '#9fd8a8';
     for (const d of this.bgDots) {
       ctx.globalAlpha = 0.06 + d.z * 0.12;
@@ -237,6 +252,48 @@ export class RunnerGame extends BaseGame {
     ctx.stroke();
     ctx.fillStyle = '#0f150a';
     ctx.fillRect(0, GY + 2, 1280, 720 - GY);
+
+    // Guides de profondeur : ils rendent le défilement et la distance au sol
+    // immédiatement perceptibles, surtout lors des premières secondes.
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.strokeStyle = this.accent;
+    ctx.lineWidth = 1;
+    for (let y = GY - 150; y < GY; y += 42) {
+      const k = (GY - y) / 150;
+      ctx.beginPath();
+      ctx.moveTo(PX - 300 * k, y);
+      ctx.lineTo(PX + 960 * k, y);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // Télégraphe de la prochaine menace : le joueur sait quoi lire avant que
+    // l'obstacle n'arrive à sa hauteur.
+    const next = this.obs
+      .filter((o: any) => o.x > PX + 54)
+      .sort((a: any, b: any) => a.x - b.x)[0];
+    if (next && next.x < PX + 560) {
+      const urgency = 1 - Math.max(0, Math.min(1, (next.x - PX - 54) / 506));
+      ctx.save();
+      ctx.globalAlpha = 0.42 + urgency * 0.5;
+      UI.panel(ctx, 492, 112, 296, 38, {
+        radius: 19,
+        fill: 'rgba(10,15,7,0.82)',
+        stroke: urgency > 0.72 ? '#ff5470aa' : this.accent + '88',
+        lineWidth: 1.5,
+      });
+      UI.txt(ctx, 'PROCHAIN  ·  ' + this.nextObstacleLabel(next), 640, 136, {
+        size: 12,
+        align: 'center',
+        mono: true,
+        color: urgency > 0.72 ? '#ff9aaa' : '#d7e3ea',
+        weight: 900,
+      });
+      ctx.fillStyle = urgency > 0.72 ? '#ff5470' : this.accent;
+      ctx.fillRect(492, 146, 296 * urgency, 2);
+      ctx.restore();
+    }
 
     // obstacles
     for (const o of this.obs) {
@@ -291,7 +348,12 @@ export class RunnerGame extends BaseGame {
     // HUD
     UI.txt(ctx, Math.floor(this.meters()) + ' m', 640, 62, { size: 42, align: 'center', mono: true, weight: 700, shadow: true });
     UI.txt(ctx, 'RECORD ' + UI.getBest(this.meta.id) + ' m', 640, 88, { size: 14, align: 'center', color: '#7c8698' });
-    UI.txt(ctx, Math.round(this.speed) + ' px/s', 1252, 44, { size: 15, align: 'right', color: '#5f6b52', mono: true });
+    UI.drawHUD(ctx, {
+      accent: this.accent,
+      score: this.meters(),
+      unit: this.meta.unit,
+      extra: () => UI.txt(ctx, Math.round(this.speed) + ' px/s', 1252, 87, { size: 12, align: 'right', color: '#5f6b52', mono: true }),
+    });
     this.drawCommon(ctx);
   }
 }

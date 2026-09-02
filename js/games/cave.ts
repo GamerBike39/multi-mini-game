@@ -28,6 +28,7 @@ export class CaveGame extends BaseGame {
     this.coinStep = 0; this.coinT = 0;
     this.taken = new Set();
     this.proxT = 0; this.proxCd = 0;
+    this.clearance = 1;
     this.stars = [];
     for (let i = 0; i < 46; i++) this.stars.push({ x: Math.random() * 1500, y: 40 + Math.random() * 640, z: 0.2 + Math.random() * 0.6 });
   }
@@ -120,6 +121,7 @@ export class CaveGame extends BaseGame {
     // near-miss
     this.proxCd = Math.max(0, this.proxCd - dt);
     const wd = Math.min(b.y - this.topAt(wx), this.botAt(wx) - b.y) - b.r;
+    this.clearance = Math.max(0, Math.min(1, (wd + 8) / 92));
     if (wd < 15 && this.state === 'play') this.proxT += dt;
     else this.proxT = Math.max(0, this.proxT - dt * 3);
     if (this.proxT > 0.22 && this.proxCd <= 0) {
@@ -211,6 +213,39 @@ export class CaveGame extends BaseGame {
       ctx.shadowBlur = 0;
     }
 
+    // Repères de profondeur dans le tunnel : une ligne centrale très légère
+    // donne un rythme au défilement et aide à lire les changements de largeur.
+    ctx.save();
+    ctx.globalAlpha = 0.09;
+    ctx.strokeStyle = '#c7d2fe';
+    ctx.lineWidth = 1;
+    for (let x = -80; x < 1360; x += 128) {
+      const wx = this.worldX + 300 + x;
+      const top = this.topAt(wx), bot = this.botAt(wx);
+      const cy = (top + bot) / 2;
+      ctx.beginPath();
+      ctx.moveTo(x, cy);
+      ctx.lineTo(x + 28, cy);
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    // La marge devient une information visuelle avant de devenir un échec :
+    // les bords respirent en rouge quand le joueur rase trop la paroi.
+    if (this.clearance < 0.58) {
+      const danger = (0.58 - this.clearance) / 0.58;
+      const pulse = 0.55 + 0.45 * Math.sin(this.time * 12);
+      ctx.save();
+      ctx.globalAlpha = danger * pulse * 0.18;
+      const left = ctx.createLinearGradient(0, 0, 150, 0);
+      left.addColorStop(0, '#ff5470'); left.addColorStop(1, 'rgba(255,84,112,0)');
+      ctx.fillStyle = left; ctx.fillRect(0, 0, 150, 720);
+      const right = ctx.createLinearGradient(1280, 0, 1130, 0);
+      right.addColorStop(0, '#ff5470'); right.addColorStop(1, 'rgba(255,84,112,0)');
+      ctx.fillStyle = right; ctx.fillRect(1130, 0, 150, 720);
+      ctx.restore();
+    }
+
     // orbes
     for (let i = i0; i <= i1; i++) {
       if (i < 25 || i % 6 !== 2 || this.taken.has(i)) continue;
@@ -243,11 +278,25 @@ export class CaveGame extends BaseGame {
     this.fx.endWorld(ctx);
 
     // HUD
-    UI.drawHUD(ctx, { accent: this.accent, score: this.score });
+    UI.drawHUD(ctx, {
+      accent: this.accent,
+      score: this.score,
+      extra: () => UI.txt(ctx, 'MARGE ' + Math.round(this.clearance * 100) + '%', 28, 88, {
+        size: 12,
+        mono: true,
+        color: this.clearance < 0.42 ? '#ff8a9a' : '#7c8698',
+      }),
+    });
     UI.txt(ctx, Math.floor(this.worldX / 40) + ' m', 640, 52, { size: 30, align: 'center', mono: true, color: '#a5b4fc', shadow: true });
 
     // jauge boost
     const bw = 220, bx = 640 - bw / 2, by = 682;
+    UI.panel(ctx, bx - 10, by - 10, bw + 20, 40, {
+      radius: 12,
+      fill: 'rgba(7, 8, 18, 0.66)',
+      stroke: this.meter > 0.25 ? '#7df9ff55' : '#ff547088',
+      lineWidth: 1.25,
+    });
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fillRect(bx, by, bw, 8);
     ctx.fillStyle = this.meter > 0.25 ? '#7df9ff' : '#ff5470';
@@ -257,4 +306,3 @@ export class CaveGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-

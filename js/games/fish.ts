@@ -483,6 +483,31 @@ export class FishingGame extends BaseGame {
     UI.txt(ctx, 'TENSION' + (t > 0.78 ? ' !' : ''), 640, by - 11, { size: 11, align: 'center', color: col, mono: true });
   }
 
+  actionLabel(): string {
+    if (this.phase === 'idle') return 'A · LANCER LA LIGNE';
+    if (this.phase === 'charge') return 'RELÂCHE A · LANCER';
+    if (this.phase === 'cast') return 'LANCÉ · ATTENDS LA DESCENTE';
+    if (this.phase === 'sink') return 'DESCENTE · REPÈRE UN POISSON';
+    if (this.phase === 'drown') return 'STICK · GUIDER L’HAMEÇON';
+    if (this.phase === 'strike') return 'A · FERRER !';
+    if (this.phase === 'reel') return 'MAINTIENS A · REMONTER';
+    if (this.phase === 'caught') return 'PRISE · RETOUR AU BATEAU';
+    return 'LIGNE ROMPUE · REPLACE-TOI';
+  }
+
+  drawActionPrompt(ctx: CanvasRenderingContext2D): void {
+    if (this.state === 'over') return;
+    const active = this.phase === 'strike' || this.phase === 'reel';
+    const color = active ? '#ffd166' : this.accent;
+    UI.panel(ctx, 930, 650, 310, 38, {
+      radius: 19,
+      fill: 'rgba(5, 9, 16, 0.78)',
+      stroke: color + '88',
+      lineWidth: 1.25,
+    });
+    UI.txt(ctx, this.actionLabel(), 1085, 674, { size: 10.5, align: 'center', mono: true, color: '#dfe6f0', weight: 800 });
+  }
+
   render(ctx: CanvasRenderingContext2D): void {
     // ciel + mer
     const sky = ctx.createLinearGradient(0, 0, 0, SURFACE + 2);
@@ -495,6 +520,19 @@ export class FishingGame extends BaseGame {
     sea.addColorStop(1, '#04070f');
     ctx.fillStyle = sea;
     ctx.fillRect(0, SURFACE, 1280, 720 - SURFACE);
+
+    // Bandes de profondeur : le fond change de température visuelle et rend
+    // le choix d’un poisson lisible avant même de lancer la ligne.
+    for (const band of BANDS) {
+      ctx.fillStyle = band.col + '0a';
+      ctx.fillRect(0, band.y0, 1280, band.y1 - band.y0);
+      ctx.strokeStyle = band.col + '2e';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(0, band.y0);
+      ctx.lineTo(1280, band.y0);
+      ctx.stroke();
+    }
 
     this.fx.world(ctx);
 
@@ -536,11 +574,11 @@ export class FishingGame extends BaseGame {
       score: this.score,
       unit: this.meta.unit,
       time: this.timeLeft,
-      extra: () => UI.txt(ctx, 'PRISE ' + UI.fmt(this.bestCatch) + ' g', 28, 70, { size: 12, mono: true, color: '#7c8698' }),
+      extra: () => UI.txt(ctx, 'PRISE ' + UI.fmt(this.bestCatch) + ' g', 28, 88, { size: 12, mono: true, color: '#7c8698' }),
     });
     if (this.phase === 'reel') this.drawTension(ctx);
+    this.drawActionPrompt(ctx);
 
     this.drawCommon(ctx);
   }
 }
-

@@ -227,6 +227,9 @@ export class SnakeGame extends BaseGame {
     UI.grid(ctx, { gap: 40, alpha: 0.05 });
 
     // murs mortels
+    ctx.strokeStyle = this.accent + '14';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(5, 5, 1270, 710);
     ctx.strokeStyle = this.accent + '30';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, 1278, 718);
@@ -279,7 +282,17 @@ export class SnakeGame extends BaseGame {
     this.fx.drawWorld(ctx);
     this.fx.endWorld(ctx);
 
-    UI.drawHUD(ctx, { accent: this.accent, score: this.score, unit: this.meta.unit });
+    UI.drawHUD(ctx, {
+      accent: this.accent,
+      score: this.score,
+      unit: this.meta.unit,
+      extra: () => {
+        UI.txt(ctx, 'LONGUEUR ' + this.cells.length, 28, 70, { size: 12, mono: true, color: '#7c8698' });
+        if (this.chainT > 0 && this.coinStep > 1) {
+          UI.txt(ctx, 'CHAÎNE ×' + this.coinStep, 28, 90, { size: 13, mono: true, color: '#ffd166' });
+        }
+      },
+    });
     this.drawCommon(ctx);
   }
 }

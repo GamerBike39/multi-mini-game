@@ -1093,8 +1093,10 @@ export class RhythmGame extends BaseGame {
       ctx.restore();
     }
 
-    UI.txt(ctx, UI.fmt(this.score), 1252, 46, { size: 26, align: 'right', mono: true, weight: 700, shadow: true });
-    UI.txt(ctx, 'MAX ' + UI.fmt(UI.getBest(this.meta.id)), 1252, 70, { size: 13, align: 'right', color: '#7c8698' });
+    UI.panel(ctx, 1088, 14, 176, 58, { radius: 14, fill: 'rgba(7, 10, 17, 0.68)', stroke: this.accent + '38', lineWidth: 1.25 });
+    UI.txt(ctx, 'SCORE', 1106, 31, { size: 9, mono: true, color: this.accent, weight: 900 });
+    UI.txt(ctx, UI.fmt(this.score), 1252, 48, { size: 26, align: 'right', mono: true, weight: 700, shadow: true });
+    UI.txt(ctx, 'MAX ' + UI.fmt(UI.getBest(this.meta.id)), 1252, 66, { size: 11, align: 'right', color: '#7c8698' });
 
     this.drawCommon(ctx);
   }

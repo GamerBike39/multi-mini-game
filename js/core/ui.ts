@@ -357,10 +357,25 @@ export function drawHint(ctx: CanvasRenderingContext2D, str: string, time: numbe
 }
 
 export function drawHUD(ctx: CanvasRenderingContext2D, { accent, score, unit = 'pts', time = null, extra = null }: HudOptions): void {
-  txt(ctx, fmt(score), 1252, 44, { size: 26, align: 'right', mono: true, weight: 700, shadow: true });
+  // Cartes discrètes : elles donnent une ancre stable au HUD sans masquer le jeu.
+  panel(ctx, 1088, 14, 176, 58, {
+    radius: 14,
+    fill: 'rgba(7, 10, 17, 0.68)',
+    stroke: accent + '38',
+    lineWidth: 1.25,
+  });
+  txt(ctx, 'SCORE', 1106, 31, { size: 9, mono: true, color: accent, weight: 900 });
+  txt(ctx, fmt(score), 1252, 48, { size: 26, align: 'right', mono: true, weight: 700, shadow: true });
   txt(ctx, unit, 1252, 64, { size: 12, align: 'right', color: '#7c8698' });
   if (time !== null) {
-    txt(ctx, Math.floor(time) + 's', 28, 44, { size: 22, mono: true, color: accent, shadow: true });
+    panel(ctx, 16, 14, 142, 58, {
+      radius: 14,
+      fill: 'rgba(7, 10, 17, 0.68)',
+      stroke: accent + '38',
+      lineWidth: 1.25,
+    });
+    txt(ctx, 'TEMPS', 32, 31, { size: 9, mono: true, color: accent, weight: 900 });
+    txt(ctx, Math.floor(time) + 's', 32, 57, { size: 22, mono: true, color: accent, shadow: true });
   }
   if (extra) extra();
 }
