@@ -1,0 +1,54 @@
+* { margin: 0; padding: 0; }
+html, body { height: 100%; background: #04050a; overflow: hidden; }
+body { display: flex; align-items: center; justify-content: center; }
+canvas {
+  border-radius: 8px;
+  box-shadow: 0 0 120px rgba(90, 120, 255, 0.14), 0 0 40px rgba(0, 0, 0, 0.6);
+  cursor: default;
+}
+
+/* ---------- modale d'intro (débloquage audio) ---------- */
+#gate {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 5, 10, 0.88);
+  backdrop-filter: blur(6px);
+  z-index: 10;
+  cursor: pointer;
+  transition: opacity 0.4s ease;
+}
+#gate.hidden { opacity: 0; pointer-events: none; }
+#gate-card {
+  text-align: center;
+  color: #e8ecf2;
+  font-family: "Segoe UI", system-ui, sans-serif;
+  background: rgba(12, 16, 26, 0.92);
+  border: 2px solid rgba(125, 211, 252, 0.45);
+  border-radius: 22px;
+  padding: 40px 56px;
+  box-shadow: 0 0 60px rgba(125, 211, 252, 0.12);
+}
+#gate-card h1 {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: 2px;
+  margin: 12px 0 10px;
+  text-shadow: 0 0 24px rgba(125, 211, 252, 0.5);
+}
+#gate-pad { font-size: 14px; color: #8b95a8; margin: 0 0 22px; }
+#gate-pad.ok { color: #34d399; }
+#gate-btn {
+  font: 800 17px "Segoe UI", system-ui, sans-serif;
+  color: #06121c;
+  background: #7dd3fc;
+  border: none;
+  border-radius: 999px;
+  padding: 13px 34px;
+  cursor: pointer;
+  box-shadow: 0 0 26px rgba(125, 211, 252, 0.45);
+}
+#gate-btn:hover { transform: scale(1.04); }
+.gate-sub { font-size: 12.5px; color: #5d6480; margin-top: 20px; line-height: 1.5; }

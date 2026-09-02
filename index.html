@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BLOB ARCADE</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><circle cx='16' cy='16' r='13' fill='%237dd3fc'/><circle cx='12' cy='14' r='2.4' fill='%230b0e14'/><circle cx='20' cy='14' r='2.4' fill='%230b0e14'/></svg>">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="gate">
+  <div id="gate-card">
+    <svg class="gate-blob" viewBox="0 0 64 64" width="72" height="72">
+      <path d="M32 6 C46 6 57 17 57 32 C57 47 46 58 32 58 C18 58 7 47 7 32 C7 17 18 6 32 6 Z" fill="#7dd3fc"/>
+      <circle cx="25" cy="28" r="4" fill="#0b0e14"/>
+      <circle cx="39" cy="28" r="4" fill="#0b0e14"/>
+    </svg>
+    <h1>BLOB ARCADE</h1>
+    <p id="gate-pad">Manette&nbsp;: détection…</p>
+    <button id="gate-btn">Cliquer pour lancer</button>
+    <p class="gate-sub">Le clic (ou une touche) autorise le son.<br>Ensuite&nbsp;: manette ou clavier — flèches / ZQSD, Espace, K.<br>F plein écran · M son · Sélect/Échap réglages.</p>
+  </div>
+</div>
+<input type="file" id="file-audio" accept="audio/*,.mp3,.wav,.ogg,.oga,.m4a,.aac,.flac,.opus" multiple hidden>
+<input type="file" id="file-audio-dir" webkitdirectory hidden>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
