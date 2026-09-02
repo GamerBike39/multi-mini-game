@@ -9,7 +9,7 @@ export type Action = (typeof ACTIONS)[number];
 export const VOLUME_KEYS = ['master', 'music', 'sfx'] as const;
 export type VolumeKey = (typeof VOLUME_KEYS)[number];
 
-export type ResolutionId = 'auto' | '720p' | '540p' | '360p';
+export type ResolutionId = 'auto' | '720p' | '900p' | '1080p' | '1440p' | '2160p';
 
 export interface ResolutionOption {
   id: ResolutionId;
@@ -20,9 +20,23 @@ export interface ResolutionOption {
 export const RESOLUTION_OPTIONS: readonly ResolutionOption[] = [
   { id: 'auto', label: 'AUTO', scale: 1 },
   { id: '720p', label: '1280 × 720', scale: 1 },
-  { id: '540p', label: '960 × 540', scale: 0.75 },
-  { id: '360p', label: '640 × 360', scale: 0.5 },
+  { id: '900p', label: '1600 × 900', scale: 1.25 },
+  { id: '1080p', label: '1920 × 1080', scale: 1.5 },
+  { id: '1440p', label: '2560 × 1440', scale: 2 },
+  { id: '2160p', label: '3840 × 2160', scale: 3 },
 ];
+
+export type ScreenFilterId = 'crt' | 'noise';
+
+export interface ScreenFilterSettings {
+  enabled: boolean;
+  intensity: number;
+}
+
+export interface ScreenFilters {
+  crt: ScreenFilterSettings;
+  noise: ScreenFilterSettings;
+}
 
 export interface ActionState {
   down: boolean;
@@ -195,4 +209,7 @@ export interface EngineLike {
   toggleFullscreen(): void;
   setResolution(resolution: ResolutionId): void;
   cycleResolution(direction: number): void;
+  readonly screenFilters: ScreenFilters;
+  setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void;
+  setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void;
 }

@@ -1,23 +1,32 @@
 // Overlay "Réglages" : volumes, résolution, muet, plein écran, vibrations.
 // Navigable clavier + manette (↑↓ ←→ A B/Échap) et à la souris (clic sur les sliders).
 // L'engine le dessine au-dessus de tout ; menu et jeux le manipulent via open()/update().
+// La page principale garde les réglages fréquents ; les réglages d'image vivent
+// dans la sous-vue Options visuelles.
 
-import type { AudioLike, EngineLike, InputLike, VolumeKey } from './types';
+import type { AudioLike, EngineLike, InputLike, ScreenFilterId, VolumeKey } from './types';
 import * as UI from './ui';
 
 const W = 660;
 const H = 520;
 const VOLUME_KEYS: readonly VolumeKey[] = ['master', 'music', 'sfx'];
-const RESOLUTION_INDEX = 3;
-const MUTE_INDEX = 4;
-const FULLSCREEN_INDEX = 5;
-const VIBRATION_INDEX = 6;
+const MAIN_VISUALS_INDEX = 6;
+const MAIN_MUTE_INDEX = 3;
+const MAIN_FULLSCREEN_INDEX = 4;
+const MAIN_VIBRATION_INDEX = 5;
+const VISUAL_RESOLUTION_INDEX = 0;
+const VISUAL_CRT_INDEX = 1;
+const VISUAL_CRT_INTENSITY_INDEX = 2;
+const VISUAL_NOISE_INDEX = 3;
+const VISUAL_NOISE_INTENSITY_INDEX = 4;
+const FILTER_IDS: readonly ScreenFilterId[] = ['crt', 'noise'];
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 type SettingRow =
-  | { label: string; kind: 'slider'; key: VolumeKey }
+  | { label: string; kind: 'slider'; key: VolumeKey | ScreenFilterId }
   | { label: string; kind: 'choice'; value: string; hint?: string }
+  | { label: string; kind: 'submenu'; hint?: string }
   | { label: string; kind: 'toggle'; on: boolean; hint?: string };
 
 interface SettingRect {
@@ -26,9 +35,10 @@ interface SettingRect {
   w: number;
   h: number;
   i: number;
-  type: 'slider' | 'choice' | 'toggle';
+  type: 'slider' | 'choice' | 'submenu' | 'toggle';
   bx?: number;
   bw?: number;
+  control?: VolumeKey | ScreenFilterId;
 }
 
 export class Settings {
@@ -36,6 +46,7 @@ export class Settings {
   readonly input: InputLike;
   readonly audio: AudioLike;
   active = false;
+  page: 'main' | 'visuals' = 'main';
   sel = 0;
   rep = 0;
   t = 0;
@@ -58,6 +69,7 @@ export class Settings {
 
   open(): void {
     this.active = true;
+    this.page = 'main';
     this.sel = 0;
     this.rep = 0;
     this.t = 0;
@@ -66,6 +78,25 @@ export class Settings {
 
   close(): void {
     this.active = false;
+    this.page = 'main';
+    this.audio.uiBack();
+    this.input.absorb();
+  }
+
+  private openVisuals(): void {
+    this.page = 'visuals';
+    this.sel = 0;
+    this.rep = 0;
+    this.t = 0;
+    this.audio.uiOk();
+    this.input.absorb();
+  }
+
+  private backToMain(): void {
+    this.page = 'main';
+    this.sel = MAIN_VISUALS_INDEX;
+    this.rep = 0;
+    this.t = 0;
     this.audio.uiBack();
     this.input.absorb();
   }
@@ -75,13 +106,19 @@ export class Settings {
   }
 
   count(): number {
-    return 7;
+    return this.page === 'visuals' ? 5 : 7;
   }
 
   update(dt: number): boolean {
     if (!this.active) return false;
     this.t += dt;
     const I = this.input;
+
+    if (I.pressed('b') || I.pressed('back') || I.pressed('select')) {
+      if (this.page === 'visuals') this.backToMain();
+      else this.close();
+      return true;
+    }
 
     const U = I.down('up') || I.moveY < -0.5;
     const D = I.down('down') || I.moveY > 0.5;
@@ -115,25 +152,41 @@ export class Settings {
     }
     this.wasLR = L;
     this.wasRR = R;
+
+    if (this.page === 'main' && this.sel === MAIN_VISUALS_INDEX && (I.pressed('a') || I.pressed('right'))) {
+      this.openVisuals();
+      return true;
+    }
+
     if (dir) {
-      const key = this.sel <= 2 ? VOLUME_KEYS[this.sel] : null;
-      if (key) {
-        this.audio.setVol(key, clamp01(this.audio.vols[key] + dir * 0.05));
-        this.audio.uiMove();
-      } else if (this.sel === RESOLUTION_INDEX) {
+      if (this.page === 'main') {
+        const key = this.sel <= 2 ? VOLUME_KEYS[this.sel] : null;
+        if (key) {
+          this.audio.setVol(key, clamp01(this.audio.vols[key] + dir * 0.05));
+          this.audio.uiMove();
+        }
+      } else if (this.sel === VISUAL_RESOLUTION_INDEX) {
         this.eng.cycleResolution(dir);
+        this.audio.uiMove();
+      } else if (this.sel === VISUAL_CRT_INTENSITY_INDEX) {
+        this.eng.setScreenFilterIntensity('crt', this.eng.screenFilters.crt.intensity + dir * 0.05);
+        this.audio.uiMove();
+      } else if (this.sel === VISUAL_NOISE_INTENSITY_INDEX) {
+        this.eng.setScreenFilterIntensity('noise', this.eng.screenFilters.noise.intensity + dir * 0.05);
         this.audio.uiMove();
       }
     }
 
     if (I.pressed('a')) {
       this.audio.uiOk();
-      if (this.sel === RESOLUTION_INDEX) this.eng.cycleResolution(1);
-      else if (this.sel === MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
-      else if (this.sel === FULLSCREEN_INDEX) this.toggleFullscreen();
-      else if (this.sel === VIBRATION_INDEX) this.toggleVibration();
+      if (this.page === 'visuals') {
+        if (this.sel === VISUAL_RESOLUTION_INDEX) this.eng.cycleResolution(1);
+        else if (this.sel === VISUAL_CRT_INDEX) this.eng.setScreenFilterEnabled('crt', !this.eng.screenFilters.crt.enabled);
+        else if (this.sel === VISUAL_NOISE_INDEX) this.eng.setScreenFilterEnabled('noise', !this.eng.screenFilters.noise.enabled);
+      } else if (this.sel === MAIN_MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
+      else if (this.sel === MAIN_FULLSCREEN_INDEX) this.toggleFullscreen();
+      else if (this.sel === MAIN_VIBRATION_INDEX) this.toggleVibration();
     }
-    if (I.pressed('b') || I.pressed('back') || I.pressed('select')) this.close();
     return true;
   }
 
@@ -147,22 +200,37 @@ export class Settings {
     this.input.rumble(0.6, 0.2);
   }
 
+  private isFilter(control: VolumeKey | ScreenFilterId): control is ScreenFilterId {
+    return FILTER_IDS.includes(control as ScreenFilterId);
+  }
+
+  private sliderValue(control: VolumeKey | ScreenFilterId): number {
+    return this.isFilter(control) ? this.eng.screenFilters[control].intensity : this.audio.vols[control];
+  }
+
+  private setSliderValue(control: VolumeKey | ScreenFilterId, value: number): void {
+    if (this.isFilter(control)) this.eng.setScreenFilterIntensity(control, value);
+    else this.audio.setVol(control, value);
+  }
+
   // Clic souris (coordonnées 1280×720) : slider = valeur + début de drag,
-  // toggle/action = activation, clic hors du panneau = fermeture.
+  // toggle/sous-menu = activation, clic hors du panneau = retour/fermeture.
   onPointer(x: number, y: number): boolean {
     if (!this.active) return false;
     const px = (1280 - W) / 2;
     const py = (720 - H) / 2;
     if (x < px || x > px + W || y < py || y > py + H) {
-      this.close();
+      if (this.page === 'visuals') this.backToMain();
+      else this.close();
       return true;
     }
     for (const rect of this.rects) {
       if (x < rect.x || x > rect.x + rect.w || y < rect.y || y > rect.y + rect.h) continue;
       this.sel = rect.i;
       if (rect.type === 'slider') {
-        const key = VOLUME_KEYS[rect.i];
-        this.audio.setVol(key, clamp01((x - (rect.bx ?? 0)) / (rect.bw ?? 1)));
+        const control = rect.control;
+        if (!control) return true;
+        this.setSliderValue(control, clamp01((x - (rect.bx ?? 0)) / (rect.bw ?? 1)));
         this.drag = rect.i;
         this.audio.uiMove();
       } else if (rect.type === 'choice') {
@@ -170,10 +238,16 @@ export class Settings {
         const bw = rect.bw ?? rect.w;
         this.eng.cycleResolution(x < bx + bw / 2 ? -1 : 1);
         this.audio.uiMove();
+      } else if (rect.type === 'submenu') {
+        this.openVisuals();
       } else {
-        if (rect.i === MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
-        else if (rect.i === FULLSCREEN_INDEX) this.toggleFullscreen();
-        else if (rect.i === VIBRATION_INDEX) this.toggleVibration();
+        if (this.page === 'visuals' && rect.i === VISUAL_CRT_INDEX) {
+          this.eng.setScreenFilterEnabled('crt', !this.eng.screenFilters.crt.enabled);
+        } else if (this.page === 'visuals' && rect.i === VISUAL_NOISE_INDEX) {
+          this.eng.setScreenFilterEnabled('noise', !this.eng.screenFilters.noise.enabled);
+        } else if (this.page === 'main' && rect.i === MAIN_MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
+        else if (this.page === 'main' && rect.i === MAIN_FULLSCREEN_INDEX) this.toggleFullscreen();
+        else if (this.page === 'main' && rect.i === MAIN_VIBRATION_INDEX) this.toggleVibration();
         this.audio.uiOk();
       }
       return true;
@@ -186,10 +260,7 @@ export class Settings {
     if (!this.active) return false;
     if (this.drag !== null) {
       const rect = this.rects.find((candidate) => candidate.i === this.drag && candidate.type === 'slider');
-      if (rect) {
-        const key = VOLUME_KEYS[this.drag];
-        this.audio.setVol(key, clamp01((x - (rect.bx ?? 0)) / (rect.bw ?? 1)));
-      }
+      if (rect?.control) this.setSliderValue(rect.control, clamp01((x - (rect.bx ?? 0)) / (rect.bw ?? 1)));
       return true;
     }
     return this.rects.some((rect) => x >= rect.x && x <= rect.x + rect.w && y >= rect.y && y <= rect.y + rect.h);
@@ -229,21 +300,33 @@ export class Settings {
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = accent;
-    ctx.fillText('RÉGLAGES', px + 34, py + 52);
+    ctx.fillText(this.page === 'visuals' ? 'OPTIONS VISUELLES' : 'RÉGLAGES', px + 34, py + 52);
     ctx.font = '700 12.5px Consolas, monospace';
     ctx.textAlign = 'right';
     ctx.fillStyle = '#5d6480';
-    ctx.fillText(this.fullscreen ? 'PLEIN ÉCRAN ACTIF' : 'FENÊTRÉ', px + W - 34, py + 50);
+    ctx.fillText(
+      this.page === 'visuals' ? 'B / ÉCHAP RETOUR' : (this.fullscreen ? 'PLEIN ÉCRAN ACTIF' : 'FENÊTRÉ'),
+      px + W - 34,
+      py + 50,
+    );
 
-    const rows: SettingRow[] = [
-      { label: 'Volume général', kind: 'slider', key: 'master' },
-      { label: 'Volume musique', kind: 'slider', key: 'music' },
-      { label: 'Volume effets', kind: 'slider', key: 'sfx' },
-      { label: 'Résolution', kind: 'choice', value: this.eng.resolutionLabel, hint: '← → pour choisir' },
-      { label: 'Muet', kind: 'toggle', on: this.audio.muted, hint: 'raccourci : M' },
-      { label: 'Plein écran', kind: 'toggle', on: this.fullscreen, hint: 'raccourci : F' },
-      { label: 'Vibrations manette', kind: 'toggle', on: this.input.vibration },
-    ];
+    const rows: SettingRow[] = this.page === 'visuals'
+      ? [
+        { label: 'Résolution', kind: 'choice', value: this.eng.resolutionLabel, hint: '← → pour choisir' },
+        { label: 'Filtre CRT', kind: 'toggle', on: this.eng.screenFilters.crt.enabled },
+        { label: 'Intensité CRT', kind: 'slider', key: 'crt' },
+        { label: 'Filtre bruit', kind: 'toggle', on: this.eng.screenFilters.noise.enabled },
+        { label: 'Intensité bruit', kind: 'slider', key: 'noise' },
+      ]
+      : [
+        { label: 'Volume général', kind: 'slider', key: 'master' },
+        { label: 'Volume musique', kind: 'slider', key: 'music' },
+        { label: 'Volume effets', kind: 'slider', key: 'sfx' },
+        { label: 'Muet', kind: 'toggle', on: this.audio.muted, hint: 'raccourci : M' },
+        { label: 'Plein écran', kind: 'toggle', on: this.fullscreen, hint: 'raccourci : F' },
+        { label: 'Vibrations manette', kind: 'toggle', on: this.input.vibration },
+        { label: 'Options visuelles', kind: 'submenu', hint: 'A / → ouvrir' },
+      ];
 
     const bx = px + 300;
     const bw = 226;
@@ -268,7 +351,8 @@ export class Settings {
       ctx.fillText(row.label, px + 34, y + 20);
 
       if (row.kind === 'slider') {
-        const value = this.audio.vols[row.key];
+        const value = this.sliderValue(row.key);
+        const filterDisabled = this.isFilter(row.key) && !this.eng.screenFilters[row.key].enabled;
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(bx, y + 10, bw, 10, 5);
         else ctx.rect(bx, y + 10, bw, 10);
@@ -278,12 +362,12 @@ export class Settings {
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(bx, y + 10, fillWidth, 10, 5);
         else ctx.rect(bx, y + 10, fillWidth, 10);
-        ctx.fillStyle = accent;
+        ctx.fillStyle = filterDisabled ? '#566176' : accent;
         ctx.fill();
         ctx.beginPath();
         ctx.arc(bx + fillWidth, y + 15, 8.5, 0, 6.2832);
         ctx.fillStyle = '#eaf6ff';
-        ctx.shadowColor = accent;
+        ctx.shadowColor = filterDisabled ? '#566176' : accent;
         ctx.shadowBlur = isSel ? 14 : 6;
         ctx.fill();
         ctx.shadowBlur = 0;
@@ -291,7 +375,7 @@ export class Settings {
         ctx.textAlign = 'right';
         ctx.fillStyle = isSel ? '#eaf6ff' : '#7c8698';
         ctx.fillText(Math.round(value * 100) + ' %', px + W - 34, y + 20);
-        this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'slider', bx, bw });
+        this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'slider', bx, bw, control: row.key });
       } else if (row.kind === 'choice') {
         const choiceW = 226;
         const choiceX = bx;
@@ -313,6 +397,19 @@ export class Settings {
           ctx.fillText(row.hint, px + W - 34, y + 20);
         }
         this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'choice', bx: choiceX, bw: choiceW });
+      } else if (row.kind === 'submenu') {
+        const submenuW = 226;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(bx, y + 2, submenuW, 26, 13);
+        else ctx.rect(bx, y + 2, submenuW, 26);
+        ctx.fillStyle = 'rgba(255,255,255,0.08)';
+        ctx.fill();
+        ctx.strokeStyle = isSel ? accent + 'bb' : '#ffffff1f';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+        UI.txt(ctx, 'OUVRIR', bx + submenuW / 2 - 8, y + 20, { size: 12, align: 'center', color: isSel ? '#eaf6ff' : '#8b95a8', mono: true, weight: 800 });
+        UI.txt(ctx, '›', bx + submenuW - 18, y + 21, { size: 23, align: 'center', color: isSel ? accent : '#8b95a8', weight: 900 });
+        this.rects.push({ x: px + 18, y: y - 6, w: W - 36, h: 44, i, type: 'submenu', bx, bw: submenuW });
       } else {
         const tw = 96;
         ctx.beginPath();
@@ -337,7 +434,13 @@ export class Settings {
     ctx.font = '700 13px "Segoe UI", system-ui, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#6a7488';
-    ctx.fillText('↑ ↓  choisir      ← →  régler      A  valider      B / Échap  fermer', 640, py + H - 22);
+    ctx.fillText(
+      this.page === 'visuals'
+        ? '↑ ↓  choisir      ← →  régler      A  valider      B / Échap  retour'
+        : '↑ ↓  choisir      ← →  régler      A  valider      B / Échap  fermer',
+      640,
+      py + H - 22,
+    );
     ctx.restore();
   }
 }

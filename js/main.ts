@@ -53,6 +53,7 @@ window.__engine = engine; // debug console
 
 // ---------- modale d'intro : le clic/une touche débloque l'audio puis lance le menu ----------
 const gate = element<HTMLDivElement>('gate');
+const introTransition = element<HTMLDivElement>('intro-transition');
 const padEl = element<HTMLParagraphElement>('gate-pad');
 const padPoll = window.setInterval(() => {
   if (!gate.isConnected) {
@@ -80,7 +81,9 @@ const start = (): void => {
   engine.input.setBlocked(false);
   engine.input.absorb(); // la frappe qui ferme la modale ne doit rien déclencher dans le menu
   gate.classList.add('hidden');
+  introTransition.classList.add('active');
   window.setTimeout(() => gate.remove(), 450);
+  window.setTimeout(() => introTransition.remove(), 900);
 };
 gate.addEventListener('pointerdown', start);
 window.addEventListener('keydown', start);

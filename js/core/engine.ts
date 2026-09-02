@@ -5,10 +5,20 @@ import { Input } from './input';
 import { AudioSys } from './audio';
 import { Settings } from './settings';
 import { vignette, txt, panel } from './ui';
-import { RESOLUTION_OPTIONS, type AppLike, type AudioLike, type EngineLike, type ResolutionId } from './types';
+import {
+  RESOLUTION_OPTIONS,
+  type AppLike,
+  type AudioLike,
+  type EngineLike,
+  type ResolutionId,
+  type ScreenFilterId,
+  type ScreenFilters,
+  type ScreenFilterSettings,
+} from './types';
 
 const STEP = 1 / 60;
 const RESOLUTION_STORAGE_KEY = 'blobArcade.resolution';
+const SCREEN_FILTER_STORAGE_KEY = 'blobArcade.screenFilters';
 
 interface Point {
   x: number;
@@ -31,6 +41,33 @@ function loadResolution(): ResolutionId {
     // Préférence indisponible : AUTO reste le meilleur défaut.
   }
   return 'auto';
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function readFilter(value: unknown, fallbackIntensity: number): ScreenFilterSettings {
+  const source = value && typeof value === 'object' ? value as Record<string, unknown> : {};
+  const intensity = typeof source.intensity === 'number' && Number.isFinite(source.intensity)
+    ? clamp01(source.intensity)
+    : fallbackIntensity;
+  return { enabled: source.enabled === true, intensity };
+}
+
+function loadScreenFilters(): ScreenFilters {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SCREEN_FILTER_STORAGE_KEY) || '{}') as Record<string, unknown>;
+    return {
+      crt: readFilter(saved.crt, 0.45),
+      noise: readFilter(saved.noise, 0.2),
+    };
+  } catch {
+    return {
+      crt: { enabled: false, intensity: 0.45 },
+      noise: { enabled: false, intensity: 0.2 },
+    };
+  }
 }
 
 export class Engine implements EngineLike {
@@ -57,6 +94,7 @@ export class Engine implements EngineLike {
   dpr = 1;
   renderScale = 1;
   resolution: ResolutionId = loadResolution();
+  readonly screenFilters: ScreenFilters = loadScreenFilters();
   readonly menuBack: () => void;
 
   get resolutionLabel(): string {
@@ -188,10 +226,66 @@ export class Engine implements EngineLike {
     this.setResolution(RESOLUTION_OPTIONS[next].id);
   }
 
+  setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void {
+    this.screenFilters[filter].enabled = enabled;
+    this.saveScreenFilters();
+    this.toast((enabled ? 'Filtre ' : 'Filtre ') + (filter === 'crt' ? 'CRT' : 'bruit') + (enabled ? ' activé' : ' désactivé'));
+  }
+
+  setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void {
+    this.screenFilters[filter].intensity = clamp01(intensity);
+    this.saveScreenFilters();
+  }
+
+  private saveScreenFilters(): void {
+    try {
+      localStorage.setItem(SCREEN_FILTER_STORAGE_KEY, JSON.stringify(this.screenFilters));
+    } catch {
+      // La préférence reste active pour la session courante.
+    }
+  }
+
   showError(message: unknown): void {
     this.errorMsg = errorMessage(message).slice(0, 200);
     this.errorT = 8;
     console.error(message);
+  }
+
+  drawScreenFilters(ctx: CanvasRenderingContext2D): void {
+    const crt = this.screenFilters.crt;
+    const noise = this.screenFilters.noise;
+    if (!crt.enabled && !noise.enabled) return;
+
+    ctx.save();
+    if (crt.enabled) {
+      const intensity = crt.intensity;
+      const now = performance.now() / 1000;
+      const scanOffset = (now * 34) % 4;
+      ctx.fillStyle = `rgba(3, 5, 10, ${0.035 + intensity * 0.13})`;
+      for (let y = scanOffset; y < 720; y += 4) ctx.fillRect(0, y, 1280, 1);
+
+      ctx.fillStyle = `rgba(125, 211, 252, ${0.018 * intensity})`;
+      ctx.fillRect(0, (now * 42) % 760 - 20, 1280, 20 + intensity * 24);
+
+      const gradient = ctx.createRadialGradient(640, 360, 330, 640, 360, 790);
+      gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+      gradient.addColorStop(1, `rgba(0, 0, 0, ${0.3 * intensity})`);
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 1280, 720);
+    }
+
+    if (noise.enabled) {
+      const intensity = noise.intensity;
+      const count = Math.floor(180 + intensity * 700);
+      ctx.globalAlpha = 0.045 + intensity * 0.1;
+      for (let i = 0; i < count; i++) {
+        const value = 150 + Math.floor(Math.random() * 106);
+        const size = Math.random() < 0.88 ? 1 : 2;
+        ctx.fillStyle = `rgb(${value}, ${value}, ${value})`;
+        ctx.fillRect(Math.floor(Math.random() * 1280), Math.floor(Math.random() * 720), size, size);
+      }
+    }
+    ctx.restore();
   }
 
   resize(): void {
@@ -303,6 +397,8 @@ export class Engine implements EngineLike {
         txt(ctx, 'FENÊTRE INACTIVE', 640, 340, { size: 34, align: 'center', color: '#8b95a8', weight: 900 });
       }
     }
+
+    this.drawScreenFilters(ctx);
 
     // Réglages par-dessus tout (dessinés par l'engine pour rester au sommet).
     this.settings.draw(ctx, app?.accent || '#7dd3fc');

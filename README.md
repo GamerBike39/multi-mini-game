@@ -74,8 +74,10 @@ bandeau de vignettes pour naviguer (`← →`). Une indication de transition app
 à chaque changement de vue.
 
 Réglages (⚙, Sélect ou Échap depuis le menu, ou item « Réglages » de la pause) :
-résolution, volumes général / musique / effets avec sliders, muet, plein écran,
-vibrations manette.
+volumes général / musique / effets avec sliders, muet, plein écran, vibrations
+manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la résolution
+(`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160) et aux filtres CRT
+et bruit avec intensités réglables.
 
 Souris : active uniquement dans les interfaces (hub, pause, réglages) — survol et clic
 sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effet.
