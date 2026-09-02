@@ -143,6 +143,8 @@ export class SimonGame extends BaseGame {
 
   roundDone(): void {
     this.score = this.seq.length;
+    this.musicEvent('perfect', Math.min(1.2, 0.45 + this.seq.length * 0.04));
+    this.musicEvent('waveComplete', 0.5);
     this.audio.milestone();
     this.fx.flash(this.accent, 0.12);
     this.fx.ring(640, 375, { r0: 30, r1: 210, color: this.accent, life: 0.5, width: 5 });
@@ -177,6 +179,7 @@ export class SimonGame extends BaseGame {
 
   nextRound(): void {
     this.round++;
+    this.musicEvent('waveStart', 0.3);
     this.seq.push(this.randNote());
     this.phase = 'show';
     this.showIdx = 0;

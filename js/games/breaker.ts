@@ -104,6 +104,8 @@ export class BreakerGame extends BaseGame {
     this.normSpeed();
     this.score += br.pts;
     this.comboStep++; this.comboT = 1.2;
+    this.musicEvent('brickCombo', Math.min(1.4, 0.45 + this.comboStep * 0.04));
+    if (this.comboStep >= 4) this.musicEvent('combo', Math.min(1.5, this.comboStep / 10));
     this.audio.coin(this.comboStep);
     if (this.comboStep % 8 === 0) {
       this.fx.stop(0.03);
@@ -123,6 +125,7 @@ export class BreakerGame extends BaseGame {
 
   nextLevel(): void {
     this.level++;
+    this.musicEvent('waveComplete', 0.8);
     this.audio.milestone();
     this.fx.flash(this.accent, 0.15);
     this.fx.text(640, 330, 'NIVEAU ' + this.level, { color: this.accent, size: 42, life: 1.4 });
@@ -136,6 +139,7 @@ export class BreakerGame extends BaseGame {
   applyDrop(kind: any): void {
     const px = this.pad.x, py = PAD_Y - 26;
     this.audio.good();
+    this.musicEvent('powerUp', 0.7);
     this.fx.flash(this.accent, 0.1);
     this.input.rumble(0.2, 0.06);
     this.fx.burst(px, py, { n: 12, colors: [DCOL[kind], '#ffffff'], life: 0.4 });
@@ -250,6 +254,7 @@ export class BreakerGame extends BaseGame {
     }
     if (this.balls.length === 0) {
       this.lives--;
+      this.musicEvent('playerHit', 0.8);
       this.audio.hurt();
       this.fx.shake(0.4);
       if (this.lives <= 0) { this.over(); return; }
@@ -401,4 +406,3 @@ export class BreakerGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-

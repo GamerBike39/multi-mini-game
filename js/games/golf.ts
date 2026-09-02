@@ -99,6 +99,7 @@ export class GolfGame extends BaseGame {
     b.trail.length = 0; b.trailOn = false; b.dead = false;
     // QoL : l'angle initial pointe vers le trou
     this.aimAng = Math.atan2(this.hole.cup.y - b.y, this.hole.cup.x - b.x);
+    if (i > 0) this.musicEvent('waveStart', 0.25);
   }
 
   inSand(): boolean {
@@ -272,6 +273,8 @@ export class GolfGame extends BaseGame {
     const label = diff <= -2 ? 'EAGLE' : diff === -1 ? 'BIRDIE' : diff === 0 ? 'PAR' : diff === 1 ? 'BOGEY' : '+' + diff;
     const pts = Math.max(0, 10 - diff * 3);
     this.score += pts;
+    this.musicEvent('waveComplete', 0.45);
+    if (this.strokes === 1) this.musicEvent('holeInOne', 1);
 
     this.audio.milestone();
     if (diff <= -1) this.audio.perfect();
@@ -304,13 +307,28 @@ export class GolfGame extends BaseGame {
     const b = this.blob;
     const ca = Math.cos(this.aimAng), sa = Math.sin(this.aimAng);
     const pulse = 0.55 + 0.45 * Math.sin(this.time * (this.phase === 'charge' ? 18 : 6));
-    // flèche pointillée de 90 px depuis le blob
-    for (let i = 0; i < 7; i++) {
-      const d = b.r + 8 + i * 15;
+    const range = 110 + this.gauge * 330;
+
+    // Prévisualisation de trajectoire : courte au repos, elle s'allonge avec
+    // la charge et garde le lien entre le geste et la puissance réelle.
+    ctx.save();
+    ctx.globalAlpha = 0.22 + this.gauge * 0.22;
+    ctx.strokeStyle = this.phase === 'charge' ? this.accent : '#ffffff';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([5, 9]);
+    ctx.beginPath();
+    ctx.moveTo(b.x + ca * (b.r + 8), b.y + sa * (b.r + 8));
+    ctx.lineTo(b.x + ca * range, b.y + sa * range);
+    ctx.stroke();
+    ctx.restore();
+
+    // Flèche ponctuée superposée, plus lisible sur les fonds chargés.
+    for (let i = 0; i < 9; i++) {
+      const d = b.r + 8 + i * Math.max(13, (range - b.r - 8) / 9);
       ctx.globalAlpha = pulse * (1 - i * 0.09);
       ctx.fillStyle = this.phase === 'charge' ? this.accent : '#ffffff';
       ctx.beginPath();
-      ctx.arc(b.x + ca * d, b.y + sa * d, 3.4 - i * 0.22, 0, 6.2832);
+      ctx.arc(b.x + ca * d, b.y + sa * d, Math.max(1.8, 3.4 - i * 0.22), 0, 6.2832);
       ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -360,6 +378,13 @@ export class GolfGame extends BaseGame {
     ctx.arc(cup.x, cup.y, CUP_R, 0, 6.2832);
     ctx.fillStyle = '#04070a';
     ctx.fill();
+    ctx.globalAlpha = 0.22 + 0.1 * Math.sin(this.time * 4 + this.holeIdx);
+    ctx.strokeStyle = this.accent;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(cup.x, cup.y, CUP_R + 9 + Math.sin(this.time * 3) * 2, 0, 6.2832);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = this.accent;
     ctx.lineWidth = 2.5;
     ctx.stroke();
@@ -408,6 +433,12 @@ export class GolfGame extends BaseGame {
 
     // jauge de puissance (style jauge boost de cave.js)
     const bw = 240, bx = 640 - bw / 2, by = 680;
+    UI.panel(ctx, bx - 10, by - 10, bw + 20, 40, {
+      radius: 12,
+      fill: 'rgba(8, 11, 18, 0.66)',
+      stroke: this.phase === 'charge' ? this.accent + '99' : '#ffffff2e',
+      lineWidth: 1.25,
+    });
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fillRect(bx, by, bw, 9);
     if (this.gauge > 0) {
@@ -415,6 +446,11 @@ export class GolfGame extends BaseGame {
       ctx.fillRect(bx, by, bw * this.gauge, 9);
     }
     UI.txt(ctx, 'A · PUISSANCE', 640, 710, { size: 11, align: 'center', color: '#5d6480' });
+
+    if (this.phase === 'fly' && this.inSand()) {
+      UI.panel(ctx, 520, 102, 240, 32, { radius: 16, fill: 'rgba(38, 29, 18, 0.82)', stroke: '#c2b28077', lineWidth: 1.25 });
+      UI.txt(ctx, 'SABLE · VITESSE RÉDUITE', 640, 123, { size: 10.5, align: 'center', mono: true, color: '#e6c891', weight: 800 });
+    }
 
     // intro de trou
     if (this.introT > 0 && this.state !== 'over') {
@@ -427,5 +463,3 @@ export class GolfGame extends BaseGame {
     this.drawCommon(ctx);
   }
 }
-
-

@@ -166,6 +166,8 @@ export class ShooterGame extends BaseGame {
           if (e.hp <= 0) {
             e.dead = true;
             this.streak++;
+            this.musicEvent('enemyKilled', e.kind === 'tank' ? 1.3 : 0.7);
+            if (this.streak >= 3) this.musicEvent('combo', Math.min(1.4, this.streak / 8));
             const pts = e.kind === 'tank' ? 30 : e.kind === 'sat' ? 40 : e.kind === 'rock' ? 15 : e.kind === 'sniper' ? 20 : 10;
             this.score += pts * this.mult();
             this.fx.text(e.x, e.y - 22, '+' + pts * this.mult(), { color: '#ffd166', size: 17, mono: true });
@@ -285,6 +287,35 @@ export class ShooterGame extends BaseGame {
     }
     ctx.globalAlpha = 1;
 
+    // Signaux d’entrée : les ennemis qui arrivent par le bord sont annoncés
+    // une fraction de seconde avant d’entrer dans l’arène.
+    for (const e of this.enemies) {
+      const col = e.kind === 'tank' ? '#ff8c42' : e.kind === 'sniper' ? '#c9b5ff' : '#ff5470';
+      if (e.y < 76 && e.y > -90) {
+        const x = Math.max(24, Math.min(1256, e.x));
+        const a = 0.25 + 0.25 * (0.5 + 0.5 * Math.sin(this.time * 12 + e.x));
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.strokeStyle = col;
+        ctx.lineWidth = 2;
+        ctx.beginPath(); ctx.moveTo(x, 16); ctx.lineTo(x, 44); ctx.stroke();
+        ctx.fillStyle = col;
+        ctx.beginPath(); ctx.moveTo(x, 52); ctx.lineTo(x - 7, 40); ctx.lineTo(x + 7, 40); ctx.closePath(); ctx.fill();
+        ctx.restore();
+      } else if (e.x < 8 || e.x > 1272) {
+        const y = Math.max(34, Math.min(686, e.y));
+        const x = e.x < 8 ? 14 : 1266;
+        ctx.save();
+        ctx.globalAlpha = 0.3 + 0.2 * (0.5 + 0.5 * Math.sin(this.time * 12 + e.y));
+        ctx.fillStyle = col;
+        ctx.beginPath();
+        if (e.x < 8) { ctx.moveTo(x, y); ctx.lineTo(x + 13, y - 8); ctx.lineTo(x + 13, y + 8); }
+        else { ctx.moveTo(x, y); ctx.lineTo(x - 13, y - 8); ctx.lineTo(x - 13, y + 8); }
+        ctx.closePath(); ctx.fill();
+        ctx.restore();
+      }
+    }
+
     // balles ennemies
     ctx.shadowColor = '#ff5470'; ctx.shadowBlur = 9;
     ctx.fillStyle = '#ff5470';
@@ -388,8 +419,9 @@ export class ShooterGame extends BaseGame {
     // viseur
     if (this.state === 'play') {
       const cx = this.blob.x + Math.cos(this.aim) * 46, cy = this.blob.y + Math.sin(this.aim) * 46;
-      ctx.strokeStyle = '#ffffff66'; ctx.lineWidth = 2;
-      ctx.beginPath(); ctx.arc(cx, cy, 9, 0, 6.2832); ctx.stroke();
+      const pulse = 1 + Math.sin(this.time * 8) * 0.18;
+      ctx.strokeStyle = this.aimLock ? '#ffd166aa' : '#ffffff66'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(cx, cy, 9 * pulse, 0, 6.2832); ctx.stroke();
       ctx.beginPath(); ctx.moveTo(cx - 14, cy); ctx.lineTo(cx - 5, cy); ctx.moveTo(cx + 5, cy); ctx.lineTo(cx + 14, cy);
       ctx.moveTo(cx, cy - 14); ctx.lineTo(cx, cy - 5); ctx.moveTo(cx, cy + 5); ctx.lineTo(cx, cy + 14);
       ctx.stroke();
@@ -401,16 +433,18 @@ export class ShooterGame extends BaseGame {
     this.fx.endWorld(ctx);
 
     // HUD
-    UI.drawHUD(ctx, { accent: this.accent, score: this.score });
+    UI.drawHUD(ctx, {
+      accent: this.accent,
+      score: this.score,
+      extra: () => UI.txt(ctx, 'VIES', 28, 76, { size: 11, color: '#7c8698', mono: true }),
+    });
     for (let i = 0; i < this.hp; i++) {
       ctx.fillStyle = this.accent;
       ctx.beginPath(); ctx.arc(34 + i * 30, 36, 9, 0, 6.2832); ctx.fill();
     }
     if (this.mult() > 1.01) {
-      UI.txt(ctx, '×' + this.mult().toFixed(1), 28, 74, { size: 18, color: '#ffd166', mono: true });
+      UI.txt(ctx, 'STREAK ×' + this.mult().toFixed(1), 28, 98, { size: 15, color: '#ffd166', mono: true });
     }
     this.drawCommon(ctx);
   }
 }
-
-

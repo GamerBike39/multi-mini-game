@@ -3,7 +3,13 @@
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, VolumeKey } from './types';
+import type { AudioLike, MusicLayerName, VolumeKey } from './types';
+import { AdaptiveDirector } from './music/adaptive-director';
+import { InstrumentRack } from './music/instrument-rack';
+import { ReferencePlayer } from './music/reference-player';
+import { MusicStateController } from './music/state';
+import { MusicTransport } from './music/transport';
+import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
 
 type HatMode = 'off' | '8ths' | '16ths';
 type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
@@ -75,8 +81,6 @@ const MOODS: Record<string, Mood> = {
   simon: { bpm: 84, root: 45, kick: [], snare: [], hat: 'off', bass: null, pad: true },
 };
 
-const midiHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
-
 export class AudioSys implements AudioLike {
   ctx: AudioContext | null = null;
   muted = false;
@@ -89,15 +93,29 @@ export class AudioSys implements AudioLike {
   chart: ChartEvent[] | null = null;
   chartPtr = 0;
   pendingMood: [string, MusicOptions] | null = null;
+  pendingReference: ReferenceMusic | null = null;
   musicStart = 0;
   step = 0;
+  /** Horloge musicale commune ; aucune création de node n'est déléguée ici. */
+  readonly transport = new MusicTransport();
 
   master!: GainNode;
   comp!: DynamicsCompressorNode;
   musicBus!: GainNode;
+  drumBus!: GainNode;
+  bassBus!: GainNode;
+  harmonyBus!: GainNode;
+  arpBus!: GainNode;
+  leadBus!: GainNode;
+  musicFxBus!: GainNode;
   sfxBus!: GainNode;
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
+  instrumentRack: InstrumentRack | null = null;
+  referencePlayer: ReferencePlayer | null = null;
+  readonly musicState = new MusicStateController();
+  adaptiveDirector: AdaptiveDirector | null = null;
+  adaptiveEnabled = false;
 
   trackMode = false;
   trackCountIn = 0;
@@ -144,6 +162,16 @@ export class AudioSys implements AudioLike {
     this.musicBus = context.createGain();
     this.musicBus.gain.value = 0.5;
     this.musicBus.connect(this.master);
+    this.drumBus = context.createGain();
+    this.bassBus = context.createGain();
+    this.harmonyBus = context.createGain();
+    this.arpBus = context.createGain();
+    this.leadBus = context.createGain();
+    this.musicFxBus = context.createGain();
+    for (const bus of [this.drumBus, this.bassBus, this.harmonyBus, this.arpBus, this.leadBus, this.musicFxBus]) {
+      bus.gain.value = 1;
+      bus.connect(this.musicBus);
+    }
     this.sfxBus = context.createGain();
     this.sfxBus.gain.value = 1;
     this.sfxBus.connect(this.master);
@@ -157,6 +185,20 @@ export class AudioSys implements AudioLike {
     this.noiseBuf = context.createBuffer(1, length, context.sampleRate);
     const data = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < length; i++) data[i] = Math.random() * 2 - 1;
+    this.instrumentRack = new InstrumentRack({
+      context,
+      noiseBuffer: this.noiseBuf,
+      buses: {
+        drums: this.drumBus,
+        bass: this.bassBus,
+        harmony: this.harmonyBus,
+        arp: this.arpBus,
+        lead: this.leadBus,
+        fx: this.musicFxBus,
+      },
+    });
+    this.referencePlayer = new ReferencePlayer(this.transport, this.instrumentRack);
+    this.adaptiveDirector = new AdaptiveDirector(this.transport, this.instrumentRack, { state: this.musicState, seed: 0x424c4f42 });
     return true;
   }
 
@@ -166,12 +208,20 @@ export class AudioSys implements AudioLike {
     if (!context) return;
     if (context.state === 'suspended') {
       context.resume().then(() => {
-        if (this.pendingMood) {
+        if (this.pendingReference) {
+          const reference = this.pendingReference;
+          this.pendingReference = null;
+          this.startReference(reference);
+        } else if (this.pendingMood) {
           const [name, options] = this.pendingMood;
           this.pendingMood = null;
           this.startMusic(name, options);
         }
       }).catch(() => {});
+    } else if (context.state === 'running' && this.pendingReference) {
+      const reference = this.pendingReference;
+      this.pendingReference = null;
+      this.startReference(reference);
     } else if (context.state === 'running' && this.pendingMood) {
       const [name, options] = this.pendingMood;
       this.pendingMood = null;
@@ -300,6 +350,7 @@ export class AudioSys implements AudioLike {
     // Contexte pas encore débloqué (modale d'intro pas cliquée) : on mémorise,
     // sinon la musique se cale sur une horloge gelée et ne démarre jamais proprement.
     if (context.state !== 'running') {
+      this.pendingReference = null;
       this.pendingMood = [name, options];
       return;
     }
@@ -309,9 +360,35 @@ export class AudioSys implements AudioLike {
     this.mood = mood;
     this.musicStart = context.currentTime + 0.12;
     this.step = 0;
+    this.transport.start(mood.bpm, this.musicStart);
     this.chart = options.chart || null;
     this.chartPtr = 0;
     this.musicOn = true;
+    if (this.adaptiveEnabled) this.adaptiveDirector?.start();
+    this.timer = window.setInterval(() => this.scheduleAhead(), 55);
+    this.scheduleAhead();
+  }
+
+  /** Lance une partition de référence, sans chart gameplay ni variation. */
+  startReference(reference: ReferenceMusic): void {
+    if (!this.ensure()) return;
+    const context = this.ctx;
+    if (!context || !this.referencePlayer) return;
+    if (context.state !== 'running') {
+      this.pendingMood = null;
+      this.pendingReference = reference;
+      return;
+    }
+    this.stopMusic();
+    const composition = this.referencePlayer.start(reference);
+    this.mood = { bpm: composition.bpm, root: 0, kick: [], snare: [], hat: 'off', bass: null, pad: false };
+    this.musicStart = context.currentTime + 0.12;
+    this.step = 0;
+    this.transport.start(composition.bpm, this.musicStart, { loopBars: composition.bars });
+    this.chart = null;
+    this.chartPtr = 0;
+    this.musicOn = true;
+    if (this.adaptiveEnabled) this.adaptiveDirector?.start();
     this.timer = window.setInterval(() => this.scheduleAhead(), 55);
     this.scheduleAhead();
   }
@@ -321,7 +398,10 @@ export class AudioSys implements AudioLike {
       clearInterval(this.timer);
       this.timer = null;
     }
+    this.adaptiveDirector?.stop();
     this.musicOn = false;
+    this.transport.stop();
+    this.referencePlayer?.stop();
     this.chart = null;
     this.trackMode = false;
     this.stopTrack();
@@ -378,6 +458,7 @@ export class AudioSys implements AudioLike {
     if (!this.ensure() || !this.ctx) return;
     this.stopMusic();
     this.musicStart = this.ctx.currentTime + 0.15;
+    this.transport.start(bpm, this.musicStart);
     this.playBuffer(buffer, this.musicStart + countIn, 0);
     this.musicOn = true;
     this.trackMode = true;
@@ -387,39 +468,30 @@ export class AudioSys implements AudioLike {
   }
 
   drum(kind: DrumKind, t: number): void {
-    if (kind === 'kick') {
-      this.tone({ f: 150, f1: 42, type: 'sine', t, dur: 0.17, vol: 0.85, dest: this.musicBus });
-      this.noise({ t, dur: 0.03, f: 3000, vol: 0.1, dest: this.musicBus });
-    } else if (kind === 'snare') {
-      this.noise({ t, dur: 0.13, f: 1800, type: 'bandpass', q: 0.8, vol: 0.3, dest: this.musicBus });
-      this.tone({ f: 190, type: 'triangle', t, dur: 0.05, vol: 0.15, dest: this.musicBus });
-    } else if (kind === 'tick') {
-      // Métronome du décompte du jeu de rythme.
-      this.tone({ f: 1175, type: 'square', t, dur: 0.05, vol: 0.1, dest: this.musicBus });
-    } else {
-      this.hatAt(t, 0.15);
-    }
+    this.instrumentRack?.triggerDrum(kind, t);
   }
 
-  hatAt(t: number, vol: number): void { this.noise({ t, dur: 0.04, f: 7500, type: 'highpass', vol, dest: this.musicBus }); }
+  hatAt(t: number, vol: number): void { this.instrumentRack?.triggerHat(t, vol); }
 
   bassAt(t: number, midi: number): void {
-    this.tone({ f: midiHz(midi), type: 'triangle', t, dur: 0.2, vol: 0.22, dest: this.musicBus });
-    this.tone({ f: midiHz(midi + 12), type: 'square', t, dur: 0.1, vol: 0.05, dest: this.musicBus });
+    this.instrumentRack?.triggerBass(t, midi);
   }
 
   padAt(t: number, root: number, dur: number): void {
-    for (const interval of [0, 3, 7, 12]) {
-      this.tone({ f: midiHz(root + interval), type: 'sawtooth', t, dur: dur * 0.95, vol: 0.028, attack: 0.4, dest: this.musicBus });
-    }
+    this.instrumentRack?.triggerPad(t, root, dur);
   }
 
   scheduleAhead(): void {
     if (!this.ctx || !this.musicOn || !this.mood) return;
     const context = this.ctx;
     const mood = this.mood;
-    const stepDuration = (60 / mood.bpm) / 4;
     const horizon = context.currentTime + 0.2;
+
+    if (this.referencePlayer?.isPlaying()) {
+      this.referencePlayer.scheduleAhead(context.currentTime, horizon - context.currentTime);
+      this.step = this.transport.absoluteStep;
+      return;
+    }
 
     if (this.chart) {
       while (this.chartPtr < this.chart.length) {
@@ -431,33 +503,99 @@ export class AudioSys implements AudioLike {
       }
     }
 
-    while (true) {
-      const time = this.musicStart + this.step * stepDuration;
-      if (time >= horizon) break;
-      if (time >= context.currentTime - 0.02) {
-        const step = this.step % 16;
-        if (mood.kick.includes(step)) this.drum('kick', time);
-        if (mood.snare.includes(step)) this.drum('snare', time);
-        if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(time, step % 4 === 2 ? 0.05 : 0.09);
-        else if (mood.hat === '16ths') this.hatAt(time, step % 4 === 0 ? 0.09 : 0.045);
-        if (mood.bass && step % (mood.bassDiv ?? 2) === 0) {
-          const note = mood.bass[(step / (mood.bassDiv ?? 2)) % mood.bass.length];
-          if (note !== null && note !== undefined) this.bassAt(time, mood.root + note);
-        }
-        if (mood.pad && step === 0) this.padAt(time, mood.root, (60 / mood.bpm) * 4);
+    this.transport.scheduleAhead(context.currentTime, horizon - context.currentTime, ({ time, absoluteStep }) => {
+      const step = absoluteStep % 16;
+      if (mood.kick.includes(step)) this.drum('kick', time);
+      if (mood.snare.includes(step)) this.drum('snare', time);
+      if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(time, step % 4 === 2 ? 0.05 : 0.09);
+      else if (mood.hat === '16ths') this.hatAt(time, step % 4 === 0 ? 0.09 : 0.045);
+      if (mood.bass && step % (mood.bassDiv ?? 2) === 0) {
+        const note = mood.bass[(step / (mood.bassDiv ?? 2)) % mood.bass.length];
+        if (note !== null && note !== undefined) this.bassAt(time, mood.root + note);
       }
-      this.step++;
-    }
+      if (mood.pad && step === 0) this.padAt(time, mood.root, (60 / mood.bpm) * 4);
+    });
+    this.step = this.transport.absoluteStep;
   }
 
   // Temps musical : beat flottant depuis le début de la musique, 0 si pas de musique.
   beat(): number {
     if (!this.ctx || !this.musicOn || !this.mood) return 0;
-    return (this.ctx.currentTime - this.musicStart) / (60 / this.mood.bpm);
+    return this.transport.beatAt(this.ctx.currentTime);
   }
 
   songTime(): number {
     if (!this.ctx || !this.musicOn) return 0;
-    return this.ctx.currentTime - this.musicStart;
+    return this.transport.transportTime(this.ctx.currentTime);
+  }
+
+  pauseMusic(): void {
+    if (!this.ctx || !this.musicOn) return;
+    if (this.trackMode) this.pauseTrack();
+    else this.transport.pause(this.ctx.currentTime);
+  }
+
+  resumeMusic(): void {
+    if (!this.ctx || !this.musicOn) return;
+    if (this.trackMode) this.resumeTrack();
+    else this.transport.resume(this.ctx.currentTime);
+    if (this.adaptiveEnabled && this.referencePlayer?.isActive()) this.adaptiveDirector?.start();
+  }
+
+  musicBpm(): number { return this.musicOn ? this.transport.bpm : 0; }
+  musicBeat(): number { return this.musicOn && this.ctx ? this.transport.beatAt(this.ctx.currentTime) : 0; }
+  musicBar(): number { return this.musicOn && this.ctx ? this.transport.barAt(this.ctx.currentTime) : 0; }
+  musicStep(): number { return this.musicOn && this.ctx ? this.transport.stepAt(this.ctx.currentTime) : 0; }
+  musicPhrase(): number { return this.musicOn && this.ctx ? this.transport.phraseAt(this.ctx.currentTime) : 0; }
+  musicTransportTime(): number { return this.musicOn && this.ctx ? this.transport.transportTime(this.ctx.currentTime) : 0; }
+
+  updateMusicState(dt: number): void {
+    if (this.adaptiveDirector) this.adaptiveDirector.update(dt);
+    else this.musicState.update(dt);
+  }
+
+  setMusicState(state: Partial<MusicState>): void {
+    this.musicState.setState(state);
+  }
+
+  getMusicState(): MusicState {
+    return this.musicState.snapshot();
+  }
+
+  getMusicTargetState(): MusicState {
+    return this.musicState.targetSnapshot();
+  }
+
+  resetMusicState(): void {
+    this.musicState.reset();
+  }
+
+  musicEvent(type: GameMusicEventName, strength = 1, value = 0): void {
+    this.adaptiveDirector?.event(type, strength, value);
+  }
+
+  setAdaptiveEnabled(enabled: boolean): void {
+    this.adaptiveEnabled = enabled;
+    if (!enabled) {
+      this.adaptiveDirector?.stop();
+      return;
+    }
+    if (this.musicOn && this.referencePlayer?.isActive()) this.adaptiveDirector?.start();
+  }
+
+  isAdaptiveEnabled(): boolean {
+    return this.adaptiveEnabled;
+  }
+
+  musicSection(): MusicalSection {
+    return this.adaptiveDirector?.section ?? 'groove';
+  }
+
+  setMusicLayerPresence(layer: MusicLayerName, value: number): void {
+    this.instrumentRack?.setLayerPresence(layer, value, this.ctx?.currentTime);
+  }
+
+  setMusicLayerBrightness(layer: MusicLayerName, value: number): void {
+    this.instrumentRack?.setLayerBrightness(layer, value, this.ctx?.currentTime);
   }
 }

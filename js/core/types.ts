@@ -1,3 +1,5 @@
+import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
+
 export const ACTIONS = [
   'a', 'b', 'x', 'y',
   'up', 'down', 'left', 'right',
@@ -71,6 +73,7 @@ export interface InputLike {
   aimY: number;
   padConnected: boolean;
   vibration: boolean;
+  readonly taps: InputTap[];
   gesture(): void;
   setBlocked(blocked: boolean): void;
   down(action: Action): boolean;
@@ -115,6 +118,8 @@ export interface TrackLikeOptions {
   bpm?: number;
 }
 
+export type MusicLayerName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx';
+
 export interface AudioLike {
   ctx: AudioContext | null;
   muted: boolean;
@@ -148,12 +153,33 @@ export interface AudioLike {
   explode(big?: number): void;
   musicOn: boolean;
   trackMode: boolean;
+  trackCountIn: number;
   startTrack(buffer: AudioBuffer, options?: TrackLikeOptions): void;
   pauseTrack(): void;
   resumeTrack(): void;
   trackPos(): number;
   songTime(): number;
   drum(kind: string, t: number): void;
+  startReference(reference: ReferenceMusic): void;
+  pauseMusic(): void;
+  resumeMusic(): void;
+  musicBpm(): number;
+  musicBeat(): number;
+  musicBar(): number;
+  musicStep(): number;
+  musicPhrase(): number;
+  musicTransportTime(): number;
+  updateMusicState(dt: number): void;
+  setMusicState(state: Partial<MusicState>): void;
+  getMusicState(): MusicState;
+  getMusicTargetState(): MusicState;
+  resetMusicState(): void;
+  musicEvent(type: GameMusicEventName, strength?: number, value?: number): void;
+  setAdaptiveEnabled(enabled: boolean): void;
+  isAdaptiveEnabled(): boolean;
+  musicSection(): MusicalSection;
+  setMusicLayerPresence(layer: MusicLayerName, value: number): void;
+  setMusicLayerBrightness(layer: MusicLayerName, value: number): void;
 }
 
 export interface SettingsLike {
@@ -212,4 +238,5 @@ export interface EngineLike {
   readonly screenFilters: ScreenFilters;
   setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void;
   setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void;
+  showError(message: unknown): void;
 }

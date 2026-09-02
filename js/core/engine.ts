@@ -350,8 +350,8 @@ export class Engine implements EngineLike {
       const fx = app?.fx;
       let simulationDt = fx ? fx.consume(STEP) : STEP;
       if (this.hiddenPause) simulationDt = 0;
-      if (app) {
-        if (simulationDt > 0) {
+      if (simulationDt > 0) {
+        if (app) {
           try {
             app.update(simulationDt);
           } catch (error) {
@@ -364,12 +364,19 @@ export class Engine implements EngineLike {
               this.showError(error);
             }
           }
+        }
+        try {
+          this.audio.updateMusicState(simulationDt);
+        } catch (error) {
+          this.showError(error);
+        }
+        if (app) {
           // On ne consomme les frappes que quand la simulation a réellement tourné :
           // un frame sans pas ou un hitstop ne doit pas manger les boutons.
           this.input.clearEdges();
         }
-        if (fx) fx.cosmetic(STEP);
       }
+      if (fx) fx.cosmetic(STEP);
     }
 
     this.render();

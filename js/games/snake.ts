@@ -109,6 +109,8 @@ export class SnakeGame extends BaseGame {
     if (f.gold) { pts *= 5; this.audio.perfect(); this.fx.shake(0.12); }
     else this.audio.coin(this.coinStep);
     this.score += pts;
+    this.musicEvent('combo', Math.min(1.2, 0.35 + this.eaten * 0.025));
+    if (f.gold) this.musicEvent('powerUp', 0.85);
     const x = this.px(f.x), y = this.px(f.y);
     this.fx.burst(x, y, { n: f.gold ? 22 : 12, speed: [60, 300], colors: f.gold ? ['#ffd166', '#fde047', '#ffffff'] : ['#fde047', '#ffffff'], life: 0.5 });
     this.fx.ring(x, y, { r0: 6, r1: f.gold ? 84 : 46, color: f.gold ? '#ffd166' : '#fde047', life: 0.32 });
@@ -225,6 +227,9 @@ export class SnakeGame extends BaseGame {
     UI.grid(ctx, { gap: 40, alpha: 0.05 });
 
     // murs mortels
+    ctx.strokeStyle = this.accent + '14';
+    ctx.lineWidth = 8;
+    ctx.strokeRect(5, 5, 1270, 710);
     ctx.strokeStyle = this.accent + '30';
     ctx.lineWidth = 2;
     ctx.strokeRect(1, 1, 1278, 718);
@@ -277,8 +282,17 @@ export class SnakeGame extends BaseGame {
     this.fx.drawWorld(ctx);
     this.fx.endWorld(ctx);
 
-    UI.drawHUD(ctx, { accent: this.accent, score: this.score, unit: this.meta.unit });
+    UI.drawHUD(ctx, {
+      accent: this.accent,
+      score: this.score,
+      unit: this.meta.unit,
+      extra: () => {
+        UI.txt(ctx, 'LONGUEUR ' + this.cells.length, 28, 70, { size: 12, mono: true, color: '#7c8698' });
+        if (this.chainT > 0 && this.coinStep > 1) {
+          UI.txt(ctx, 'CHAÎNE ×' + this.coinStep, 28, 90, { size: 13, mono: true, color: '#ffd166' });
+        }
+      },
+    });
     this.drawCommon(ctx);
   }
 }
-

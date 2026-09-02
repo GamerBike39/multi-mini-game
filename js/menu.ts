@@ -9,6 +9,7 @@ import { Fx } from './core/fx';
 import { Blob } from './core/blob';
 import { Demo } from './demos';
 import * as UI from './core/ui';
+import { MenuMusicAdapter } from './core/music/game-adapter';
 import type { GameConstructor, GameMeta, InputLike, EngineLike, AudioLike } from './core/types';
 
 // Grille (vue globale).
@@ -64,6 +65,7 @@ export class Menu {
   readonly games: GameConstructor[];
   readonly input: InputLike;
   readonly audio: AudioLike;
+  readonly musicAdapter: MenuMusicAdapter;
   readonly fx: Fx;
   accent = '#7dd3fc';
   sel = 0;
@@ -92,6 +94,7 @@ export class Menu {
     this.games = games;
     this.input = engine.input;
     this.audio = engine.audio;
+    this.musicAdapter = new MenuMusicAdapter(this.audio);
     this.fx = new Fx();
     this.demo = new Demo(games[0].meta.id, games[0].meta.accent);
     this.blob = new Blob({ x: 0, y: 0, r: 13, color: '#7dd3fc' });
@@ -100,8 +103,8 @@ export class Menu {
     }
   }
 
-  enter(): void { this.audio.startMusic('menu'); }
-  exit(): void { this.audio.stopMusic(); }
+  enter(): void { this.musicAdapter.start(); }
+  exit(): void { this.musicAdapter.stop(); }
 
   // ---------- navigation ----------
   move(delta: number): void {
@@ -269,6 +272,7 @@ export class Menu {
   // ---------- update ----------
   update(dt: number): void {
     this.t += dt;
+    this.musicAdapter.update(dt);
     this.viewT = Math.min(1, this.viewT + dt / VIEW_T);
     this.viewNoticeT = Math.max(0, this.viewNoticeT - dt);
     const input = this.input;

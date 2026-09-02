@@ -25,10 +25,8 @@ la tester localement.
 
 `npm run typecheck` vérifie l'ensemble des modules TypeScript sans générer de
 fichiers. La migration applicative est terminée : le moteur, l'audio, les
-réglages, l'UI commune, les démos et les mini-jeux sont en TypeScript. Exception
-volontaire : `js/games/rhythm.js` reste temporairement en JavaScript pour sa
-prochaine refonte ; son contrat d'intégration est documenté dans
-`js/games/rhythm.d.ts`.
+réglages, l'UI commune, les démos et les mini-jeux, y compris Rhythm, sont en
+TypeScript.
 
 ## Héberger sur Vercel
 
@@ -79,6 +77,19 @@ manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la ré
 (`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160) et aux filtres CRT
 et bruit avec intensités réglables.
 
+Validation musicale : la route `/music-test` permet d'écouter les références
+déterministes Shooter, Survival et Fish, de mettre le transport en pause, de
+désactiver temporairement chaque couche, puis de comparer la référence fixe au
+premier mode adaptatif. Le mode manuel expose les neuf axes `MusicState` ; `Y`
+active la navigation dans ces axes, `← →` les règle, `LB` active l'adaptation et
+`RB` réinitialise l'état.
+
+En jeu, le menu et les mini-jeux passent par le même adaptateur musical : il
+traduit leur état et leurs événements (vagues, combos, prises, near-miss, etc.)
+en `MusicState` et laisse le directeur adaptatif piloter les couches existantes.
+Les références exactes sont utilisées par Survival, Shooter et Fish ; les autres
+jeux conservent leurs compositions générées sur ce même rack.
+
 Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en pause ou la
 reprennent ; l'item « Quitter » permet de revenir au hub.
 
@@ -101,8 +112,8 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
-js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish (TypeScript)
-js/games/   rhythm.js + rhythm.d.ts (exception temporaire, refonte à venir)
+js/core/music/ transport, références, état manuel, direction adaptative et adaptateurs de jeu (TypeScript)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm (TypeScript)
 js/main.ts  point d'entrée navigateur
 js/menu.ts  hub (fiche plein écran + grille globale)
 js/demos.ts démos simulées (attract mode) de la fiche
