@@ -173,7 +173,7 @@ export class Engine implements EngineLike {
   private faulted = false;
   private resolutionWarning = false;
   private fpsSmoothing = 60;
-  private lastRenderTime = 0;
+  private lastFrameTimestamp = 0;
   private lastReplay: ReplayTrace | null = null;
   private recording: ReplayRecorder | null = null;
 
@@ -769,10 +769,13 @@ export class Engine implements EngineLike {
   }
 
   tick(timestamp: number): void {
+    const frameIntervalMs = this.lastFrameTimestamp > 0
+      ? Math.max(0, timestamp - this.lastFrameTimestamp)
+      : 1000 / 60;
+    this.lastFrameTimestamp = timestamp;
     const now = timestamp / 1000;
-    let dt = now - this.lastTs;
+    let dt = Math.max(0, now - this.lastTs);
     this.lastTs = now;
-    const frameStart = performance.now();
     this.dev.beginFrame();
     this.input.poll();
     let updateMs = 0;
@@ -856,7 +859,9 @@ export class Engine implements EngineLike {
     this.metrics.droppedSteps = result.droppedSteps;
     this.metrics.accumulator = result.accumulator;
     this.metrics.updateMs = updateMs;
-    this.metrics.frameMs = Math.max(0, performance.now() - frameStart);
+    // FRAME mesure le rythme de présentation réel, pas le temps CPU du tick.
+    // Les coûts CPU restent détaillés dans UPDATE, RENDER et PRESENT.
+    this.metrics.frameMs = frameIntervalMs;
     this.metrics.fps = this.fpsSmoothing;
     this.dev.count('steps', result.steps);
     this.dev.count('drops', result.droppedSteps);
@@ -866,8 +871,8 @@ export class Engine implements EngineLike {
     this.collectDevCounters();
     this.metrics.appId = this.appName();
     this.render(timestamp / 1000);
-    const frameMs = Math.max(0.001, performance.now() - frameStart);
-    this.fpsSmoothing += (1000 / frameMs - this.fpsSmoothing) * 0.08;
+    const observedFps = 1000 / Math.max(0.1, frameIntervalMs);
+    this.fpsSmoothing += (observedFps - this.fpsSmoothing) * 0.08;
     this.metrics.fps = this.fpsSmoothing;
   }
 

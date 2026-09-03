@@ -1,0 +1,23 @@
+BLOB BREAKER — PACK 03 HUD V1
+
+Format
+- PNG RGBA transparent
+- 128 × 128 px
+- Cible d'affichage recommandée : 32 à 48 px
+
+Assets
+hud_life.png
+hud_multiball.png
+hud_laser.png
+hud_glue.png
+hud_flame.png
+hud_giant.png
+hud_slow.png
+hud_freeze.png
+hud_pause.png  (bonus UI)
+
+Usage
+- Ne pas recolorer automatiquement les glyphes : leur couleur aide à distinguer rapidement les états actifs.
+- Les durées / jauges / cooldowns restent dessinés par le HUD en Canvas.
+- Ne pas ajouter de texte dans les PNG.
+- Pour un état inactif, préférer alpha réduit / désaturation en Canvas plutôt qu'un second asset.
