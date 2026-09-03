@@ -1,11 +1,12 @@
 // BLOB BREAKER — casse-briques : paddle-blob en bas, balle-blob qui rebondit,
 // motifs paramétriques, tuiles à réaction, pouvoirs combinables et combo.
-// Tout est dessiné au canvas, tous les sons sont synthétisés.
+// Tout est dessiné au canvas ; les sons disposent d'un fallback synthétisé et
+// de points de remplacement par samples quand les MP3 seront disponibles.
 
 import { BaseGame } from '../core/game';
 import { Blob } from '../core/blob';
 import * as UI from '../core/ui';
-import type { EngineLike, GameMeta } from '../core/types';
+import type { EngineLike, GameMeta, SampleLikeOptions } from '../core/types';
 import { ObjectPool } from '../core/pool';
 
 const WALL = 20;             // marge de jeu (murs latéraux + plafond)
@@ -23,14 +24,34 @@ const GRENADE_SAMPLE_URL = new URL(
   '../../assets/breaker/sound/grenade-explosion-sfx-medium-sized-meaty-realistic-trimmed.mp3',
   import.meta.url,
 ).href;
+
+const BREAKER_SFX_KEYS = {
+  brickNormal: 'breaker.brick.normal',
+  brickReinforced: 'breaker.brick.reinforced',
+  brickExplosive: 'breaker.brick.explosive',
+  brickGravity: 'breaker.brick.gravity',
+  wall: 'breaker.obstacle.wall',
+  bumper: 'breaker.obstacle.bumper',
+  moving: 'breaker.obstacle.moving',
+  rebound: 'breaker.rebound',
+  death: 'breaker.player.death',
+  failure: 'breaker.player.failure',
+  gameOver: 'breaker.player.game-over',
+} as const;
+type BreakerSfxName = keyof typeof BREAKER_SFX_KEYS;
+
+// Les fichiers seront ajoutés au fur et à mesure. Une entrée ici suffit pour
+// basculer automatiquement du fallback synthétique vers le sample, sans
+// toucher aux collisions ni au déroulé du gameplay.
+const BREAKER_SFX_SAMPLE_URLS: Partial<Record<BreakerSfxName, string>> = {};
 const PTS = [50, 40, 30, 20, 15, 10];
 const PAL = ['#fb7185', '#f472b6', '#c084fc', '#818cf8', '#38bdf8', '#34d399'];
 const PALD = ['#6b2434', '#66284a', '#4a2a63', '#333a6b', '#1c4a66', '#1a5a42']; // teintes sombres (brique abîmée)
 type DropKind = 'MULTI' | 'LARGE' | 'SLOW' | 'LASER' | 'GLUE' | 'FLAME' | 'GIANT' | 'SMALL';
 type BrickKind = 'normal' | 'reinforced' | 'gravity' | 'explosive';
 type PatternKind = 'grid' | 'diamond' | 'cross' | 'flower' | 'wave' | 'ring' | 'checker' | 'spiral' | 'arches';
-type ObstacleKind = 'wall' | 'bumper';
-type BreakerLabMode = 'readability' | 'wall' | 'corridor' | 'bumper' | 'billiard' | 'chain';
+type ObstacleKind = 'wall' | 'bumper' | 'moving';
+type BreakerLabMode = 'readability' | 'wall' | 'corridor' | 'bumper' | 'billiard' | 'chain' | 'moving';
 
 interface CollisionHit {
   nx: number;
@@ -59,11 +80,30 @@ interface BreakerBumper {
   pulseT: number;
 }
 
-type BreakerObstacle = BreakerWall | BreakerBumper;
+interface BreakerMoving {
+  id: number;
+  kind: 'moving';
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  baseX: number;
+  baseY: number;
+  axis: 'x' | 'y';
+  range: number;
+  frequency: number;
+  phase: number;
+  vx: number;
+  vy: number;
+  pulseT: number;
+}
+
+type BreakerObstacle = BreakerWall | BreakerBumper | BreakerMoving;
 
 interface BreakerLabStats {
   wallHits: number;
   bumperHits: number;
+  movingHits: number;
   bumperToBrick: number;
   bumperToExplosive: number;
   maxCombo: number;
@@ -304,6 +344,21 @@ const reflectVelocity = (ball: any, hit: CollisionHit): number => {
   return dot;
 };
 
+// Même réflexion, mais dans le référentiel d'un obstacle mobile. Cela permet
+// au Moving de transmettre une petite partie de son élan à la balle au lieu
+// de se comporter comme un mur statique qui aurait simplement changé de
+// position.
+const reflectVelocityRelative = (ball: any, hit: CollisionHit, surfaceVx = 0, surfaceVy = 0): number => {
+  const relativeVx = ball.vx - surfaceVx;
+  const relativeVy = ball.vy - surfaceVy;
+  const dot = relativeVx * hit.nx + relativeVy * hit.ny;
+  if (dot < 0) {
+    ball.vx = relativeVx - 2 * dot * hit.nx + surfaceVx;
+    ball.vy = relativeVy - 2 * dot * hit.ny + surfaceVy;
+  }
+  return dot;
+};
+
 const DCOL: Record<DropKind, string> = {
   MULTI: '#7dd3fc', LARGE: '#34d399', SLOW: '#c084fc',
   LASER: '#ff4d9d', GLUE: '#a78bfa', FLAME: '#ff8a34',
@@ -339,14 +394,24 @@ const BREAKER_HUD_URL: Record<string, string> = {
   FREEZE: new URL('../../assets/breaker/HUD/hud_freeze.png', import.meta.url).href,
 };
 
+// LARGE et SMALL n'ont pas encore de PNG HUD dédié : leur icône de drop est
+// réutilisée dans le statut compact au lieu de retomber sur une simple pastille.
+const BREAKER_POWER_ICON_URL: Record<string, string> = {
+  ...BREAKER_HUD_URL,
+  LARGE: BREAKER_BONUS_URL.LARGE,
+  SMALL: BREAKER_BONUS_URL.SMALL,
+};
+
 const BREAKER_GAMEPLAY_URL = {
-  paddle: new URL('../../assets/breaker/Nouveau dossier/basic-border.webp', import.meta.url).href,
-  wall: new URL('../../assets/breaker/Nouveau dossier/wall.webp', import.meta.url).href,
-  bumperOuter: new URL('../../assets/breaker/Nouveau dossier/bumper_out.webp', import.meta.url).href,
-  bumperInner: new URL('../../assets/breaker/Nouveau dossier/bumperèin.webp', import.meta.url).href,
-  reinforced: new URL('../../assets/breaker/Nouveau dossier/renforcer.webp', import.meta.url).href,
-  gravity: new URL('../../assets/breaker/Nouveau dossier/gravity_arrow.webp', import.meta.url).href,
-  explosive: new URL('../../assets/breaker/Nouveau dossier/explode.webp', import.meta.url).href,
+  basic: new URL('../../assets/breaker/briques/basic.webp', import.meta.url).href,
+  paddle: new URL('../../assets/breaker/briques/basic-border.webp', import.meta.url).href,
+  basic2: new URL('../../assets/breaker/briques/basic2.webp', import.meta.url).href,
+  wall: new URL('../../assets/breaker/briques/wall.webp', import.meta.url).href,
+  bumperOuter: new URL('../../assets/breaker/briques/bumper_out.webp', import.meta.url).href,
+  bumperInner: new URL('../../assets/breaker/briques/bumperèin.webp', import.meta.url).href,
+  reinforced: new URL('../../assets/breaker/briques/renforcer.webp', import.meta.url).href,
+  gravity: new URL('../../assets/breaker/briques/gravity_arrow.webp', import.meta.url).href,
+  explosive: new URL('../../assets/breaker/briques/explode.webp', import.meta.url).href,
 } as const;
 
 const breakerImageCache = new Map<string, HTMLImageElement>();
@@ -364,8 +429,16 @@ const breakerImage = (url: string): HTMLImageElement | null => {
 
 const preloadBreakerAssets = (): void => {
   for (const url of Object.values(BREAKER_BONUS_URL)) breakerImage(url);
-  for (const url of Object.values(BREAKER_HUD_URL)) breakerImage(url);
+  for (const url of Object.values(BREAKER_POWER_ICON_URL)) breakerImage(url);
   for (const url of Object.values(BREAKER_GAMEPLAY_URL)) breakerImage(url);
+};
+
+const preloadBreakerAudioSamples = (audio: EngineLike['audio']): void => {
+  if (!audio.loadSample) return;
+  for (const name of Object.keys(BREAKER_SFX_SAMPLE_URLS) as BreakerSfxName[]) {
+    const url = BREAKER_SFX_SAMPLE_URLS[name];
+    if (url) audio.loadSample(BREAKER_SFX_KEYS[name], url);
+  }
 };
 
 interface BreakerDrop {
@@ -427,18 +500,30 @@ export class BreakerGame extends BaseGame {
     this.bricks = [];
     this.obstacles = [] as BreakerObstacle[];
     this.lab = this.readLabMode();
-    this.labStats = { wallHits: 0, bumperHits: 0, bumperToBrick: 0, bumperToExplosive: 0, maxCombo: 0 } as BreakerLabStats;
+    this.labStats = { wallHits: 0, bumperHits: 0, movingHits: 0, bumperToBrick: 0, bumperToExplosive: 0, maxCombo: 0 } as BreakerLabStats;
     this.labContact = null as LabContact | null;
     this.audio.loadSample?.(GRENADE_SAMPLE_KEY, GRENADE_SAMPLE_URL);
+    preloadBreakerAudioSamples(this.audio);
     preloadBreakerAssets();
     this.buildLevel();
+  }
+
+  override over(win = false): void {
+    if (this.state === 'over') return;
+    super.over(win);
+    if (!win) {
+      // La base fournit le choc terminal commun aux jeux ; Breaker ajoute
+      // ensuite sa séquence d'échec puis son vrai signal de Game Over.
+      this.playFailureSfx();
+      this.playGameOverSfx();
+    }
   }
 
   readLabMode(): BreakerLabMode | null {
     const isDev = (import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV === true;
     if (!isDev || typeof window === 'undefined') return null;
     const raw = new URLSearchParams(window.location.search).get('breakerLab');
-    const modes: BreakerLabMode[] = ['readability', 'wall', 'corridor', 'bumper', 'billiard', 'chain'];
+    const modes: BreakerLabMode[] = ['readability', 'wall', 'corridor', 'bumper', 'billiard', 'chain', 'moving'];
     return modes.includes(raw as BreakerLabMode) ? raw as BreakerLabMode : null;
   }
 
@@ -552,7 +637,7 @@ export class BreakerGame extends BaseGame {
 
   buildLabBricks(mode: BreakerLabMode): void {
     const labNames: Record<BreakerLabMode, string> = {
-      readability: 'TYPES', wall: 'WALL', corridor: 'CORRIDOR', bumper: 'BUMPER', billiard: 'BILLIARD', chain: 'CHAIN',
+      readability: 'TYPES', wall: 'WALL', corridor: 'CORRIDOR', bumper: 'BUMPER', billiard: 'BILLIARD', chain: 'CHAIN', moving: 'MOVING',
     };
     this.levelSpec = {
       name: 'LAB · ' + labNames[mode], motif: 'grid', cols: 12, rows: 4,
@@ -596,7 +681,6 @@ export class BreakerGame extends BaseGame {
 
   buildObstacles(): void {
     this.obstacles = [];
-    if (!this.lab || this.lab === 'readability') return;
     let nextId = 1;
     const addWall = (x: number, y: number, w: number, h: number): void => {
       this.obstacles.push({ id: nextId++, kind: 'wall', x, y, w, h });
@@ -604,6 +688,33 @@ export class BreakerGame extends BaseGame {
     const addBumper = (x: number, y: number, r = 30): void => {
       this.obstacles.push({ id: nextId++, kind: 'bumper', x, y, r, boost: 1.22, pulseT: 0 });
     };
+    const addMoving = (
+      x: number, y: number, w: number, h: number,
+      axis: 'x' | 'y', range: number, frequency = 1, phase = 0,
+    ): void => {
+      const moving: BreakerMoving = {
+        id: nextId++, kind: 'moving', x, y, w, h,
+        baseX: x, baseY: y, axis, range, frequency, phase,
+        vx: 0, vy: 0, pulseT: 0,
+      };
+      if (axis === 'x') moving.x = x + Math.sin(phase) * range;
+      else moving.y = y + Math.sin(phase) * range;
+      this.obstacles.push(moving);
+    };
+
+    // Le premier obstacle mobile arrive après l'apprentissage des briques
+    // spéciales. Il reste dans la moitié basse pour garder la lecture de la
+    // structure et la phase de lancement accessibles.
+    if (!this.lab) {
+      if (this.level >= 5) {
+        addMoving(470, 480, 270, 20, 'x', 150, 0.88 + Math.min(0.18, (this.level - 5) * 0.025), 0.35);
+      }
+      if (this.level >= 9) {
+        addMoving(880, 500, 20, 80, 'y', 35, 1.08 + Math.min(0.22, (this.level - 9) * 0.025), 1.15);
+      }
+      return;
+    }
+    if (this.lab === 'readability') return;
 
     if (this.lab === 'wall') {
       addWall(420, 360, 440, 20);
@@ -622,6 +733,11 @@ export class BreakerGame extends BaseGame {
       addWall(905, 205, 20, 330);
       addWall(480, 410, 320, 18);
       addBumper(640, 500, 32);
+    } else if (this.lab === 'moving') {
+      addWall(330, 330, 20, 260);
+      addWall(930, 330, 20, 260);
+      addMoving(500, 360, 260, 20, 'x', 140, 0.92, 0.25);
+      addMoving(620, 460, 20, 100, 'y', 55, 1.18, 1.1);
     }
   }
 
@@ -760,7 +876,7 @@ export class BreakerGame extends BaseGame {
     br.vy = -66 - recoil * 36;
     br.rot = (cellNoise(this.level + 101, Math.round(br.y), Math.round(br.x)) - 0.5) * 0.28;
     this.registerBrickBreak(br, source, !fromExplosion, chainDepth);
-    this.audio.tone({ f: 180, f1: 92, type: 'sawtooth', dur: 0.12, vol: 0.08 });
+    this.playBrickSfx(br, 1.05);
     this.input.rumble(0.2, 0.08);
     this.fx.ring(br.hitX, br.hitY, { r0: 8, r1: 38, color: '#7dd3fc', life: 0.3, width: 2 });
     this.fx.burst(br.hitX, br.hitY, { n: 7, speed: [40, 170], colors: ['#7dd3fc', '#dbeafe'], size: [1.5, 3], life: 0.35, shape: 'sq' });
@@ -937,6 +1053,7 @@ export class BreakerGame extends BaseGame {
       } else {
         this.setBrickImpact(other, { x: cx, y: cy });
         other.hp = 0;
+        this.playBrickSfx(other, 0.55);
         this.registerBrickBreak(other, undefined, false, item.depth + 1);
       }
     }
@@ -1044,7 +1161,7 @@ export class BreakerGame extends BaseGame {
     if (br.hp > 0) {
       // Une brique renforcée garde sa cicatrice au point exact de collision.
       bl?.punch?.(0.15);
-      this.audio.hitEnemy();
+      this.playBrickSfx(br, 0.86);
       this.input.rumble(0.08, 0.04);
       this.fx.burst(br.hitX, br.hitY, { n: 7, speed: [40, 180], colors: [br.color, '#ffffff'], size: [1.5, 3.5], life: 0.35, shape: 'sq' });
       this.fx.ring(br.hitX, br.hitY, { r0: 3, r1: 20, color: br.color, life: 0.18, width: 2 });
@@ -1054,12 +1171,14 @@ export class BreakerGame extends BaseGame {
     if (br.kind === 'explosive') {
       // Un court temps de lecture laisse voir le noyau se charger avant la
       // séquence charge → implosion → nuage.
+      this.playBrickSfx(br, 0.9);
       this.queueExplosion(br, 0, 0.1);
       bl?.punch?.(0.3);
       return;
     }
 
     bl?.punch?.(0.35);
+    this.playBrickSfx(br, br.kind === 'reinforced' ? 1.1 : 1);
     this.registerBrickBreak(br, bl);
   }
 
@@ -1131,12 +1250,118 @@ export class BreakerGame extends BaseGame {
       // Même règle pour la glue : une seule mécanique de collage à la fois.
       this.glueT = Math.max(this.glueT, 12);
     }
-    this.fx.text(px, py - 14, kind, { color: DCOL[kind], size: 20 });
+  }
+
+  playBreakerSample(name: BreakerSfxName, options: SampleLikeOptions = {}): boolean {
+    const key = BREAKER_SFX_KEYS[name];
+    // Tant que le sample n'est pas chargé, le fallback procédural reste actif.
+    // Cela évite un silence au premier contact et permet un remplacement
+    // progressif des sons sans modifier les appels gameplay.
+    if (!BREAKER_SFX_SAMPLE_URLS[name] || !this.audio.playSample || !this.audio.hasSample?.(key)) return false;
+    this.audio.playSample(key, options);
+    return true;
+  }
+
+  playBrickSfx(br: BreakerBrick, strength = 1): void {
+    const sampleName: Record<BrickKind, BreakerSfxName> = {
+      normal: 'brickNormal',
+      reinforced: 'brickReinforced',
+      explosive: 'brickExplosive',
+      gravity: 'brickGravity',
+    };
+    const scale = clampValue(strength, 0.35, 1.2);
+    if (this.playBreakerSample(sampleName[br.kind], { vol: scale })) return;
+
+    const now = this.audio.ctx?.currentTime ?? 0;
+    const variation = (br.animPhase - 0.5) * 2;
+    if (br.kind === 'normal') {
+      this.audio.tone({ f: 340 + variation * 28, f1: 660 + variation * 36, type: 'triangle', t: now, dur: 0.075, vol: 0.11 * scale, attack: 0.003 });
+      this.audio.noise({ t: now, dur: 0.045, f: 1800, f1: 620, type: 'bandpass', q: 1.7, vol: 0.065 * scale });
+    } else if (br.kind === 'reinforced') {
+      // Métal / masse : plus grave, plus long et moins brillant qu'une normale.
+      this.audio.tone({ f: 154 + variation * 16, f1: 76, type: 'sawtooth', t: now, dur: 0.16, vol: 0.15 * scale, attack: 0.004 });
+      this.audio.noise({ t: now, dur: 0.18, f: 720, f1: 120, type: 'lowpass', q: 0.8, vol: 0.16 * scale });
+      this.audio.tone({ f: 430 + variation * 24, f1: 260, type: 'triangle', t: now + 0.012, dur: 0.12, vol: 0.08 * scale, attack: 0.002 });
+    } else if (br.kind === 'explosive') {
+      // Pré-détonation : le vrai impact est joué par la composition grenade.
+      this.audio.noise({ t: now, dur: 0.2, f: 340, f1: 58, type: 'lowpass', q: 0.7, vol: 0.16 * scale });
+      this.audio.tone({ f: 128, f1: 52, type: 'sawtooth', t: now, dur: 0.2, vol: 0.13 * scale, attack: 0.01 });
+    } else {
+      // Gravité : descente de fréquence et souffle court qui annoncent le
+      // passage de cible à élément mobile.
+      this.audio.tone({ f: 520 + variation * 35, f1: 150, type: 'sine', t: now, dur: 0.18, vol: 0.12 * scale, attack: 0.004 });
+      this.audio.noise({ t: now, dur: 0.18, f: 1100, f1: 260, type: 'bandpass', q: 1.2, vol: 0.09 * scale });
+    }
+  }
+
+  playWallSfx(strength = 1): void {
+    const scale = clampValue(strength, 0.35, 1.1);
+    if (this.playBreakerSample('wall', { vol: scale })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    // Le rebond doit percer le mix : attaque aiguë lisible, clic de contact,
+    // puis un petit corps grave pour que le mur reste physique.
+    this.audio.tone({ f: 680, f1: 260, type: 'triangle', t: now, dur: 0.1, vol: 0.22 * scale, attack: 0.002 });
+    this.audio.tone({ f: 1080, f1: 420, type: 'square', t: now + 0.006, dur: 0.055, vol: 0.12 * scale, attack: 0.001 });
+    this.audio.noise({ t: now, dur: 0.06, f: 2600, f1: 650, type: 'bandpass', q: 1.7, vol: 0.14 * scale });
+    this.audio.tone({ f: 160, f1: 60, type: 'sine', t: now + 0.008, dur: 0.15, vol: 0.16 * scale, attack: 0.003 });
+  }
+
+  playMovingSfx(strength = 1): void {
+    const scale = clampValue(strength, 0.35, 1.15);
+    if (this.playBreakerSample('moving', { vol: scale })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    // Impact plus petit et plus mécanique que le bumper, avec un bref glissé
+    // métallique qui rappelle que la surface était en mouvement.
+    this.audio.tone({ f: 118, f1: 360, type: 'triangle', t: now, dur: 0.12, vol: 0.14 * scale, attack: 0.002 });
+    this.audio.tone({ f: 620, f1: 180, type: 'square', t: now + 0.008, dur: 0.07, vol: 0.095 * scale, attack: 0.001 });
+    this.audio.noise({ t: now, dur: 0.13, f: 1500, f1: 300, type: 'bandpass', q: 1.4, vol: 0.1 * scale });
+  }
+
+  playBumperSfx(strength = 1): void {
+    const scale = clampValue(strength, 0.35, 1.15);
+    if (this.playBreakerSample('bumper', { vol: scale })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    this.audio.tone({ f: 220, f1: 780, type: 'triangle', t: now, dur: 0.14, vol: 0.12 * scale, attack: 0.003 });
+    this.audio.tone({ f: 440, f1: 1040, type: 'sine', t: now + 0.035, dur: 0.11, vol: 0.08 * scale, attack: 0.002 });
+    this.audio.noise({ t: now, dur: 0.09, f: 1700, f1: 560, type: 'bandpass', q: 1.6, vol: 0.08 * scale });
+  }
+
+  playReboundSfx(strength = 1): void {
+    const scale = clampValue(strength, 0.35, 1.1);
+    if (this.playBreakerSample('rebound', { vol: scale })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    this.audio.tone({ f: 190, f1: 370, type: 'sine', t: now, dur: 0.08, vol: 0.08 * scale, attack: 0.002 });
+    this.audio.noise({ t: now, dur: 0.06, f: 1400, f1: 420, type: 'bandpass', q: 1.4, vol: 0.05 * scale });
+  }
+
+  playDeathSfx(): void {
+    if (this.playBreakerSample('death', { vol: 0.9 })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    this.audio.tone({ f: 320, f1: 70, type: 'sawtooth', t: now, dur: 0.38, vol: 0.23, attack: 0.006 });
+    this.audio.noise({ t: now, dur: 0.36, f: 780, f1: 120, type: 'lowpass', q: 0.8, vol: 0.2 });
+    this.audio.tone({ f: 74, f1: 34, type: 'sine', t: now + 0.04, dur: 0.5, vol: 0.16, attack: 0.01 });
+  }
+
+  playFailureSfx(): void {
+    if (this.playBreakerSample('failure', { vol: 0.95 })) return;
+    const now = this.audio.ctx?.currentTime ?? 0;
+    this.audio.tone({ f: 250, f1: 48, type: 'sawtooth', t: now, dur: 0.7, vol: 0.2, attack: 0.012 });
+    this.audio.tone({ f: 178, f1: 42, type: 'triangle', t: now + 0.12, dur: 0.82, vol: 0.2, attack: 0.018 });
+    this.audio.noise({ t: now + 0.08, dur: 0.62, f: 460, f1: 70, type: 'lowpass', q: 0.8, vol: 0.13 });
+  }
+
+  playGameOverSfx(): void {
+    const now = this.audio.ctx?.currentTime ?? 0;
+    const start = now + 0.18;
+    if (this.playBreakerSample('gameOver', { t: start, vol: 1 })) return;
+    this.audio.tone({ f: 112, f1: 32, type: 'sine', t: start, dur: 0.95, vol: 0.3, attack: 0.018 });
+    this.audio.tone({ f: 224, f1: 56, type: 'triangle', t: start, dur: 0.58, vol: 0.12, attack: 0.008 });
+    this.audio.noise({ t: start + 0.02, dur: 0.8, f: 320, f1: 48, type: 'lowpass', q: 0.75, vol: 0.18 });
   }
 
   wallHit(bl: any): void {
     bl.punch(0.1);
-    this.audio.tone({ f: 190, dur: 0.03, vol: 0.05, type: 'sine' });
+    this.playWallSfx(0.8);
   }
 
   bumperChaosAngle(x: number, y: number, bumperId: number, sampleTime = this.time): number {
@@ -1165,6 +1390,33 @@ export class BreakerGame extends BaseGame {
       if (this.lab) this.labStats.wallHits++;
     }
     if (this.lab) this.labContact = { x: hit.contactX, y: hit.contactY, nx: hit.nx, ny: hit.ny, t: 0.35 };
+    return true;
+  }
+
+  resolveMoving(bl: any, moving: BreakerMoving): boolean {
+    const hit = circleVsAabb(bl.x, bl.y, bl.r, moving.x, moving.y, moving.w, moving.h, WALL_COLLISION_PADDING);
+    if (!hit) return false;
+    bl.x += hit.nx * Math.max(hit.penetration, 0.5);
+    bl.y += hit.ny * Math.max(hit.penetration, 0.5);
+    const sameObstacle = bl.lastMovingId === moving.id && (bl.lastMovingT || 0) > 0;
+    const dot = reflectVelocityRelative(bl, hit, moving.vx, moving.vy);
+    // La séparation peut durer une frame lorsque l'obstacle rejoint la balle.
+    // On évite alors de doubler le feedback tout en conservant la correction
+    // de position qui empêche la balle de rester dans la géométrie.
+    if (sameObstacle || dot >= 0) return true;
+
+    moving.pulseT = 0.24;
+    bl.lastMovingId = moving.id;
+    bl.lastMovingT = 0.08;
+    bl.punch(0.18);
+    this.playMovingSfx();
+    this.input.rumble(0.16, 0.06);
+    this.fx.ring(hit.contactX, hit.contactY, { r0: 4, r1: 26, color: '#facc15', life: 0.24, width: 2 });
+    this.fx.burst(hit.contactX, hit.contactY, { n: 6, speed: [35, 170], colors: ['#facc15', '#fff7cc', '#ffffff'], size: [1.2, 2.8], life: 0.3, shape: 'spark' });
+    if (this.lab) {
+      this.labStats.movingHits++;
+      this.labContact = { x: hit.contactX, y: hit.contactY, nx: hit.nx, ny: hit.ny, t: 0.35 };
+    }
     return true;
   }
 
@@ -1201,7 +1453,7 @@ export class BreakerGame extends BaseGame {
     bl.lastBumperActionT = 1.5;
     bumper.pulseT = 0.25;
     bl.punch(0.28);
-    this.audio.tone({ f: 430, f1: 860, type: 'triangle', dur: 0.11, vol: 0.1 });
+    this.playBumperSfx();
     this.input.rumble(0.2, 0.07);
     this.fx.ring(bumper.x, bumper.y, { r0: bumper.r * 0.75, r1: bumper.r + 42, color: '#ffd166', life: 0.28, width: 3 });
     this.fx.burst(hit.contactX, hit.contactY, { n: 8, speed: [50, 220], colors: ['#ffd166', '#ffffff', '#fef3c7'], size: [1.5, 3], life: 0.35, shape: 'spark' });
@@ -1215,6 +1467,17 @@ export class BreakerGame extends BaseGame {
   updateObstacles(dt: number): void {
     for (const obstacle of this.obstacles as BreakerObstacle[]) {
       if (obstacle.kind === 'bumper') obstacle.pulseT = Math.max(0, obstacle.pulseT - dt);
+      else if (obstacle.kind === 'moving') {
+        const previousX = obstacle.x;
+        const previousY = obstacle.y;
+        const phase = this.time * obstacle.frequency + obstacle.phase;
+        if (obstacle.axis === 'x') obstacle.x = obstacle.baseX + Math.sin(phase) * obstacle.range;
+        else obstacle.y = obstacle.baseY + Math.sin(phase) * obstacle.range;
+        const safeDt = Math.max(dt, 1 / 120);
+        obstacle.vx = (obstacle.x - previousX) / safeDt;
+        obstacle.vy = (obstacle.y - previousY) / safeDt;
+        obstacle.pulseT = Math.max(0, obstacle.pulseT - dt);
+      }
     }
     if (this.labContact) {
       this.labContact.t -= dt;
@@ -1225,7 +1488,8 @@ export class BreakerGame extends BaseGame {
   resolveObstacles(bl: any): void {
     for (const obstacle of this.obstacles as BreakerObstacle[]) {
       if (obstacle.kind === 'wall') this.resolveWall(bl, obstacle);
-      else this.resolveBumper(bl, obstacle);
+      else if (obstacle.kind === 'bumper') this.resolveBumper(bl, obstacle);
+      else this.resolveMoving(bl, obstacle);
     }
   }
 
@@ -1247,11 +1511,12 @@ export class BreakerGame extends BaseGame {
         continue;
       }
       for (const obstacle of this.obstacles as BreakerObstacle[]) {
-        if (obstacle.kind !== 'wall') continue;
+        if (obstacle.kind === 'bumper') continue;
         const hit = circleVsAabb(laser.x, laser.y, laser.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h, WALL_COLLISION_PADDING);
         if (!hit) continue;
         laser.dead = true;
-        this.audio.tone({ f: 260, f1: 150, type: 'square', dur: 0.045, vol: 0.045 });
+        if (obstacle.kind === 'moving') this.playMovingSfx(0.45);
+        else this.playWallSfx(0.45);
         this.fx.burst(hit.contactX, hit.contactY, { n: 4, speed: [30, 120], colors: ['#cbd5e1', '#ffb6de'], size: [1, 2.2], life: 0.22, shape: 'spark' });
         break;
       }
@@ -1328,6 +1593,7 @@ export class BreakerGame extends BaseGame {
       bl.lastBrickT = Math.max(0, (bl.lastBrickT || 0) - dt);
       bl.lastBumperT = Math.max(0, (bl.lastBumperT || 0) - dt);
       bl.lastBumperActionT = Math.max(0, (bl.lastBumperActionT || 0) - dt);
+      bl.lastMovingT = Math.max(0, (bl.lastMovingT || 0) - dt);
       bl.bumperBoostT = Math.max(0, (bl.bumperBoostT || 0) - dt);
       if (this.stuck && bl === this.balls[0]) {
         bl.x = pad.x; bl.y = PAD_Y - 9 - bl.r - 4;
@@ -1361,7 +1627,7 @@ export class BreakerGame extends BaseGame {
             bl.vx = pad.vx * 0.5;
             bl.vy = 0;
             bl.punch(0.2);
-            this.audio.tone({ f: 340, f1: 520, type: 'sine', dur: 0.12, vol: 0.08 });
+            this.playReboundSfx(0.75);
             this.input.rumble(0.16, 0.08);
             this.fx.ring(bl.x, PAD_Y - 10, { r0: 7, r1: 32, color: DCOL.GLUE, life: 0.28, width: 2 });
           } else {
@@ -1369,7 +1635,7 @@ export class BreakerGame extends BaseGame {
             bl.vx = Math.sin(a) * paddleSpeed;
             bl.vy = -Math.cos(a) * paddleSpeed;
             bl.punch(0.25);
-            this.audio.land();
+            this.playReboundSfx();
             this.fx.burst(bl.x, PAD_Y - 10, { n: 6, speed: [40, 180], colors: [this.accent, '#ffffff'], size: [1.5, 3], life: 0.3, ang: -Math.PI / 2, spread: 1.4 });
           }
         }
@@ -1422,7 +1688,7 @@ export class BreakerGame extends BaseGame {
     if (this.balls.length === 0) {
       this.lives--;
       this.musicEvent('playerHit', 0.8);
-      this.audio.hurt();
+      this.playDeathSfx();
       this.fx.shake(0.4);
       if (this.lives <= 0) { this.over(); return; }
       this.resetBall();
@@ -1493,6 +1759,30 @@ export class BreakerGame extends BaseGame {
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
     UI.roundRect(ctx, ox + 5, oy + 4, Math.max(4, br.w - 10), Math.max(2, Math.min(5, br.h * 0.25)), 2.5);
     ctx.fill();
+
+    if (!isGravity && !isExplosive && br.maxHp <= 1) {
+      const imageUrl = (Math.round((br.x + br.y) / 10) % 2 === 0)
+        ? BREAKER_GAMEPLAY_URL.basic
+        : BREAKER_GAMEPLAY_URL.basic2;
+      const image = breakerImage(imageUrl);
+      if (image) {
+        // Les deux variantes basic donnent une matière glossy cohérente sans
+        // perdre la couleur du niveau ni la lecture de la grille.
+        ctx.save();
+        UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+        ctx.clip();
+        const skinX = ox - br.w * 0.06, skinY = oy - br.h * 0.16;
+        const skinW = br.w * 1.12, skinH = br.h * 1.32;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.48;
+        ctx.drawImage(image, skinX, skinY, skinW, skinH);
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.64;
+        ctx.fillStyle = body;
+        ctx.fillRect(skinX, skinY, skinW, skinH);
+        ctx.restore();
+      }
+    }
 
     // Un filet sombre détache la silhouette des tuiles quand leur taille
     // diminue, puis un liseré clair garde la matière lisible sur le fond.
@@ -1856,20 +2146,6 @@ export class BreakerGame extends BaseGame {
 
   drawWall(ctx: CanvasRenderingContext2D, wall: BreakerWall): void {
     ctx.save();
-    // Halo très discret autour de la zone de tolérance : le joueur voit la
-    // présence de l'arête avant que la collision “assistée” ne se déclenche.
-    ctx.strokeStyle = '#94a3b824';
-    ctx.lineWidth = 2;
-    UI.roundRect(
-      ctx,
-      wall.x - WALL_COLLISION_PADDING,
-      wall.y - WALL_COLLISION_PADDING,
-      wall.w + WALL_COLLISION_PADDING * 2,
-      wall.h + WALL_COLLISION_PADDING * 2,
-      Math.min(9, Math.min(wall.w, wall.h) * 0.35),
-    );
-    ctx.stroke();
-
     const image = breakerImage(BREAKER_GAMEPLAY_URL.wall);
     if (image) {
       const vertical = wall.h > wall.w;
@@ -1889,17 +2165,6 @@ export class BreakerGame extends BaseGame {
         ctx.drawImage(image, wall.x, wall.y - visualPad, wall.w, wall.h + visualPad * 2);
       }
       ctx.restore();
-      ctx.strokeStyle = '#e0f2fe66';
-      ctx.lineWidth = 1;
-      UI.roundRect(
-        ctx,
-        wall.x - visualPad * 0.35,
-        wall.y - visualPad * 0.35,
-        wall.w + visualPad * 0.7,
-        wall.h + visualPad * 0.7,
-        Math.min(9, Math.min(wall.w, wall.h) * 0.35),
-      );
-      ctx.stroke();
       ctx.restore();
       return;
     }
@@ -1930,6 +2195,97 @@ export class BreakerGame extends BaseGame {
       ctx.lineTo(wall.x + wall.w - 3, wall.y + wall.h * 0.5);
     }
     ctx.stroke();
+    ctx.restore();
+  }
+
+  drawMoving(ctx: CanvasRenderingContext2D, moving: BreakerMoving): void {
+    const phase = this.time * moving.frequency + moving.phase;
+    const pulse = clampValue(moving.pulseT / 0.24, 0, 1);
+    const centerX = moving.x + moving.w / 2;
+    const centerY = moving.y + moving.h / 2;
+    const pathCenterX = moving.baseX + moving.w / 2;
+    const pathCenterY = moving.baseY + moving.h / 2;
+    const pathStart = pathCenterX - moving.range;
+    const pathEnd = pathCenterX + moving.range;
+    const pathStartY = pathCenterY - moving.range;
+    const pathEndY = pathCenterY + moving.range;
+    const direction = moving.axis === 'x'
+      ? Math.sign(moving.vx || Math.cos(phase))
+      : Math.sign(moving.vy || Math.cos(phase));
+    const arrowDirection = direction || 1;
+    const radius = Math.min(8, Math.min(moving.w, moving.h) * 0.3);
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.strokeStyle = '#facc1538';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    if (moving.axis === 'x') {
+      ctx.moveTo(pathStart, pathCenterY);
+      ctx.lineTo(pathEnd, pathCenterY);
+    } else {
+      ctx.moveTo(pathCenterX, pathStartY);
+      ctx.lineTo(pathCenterX, pathEndY);
+    }
+    ctx.stroke();
+
+    ctx.globalAlpha = 0.5;
+    ctx.fillStyle = '#facc15';
+    if (moving.axis === 'x') {
+      ctx.beginPath(); ctx.arc(pathStart, pathCenterY, 3, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(pathEnd, pathCenterY, 3, 0, 6.2832); ctx.fill();
+    } else {
+      ctx.beginPath(); ctx.arc(pathCenterX, pathStartY, 3, 0, 6.2832); ctx.fill();
+      ctx.beginPath(); ctx.arc(pathCenterX, pathEndY, 3, 0, 6.2832); ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.shadowColor = '#facc15';
+    ctx.shadowBlur = 12 + pulse * 16;
+    UI.roundRect(ctx, moving.x, moving.y, moving.w, moving.h, radius);
+    ctx.fillStyle = '#6b531f';
+    ctx.fill();
+    ctx.shadowBlur = 0;
+
+    const image = breakerImage(BREAKER_GAMEPLAY_URL.wall);
+    if (image) {
+      ctx.save();
+      UI.roundRect(ctx, moving.x, moving.y, moving.w, moving.h, radius);
+      ctx.clip();
+      ctx.globalAlpha = 0.74;
+      ctx.drawImage(image, moving.x, moving.y, moving.w, moving.h);
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.32 + pulse * 0.2;
+      ctx.fillStyle = '#facc15';
+      ctx.fillRect(moving.x, moving.y, moving.w, moving.h);
+      ctx.restore();
+    }
+
+    ctx.globalAlpha = 0.8 + pulse * 0.2;
+    ctx.strokeStyle = '#fff7cc';
+    ctx.lineWidth = 1.5 + pulse * 1.5;
+    UI.roundRect(ctx, moving.x + 1, moving.y + 1, Math.max(2, moving.w - 2), Math.max(2, moving.h - 2), Math.max(2, radius - 1));
+    ctx.stroke();
+    ctx.globalAlpha = 0.9;
+    ctx.fillStyle = '#fff7cc';
+    const arrowSize = Math.min(7, Math.max(3, Math.min(moving.w, moving.h) * 0.28));
+    const arrowCount = moving.axis === 'x' ? Math.max(1, Math.floor(moving.w / 84)) : Math.max(1, Math.floor(moving.h / 84));
+    for (let i = 0; i < arrowCount; i++) {
+      const along = (i + 1) / (arrowCount + 1);
+      const ax = moving.axis === 'x' ? moving.x + moving.w * along : centerX;
+      const ay = moving.axis === 'y' ? moving.y + moving.h * along : centerY;
+      ctx.beginPath();
+      if (moving.axis === 'x') {
+        ctx.moveTo(ax + arrowDirection * arrowSize, ay);
+        ctx.lineTo(ax - arrowDirection * arrowSize, ay - arrowSize * 0.72);
+        ctx.lineTo(ax - arrowDirection * arrowSize, ay + arrowSize * 0.72);
+      } else {
+        ctx.moveTo(ax, ay + arrowDirection * arrowSize);
+        ctx.lineTo(ax - arrowSize * 0.72, ay - arrowDirection * arrowSize);
+        ctx.lineTo(ax + arrowSize * 0.72, ay - arrowDirection * arrowSize);
+      }
+      ctx.closePath(); ctx.fill();
+    }
     ctx.restore();
   }
 
@@ -2006,7 +2362,8 @@ export class BreakerGame extends BaseGame {
   drawObstacles(ctx: CanvasRenderingContext2D): void {
     for (const obstacle of this.obstacles as BreakerObstacle[]) {
       if (obstacle.kind === 'wall') this.drawWall(ctx, obstacle);
-      else this.drawBumper(ctx, obstacle);
+      else if (obstacle.kind === 'bumper') this.drawBumper(ctx, obstacle);
+      else this.drawMoving(ctx, obstacle);
     }
   }
 
@@ -2028,12 +2385,28 @@ export class BreakerGame extends BaseGame {
       else if (x + ball.r > 1280 - WALL) { x = 1280 - WALL - ball.r; vx = -Math.abs(vx); bounces++; }
       if (y - ball.r < WALL) { y = WALL + ball.r; vy = Math.abs(vy); bounces++; }
       for (const obstacle of this.obstacles as BreakerObstacle[]) {
-        const hit = obstacle.kind === 'wall'
-          ? circleVsAabb(x, y, ball.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h, WALL_COLLISION_PADDING)
-          : circleVsCircle(x, y, ball.r, obstacle.x, obstacle.y, obstacle.r, BUMPER_COLLISION_PADDING);
+        const predictionTime = this.time + i * step;
+        let obstacleX = obstacle.x;
+        let obstacleY = obstacle.y;
+        let surfaceVx = 0;
+        let surfaceVy = 0;
+        if (obstacle.kind === 'moving') {
+          const movingPhase = predictionTime * obstacle.frequency + obstacle.phase;
+          if (obstacle.axis === 'x') {
+            obstacleX = obstacle.baseX + Math.sin(movingPhase) * obstacle.range;
+            surfaceVx = Math.cos(movingPhase) * obstacle.range * obstacle.frequency;
+          } else {
+            obstacleY = obstacle.baseY + Math.sin(movingPhase) * obstacle.range;
+            surfaceVy = Math.cos(movingPhase) * obstacle.range * obstacle.frequency;
+          }
+        }
+        const hit = obstacle.kind === 'bumper'
+          ? circleVsCircle(x, y, ball.r, obstacleX, obstacleY, obstacle.r, BUMPER_COLLISION_PADDING)
+          : circleVsAabb(x, y, ball.r, obstacleX, obstacleY, obstacle.w, obstacle.h, WALL_COLLISION_PADDING);
         if (!hit) continue;
         const temp = { vx, vy };
-        reflectVelocity(temp, hit);
+        if (obstacle.kind === 'moving') reflectVelocityRelative(temp, hit, surfaceVx, surfaceVy);
+        else reflectVelocity(temp, hit);
         vx = temp.vx; vy = temp.vy;
         x += hit.nx * Math.max(hit.penetration, 0.5);
         y += hit.ny * Math.max(hit.penetration, 0.5);
@@ -2064,12 +2437,27 @@ export class BreakerGame extends BaseGame {
     ctx.globalCompositeOperation = 'source-over';
     ctx.strokeStyle = '#ffffffaa';
     ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
+    // Les contours de debug restent lisibles mais ne parasitent plus les
+    // textures du Wall avec un effet en pointillés.
+    ctx.setLineDash([]);
     for (const obstacle of this.obstacles as BreakerObstacle[]) {
       if (obstacle.kind === 'wall') {
         ctx.strokeRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
-      } else {
+      } else if (obstacle.kind === 'bumper') {
         ctx.beginPath(); ctx.arc(obstacle.x, obstacle.y, obstacle.r, 0, 6.2832); ctx.stroke();
+      } else {
+        ctx.strokeRect(obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+        ctx.strokeStyle = '#facc15aa';
+        ctx.beginPath();
+        if (obstacle.axis === 'x') {
+          ctx.moveTo(obstacle.baseX + obstacle.w / 2 - obstacle.range, obstacle.baseY + obstacle.h / 2);
+          ctx.lineTo(obstacle.baseX + obstacle.w / 2 + obstacle.range, obstacle.baseY + obstacle.h / 2);
+        } else {
+          ctx.moveTo(obstacle.baseX + obstacle.w / 2, obstacle.baseY + obstacle.h / 2 - obstacle.range);
+          ctx.lineTo(obstacle.baseX + obstacle.w / 2, obstacle.baseY + obstacle.h / 2 + obstacle.range);
+        }
+        ctx.stroke();
+        ctx.strokeStyle = '#ffffffaa';
       }
     }
     for (const ball of this.balls as any[]) {
@@ -2102,6 +2490,7 @@ export class BreakerGame extends BaseGame {
       ['BALLS', String(this.balls.length)],
       ['WALL HITS', String(this.labStats.wallHits)],
       ['BUMPER HITS', String(this.labStats.bumperHits)],
+      ['MOVING HITS', String(this.labStats.movingHits)],
       ['BUMPER → BRICK', String(this.labStats.bumperToBrick)],
       ['BUMPER → EXPLOSIVE', String(this.labStats.bumperToExplosive)],
       ['MAX COMBO', String(this.labStats.maxCombo)],
@@ -2162,37 +2551,30 @@ export class BreakerGame extends BaseGame {
     ctx.translate(pad.x, PAD_Y);
     ctx.scale(1 + sq * 0.1 + Math.sin(this.time * 9) * 0.015, 1 - sq * 0.14 + Math.cos(this.time * 9) * 0.01);
     const paddleColor = this.freezeT > 0 ? '#7dd3fc' : this.accent;
+    // La silhouette principale reste celle du gameplay. Les sprites du pack
+    // ne sont qu'une texture interne clipée : ils ne peuvent plus créer une
+    // seconde enveloppe rectangulaire autour de la planche.
+    ctx.shadowColor = paddleColor;
+    ctx.shadowBlur = 16;
+    UI.roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
+    ctx.fillStyle = paddleColor;
+    ctx.fill();
+    ctx.shadowBlur = 0;
     if (paddleImage) {
-      // Le visuel est un peu plus haut que la hitbox : la planche paraît
-      // matérielle sans rendre les contacts plus difficiles à anticiper.
-      const visualH = 26;
-      ctx.shadowColor = paddleColor;
-      ctx.shadowBlur = 16;
-      ctx.globalAlpha = 0.96;
-      ctx.drawImage(paddleImage, -w / 2, -visualH / 2, w, visualH);
-      // Teinte légère : on garde les reflets blancs du pack tout en faisant
-      // suivre la couleur de l'état actif (freeze ou accent du niveau).
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = paddleColor;
-      ctx.fillRect(-w / 2, -visualH / 2, w, visualH);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = '#ffffff';
-      UI.roundRect(ctx, -w / 2 + 8, -visualH * 0.28, w - 16, 3, 1.5);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    } else {
-      ctx.shadowColor = paddleColor;
-      ctx.shadowBlur = 16;
-      UI.roundRect(ctx, -w / 2, -h / 2, w, h, 9);
-      ctx.fillStyle = paddleColor;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(255,255,255,0.2)';
-      UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 5, 2.5);
-      ctx.fill();
+      const inset = 4;
+      ctx.save();
+      UI.roundRect(ctx, -w / 2 + inset, -h / 2 + 2, w - inset * 2, h - 4, h / 2 - 2);
+      ctx.clip();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.42;
+      ctx.drawImage(paddleImage, -w / 2 + inset, -h / 2 + 2, w - inset * 2, h - 4);
+      ctx.restore();
     }
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = '#ffffff';
+    UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 4, 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
     // yeux qui suivent la balle
     const b0 = this.balls[0];
     const lx = b0 ? Math.max(-1, Math.min(1, (b0.x - pad.x) / 320)) * 2.5 : 0;
@@ -2298,30 +2680,46 @@ export class BreakerGame extends BaseGame {
     if (this.balls.length > 1) powers.push(['MULTI', '×' + this.balls.length, DCOL.MULTI]);
     if (!powers.length) return;
 
-    const columns = powers.length > 4 ? 2 : 1;
+    // Le statut reste lisible sans reprendre la place d'un panneau. Chaque
+    // pouvoir est une petite pastille autonome : l'icône identifie le bonus,
+    // la valeur indique sa durée ou le nombre de balles.
+    const chipW = 76;
+    const chipH = 38;
+    const gap = 6;
+    const columns = Math.min(6, powers.length);
     const rows = Math.ceil(powers.length / columns);
-    const rowHeight = 24;
-    const x = 20, y = 514, w = columns === 2 ? 300 : 224, h = 30 + rows * rowHeight;
-    UI.panel(ctx, x, y, w, h, { radius: 12, fill: '#100d18e8', stroke: '#ffffff22', lineWidth: 1 });
-    UI.txt(ctx, 'POUVOIRS', x + 12, y + 18, { size: 10, mono: true, color: '#8b95a8', weight: 800 });
+    const x = 20;
+    const y = 514;
     powers.forEach(([name, value, color], index) => {
       const column = index % columns;
       const row = Math.floor(index / columns);
-      const cellX = x + column * (w / columns);
-      const py = y + 42 + row * rowHeight;
-      const icon = BREAKER_HUD_URL[name] ? breakerImage(BREAKER_HUD_URL[name]) : null;
+      const chipX = x + column * (chipW + gap);
+      const chipY = y + row * (chipH + gap);
+      UI.panel(ctx, chipX, chipY, chipW, chipH, {
+        radius: 13,
+        fill: '#100d18cf',
+        stroke: color + '88',
+        lineWidth: 1,
+      });
+      const iconUrl = BREAKER_POWER_ICON_URL[name];
+      const icon = iconUrl ? breakerImage(iconUrl) : null;
       if (icon) {
         ctx.globalAlpha = 0.96;
-        ctx.drawImage(icon, cellX + 3, py - 22, 22, 22);
+        ctx.drawImage(icon, chipX + 4, chipY + 4, 30, 30);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(cellX + 14, py - 5, 3, 0, 6.2832);
+        ctx.arc(chipX + 18, chipY + 19, 4, 0, 6.2832);
         ctx.fill();
       }
-      UI.txt(ctx, name, cellX + (icon ? 29 : 24), py, { size: 11, mono: true, color, weight: 800 });
-      UI.txt(ctx, value, cellX + w / columns - 12, py, { size: 11, mono: true, color: '#dce3ee', align: 'right' });
+      UI.txt(ctx, value, chipX + chipW - 5, chipY + 24, {
+        size: 10,
+        mono: true,
+        color: '#e8edf6',
+        align: 'right',
+        weight: 900,
+      });
     });
   }
 

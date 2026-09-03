@@ -205,11 +205,13 @@ DEV only :
 ?breakerLab=bumper
 ?breakerLab=billiard
 ?breakerLab=chain
+?breakerLab=moving
 ```
 
 ## Étape 4.2 — layouts
 Créer des builders explicites.
-Ne pas injecter ces layouts dans la progression normale.
+Le layout `moving` reste un banc de test ; l'obstacle Moving de la progression
+normale est ajouté séparément à partir du niveau 5.
 
 ## Étape 4.3 — debug draw
 Ajouter :
@@ -223,6 +225,7 @@ Ajouter :
 Ajouter :
 - wallHits ;
 - bumperHits ;
+- movingHits ;
 - bumperToBrick ;
 - bumperToExplosive ;
 - maxCombo.
@@ -235,9 +238,53 @@ Ajouter :
 
 ---
 
-# LOT 5 — Tuning / décision
+# LOT 5 — Moving
 
-Aucun nouvel objet.
+## Étape 5.1 — mouvement paramétrique
+
+Ajouter un obstacle AABB `Moving` avec :
+
+- axe `x` ou `y` ;
+- amplitude ;
+- fréquence ;
+- phase déterministe ;
+- vitesse de surface calculée à chaque frame.
+
+La position est mise à jour avant la boucle des balles. Le rendu montre un rail
+et les extrémités du déplacement pour que le joueur puisse anticiper le
+contact.
+
+## Étape 5.2 — collision et feedback
+
+- réutiliser `circleVsAabb()` et la tolérance du Wall ;
+- réfléchir la vitesse dans le référentiel du Moving ;
+- transmettre `vx` / `vy` de la surface ;
+- corriger la pénétration même en cas de séparation sans nouveau feedback ;
+- jouer `breaker.obstacle.moving`, avec fallback synthétique ;
+- ajouter punch, ring, étincelles et rumble court ;
+- bloquer les lasers.
+
+## Étape 5.3 — intégration
+
+- exposer `?breakerLab=moving` en DEV ;
+- afficher `MOVING HITS` dans le panneau ;
+- prendre en compte la position future et la vitesse de surface dans le
+  prédicteur ;
+- intégrer un Moving horizontal à partir du niveau 5 ;
+- ajouter un Moving vertical à partir du niveau 9.
+
+## Acceptance
+
+- pas de traversée à vitesse normale ;
+- coins tolérants et sans jitter ;
+- pas de double SFX sur un même contact ;
+- le mouvement est lisible avant l'impact ;
+- lasers bloqués ;
+- clear, drops, multiball et FLAME restent inchangés.
+
+---
+
+# LOT 6 — Tuning / décision
 
 Faire seulement :
 - ajustement tailles ;
@@ -250,13 +297,24 @@ Faire seulement :
 Décision finale :
 - Wall validé ?
 - Bumper validé ?
+- Moving validé ?
 - combinaison validée ?
 
-Ensuite seulement ouvrir un nouveau chantier :
-- Moving ;
-- ou Portal.
+Ensuite seulement ouvrir le chantier Portal.
 
 ---
+
+## Statut de clôture du prototype V1
+
+Les lots 0 à 5 sont considérés comme réalisés pour cette première boucle de
+prototype. La validation utilisateur de la boucle initiale est de 90 % ; le
+reliquat est du polish et de la validation terrain, pas une fondation
+manquante. Le rebond Wall a reçu un fallback audio plus aigu et plus impactant.
+Les clés de samples, dont `breaker.obstacle.moving`, restent prêtes à accueillir
+les futurs MP3.
+
+La prochaine fonctionnalité structurante à ouvrir est `Portal`, après le tuning
+terrain de `Moving`.
 
 # Checklist de revue finale
 
@@ -287,6 +345,8 @@ Ensuite seulement ouvrir un nouveau chantier :
 - [ ] wall coin
 - [ ] bumper frontal
 - [ ] bumper tangent
+- [ ] moving frontal
+- [ ] moving coin en translation
 - [ ] multiball
 - [ ] pas de jitter
 

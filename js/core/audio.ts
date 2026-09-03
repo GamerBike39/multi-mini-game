@@ -3,7 +3,7 @@
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, MusicLayerName, SampleLikeOptions, VolumeKey } from './types';
+import type { AudioLike, MusicLayerName, SampleLikeOptions, VoiceLikeOptions, VolumeKey } from './types';
 import { AdaptiveDirector } from './music/adaptive-director';
 import { InstrumentRack } from './music/instrument-rack';
 import { ReferencePlayer } from './music/reference-player';
@@ -288,6 +288,68 @@ export class AudioSys implements AudioLike {
     oscillator.stop(t + dur + 0.05);
   }
 
+  // Petite voix procédurale : une source riche filtrée par trois formants crée
+  // une voyelle reconnaissable, avec attaque ronde, glissando et vibrato.
+  vocalize({ f = 220, vowel = 'oh', dur = 0.22, vol = 0.2 }: VoiceLikeOptions = {}): void {
+    if (!this.ctx) return;
+    const context = this.ctx;
+    const start = context.currentTime;
+    const end = start + Math.max(0.08, dur);
+    const carrier = context.createOscillator();
+    const body = context.createOscillator();
+    const vibrato = context.createOscillator();
+    const vibratoDepth = context.createGain();
+    const sourceGain = context.createGain();
+    const bodyGain = context.createGain();
+    const envelope = context.createGain();
+
+    carrier.type = 'sawtooth';
+    body.type = 'triangle';
+    vibrato.type = 'sine';
+    carrier.frequency.setValueAtTime(Math.max(40, f * 0.965), start);
+    carrier.frequency.exponentialRampToValueAtTime(Math.max(40, f), start + Math.min(0.065, dur * 0.35));
+    body.frequency.setValueAtTime(Math.max(40, f * 0.5), start);
+    vibrato.frequency.value = 6.2;
+    vibratoDepth.gain.setValueAtTime(0, start);
+    vibratoDepth.gain.linearRampToValueAtTime(11, start + Math.min(0.07, dur * 0.4));
+    vibrato.connect(vibratoDepth);
+    vibratoDepth.connect(carrier.detune);
+    vibratoDepth.connect(body.detune);
+
+    sourceGain.gain.value = 0.56;
+    bodyGain.gain.value = 0.12;
+    envelope.gain.setValueAtTime(0.0001, start);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, vol), start + Math.min(0.025, dur * 0.18));
+    envelope.gain.setValueAtTime(Math.max(0.0002, vol * 0.82), Math.max(start + 0.026, end - Math.min(0.09, dur * 0.4)));
+    envelope.gain.exponentialRampToValueAtTime(0.0001, end);
+
+    carrier.connect(sourceGain);
+    body.connect(bodyGain);
+    bodyGain.connect(envelope);
+    const formants = vowel === 'ah'
+      ? [[780, 7, 1], [1180, 9, 0.52], [2700, 12, 0.16]]
+      : [[500, 7, 1], [880, 9, 0.58], [2450, 12, 0.14]];
+    for (const [frequency, q, level] of formants) {
+      const filter = context.createBiquadFilter();
+      const formantGain = context.createGain();
+      filter.type = 'bandpass';
+      filter.frequency.value = frequency;
+      filter.Q.value = q;
+      formantGain.gain.value = level;
+      sourceGain.connect(filter);
+      filter.connect(formantGain);
+      formantGain.connect(envelope);
+    }
+    envelope.connect(this.sfxBus);
+
+    carrier.start(start);
+    body.start(start);
+    vibrato.start(start);
+    carrier.stop(end + 0.04);
+    body.stop(end + 0.04);
+    vibrato.stop(end + 0.04);
+  }
+
   noise({ t = 0, dur = 0.2, vol = 0.3, f = 1000, f1 = 0, type = 'lowpass', q = 1, dest = null }: NoiseOptions = {}): void {
     if (!this.ctx) return;
     const context = this.ctx;
@@ -333,6 +395,10 @@ export class AudioSys implements AudioLike {
     }, () => {
       if (this.sampleLoads.get(key) === loading) this.sampleLoads.delete(key);
     });
+  }
+
+  hasSample(key: string): boolean {
+    return this.sampleBuffers.has(key);
   }
 
   playSample(key: string, options: SampleLikeOptions = {}): void {
@@ -409,6 +475,77 @@ export class AudioSys implements AudioLike {
     const f = 780 * Math.pow(2, Math.min(12, step) / 12);
     this.tone({ f, type: 'square', dur: 0.06, vol: 0.12 });
     this.tone({ f: f * 1.5, type: 'square', dur: 0.1, vol: 0.12, t: this.ctx ? this.ctx.currentTime + 0.06 : 0 });
+  }
+  // Pièce rouge (séquence +1 vie) : timbre triangle doux + graduation par tons
+  // entiers, bien distinct du carré + quinte des gouttes fuel.
+  red(step = 0): void {
+    if (!this.ctx) return;
+    const f = 880 * Math.pow(2, Math.min(12, step * 2) / 12);
+    const t = this.ctx.currentTime;
+    this.tone({ f, type: 'triangle', dur: 0.09, vol: 0.14 });
+    this.tone({ f: f * 2, type: 'sine', dur: 0.12, vol: 0.07, t: t + 0.05 });
+  }
+  // Boucle turbo : nappe douce (deux triangles en quinte + lowpass + LFO),
+  // agréable et non agressive. Gérée par turboSet, volume modeste sous la musique.
+  private turboNodes: {
+    osc1: OscillatorNode; osc2: OscillatorNode;
+    lfo: OscillatorNode; lfoGain: GainNode;
+    filter: BiquadFilterNode; gain: GainNode;
+  } | null = null;
+  turboSet(on: boolean, level = 0): void {
+    const context = this.ctx;
+    if (!on) {
+      if (this.turboNodes && context) {
+        const nodes = this.turboNodes;
+        this.turboNodes = null;
+        const t = context.currentTime;
+        nodes.gain.gain.cancelScheduledValues(t);
+        nodes.gain.gain.setTargetAtTime(0, t, 0.08);
+        nodes.osc1.stop(t + 0.4);
+        nodes.osc2.stop(t + 0.4);
+        nodes.lfo.stop(t + 0.4);
+      }
+      return;
+    }
+    if (!context) return;
+    const t = context.currentTime;
+    const k = Math.max(0, Math.min(1, level));
+    if (!this.turboNodes) {
+      const osc1 = context.createOscillator();
+      const osc2 = context.createOscillator();
+      const filter = context.createBiquadFilter();
+      const gain = context.createGain();
+      const lfo = context.createOscillator();
+      const lfoGain = context.createGain();
+      osc1.type = 'triangle';
+      osc2.type = 'triangle';
+      osc1.frequency.value = 110;
+      osc2.frequency.value = 164.8;
+      filter.type = 'lowpass';
+      filter.frequency.value = 480;
+      filter.Q.value = 0.8;
+      lfo.type = 'sine';
+      lfo.frequency.value = 0.6;
+      lfoGain.gain.value = 170;
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+      gain.gain.value = 0;
+      gain.gain.setTargetAtTime(0.055, t, 0.15);
+      osc1.connect(filter);
+      osc2.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.sfxBus);
+      osc1.start(t);
+      osc2.start(t);
+      lfo.start(t);
+      this.turboNodes = { osc1, osc2, lfo, lfoGain, filter, gain };
+    } else {
+      const nodes = this.turboNodes;
+      nodes.osc1.frequency.setTargetAtTime(110 * (1 + k * 0.18), t, 0.1);
+      nodes.osc2.frequency.setTargetAtTime(164.8 * (1 + k * 0.18), t, 0.1);
+      nodes.filter.frequency.setTargetAtTime(420 + k * 720, t, 0.1);
+      nodes.gain.gain.setTargetAtTime(0.05 + k * 0.04, t, 0.1);
+    }
   }
   perfect(): void { this.tone({ f: 1320, type: 'triangle', dur: 0.05, vol: 0.16 }); this.tone({ f: 1760, type: 'triangle', dur: 0.08, vol: 0.16, t: this.ctx ? this.ctx.currentTime + 0.045 : 0 }); }
   good(): void { this.tone({ f: 900, type: 'triangle', dur: 0.06, vol: 0.13 }); }

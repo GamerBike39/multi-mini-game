@@ -5,10 +5,19 @@
 import { BaseGame } from '../core/game';
 import { Blob } from '../core/blob';
 import * as UI from '../core/ui';
-import type { Action, GameMeta, InputLike } from '../core/types';
+import type { Action, BlobVowel, GameMeta, InputLike } from '../core/types';
 
 const midiHz = (midi: number): number => 440 * Math.pow(2, (midi - 69) / 12);
 const SIMON_ACTIONS: readonly SimonAction[] = ['y', 'x', 'b', 'a'];
+const SIMON_ARROWS: readonly string[] = ['ArrowUp', 'ArrowLeft', 'ArrowRight', 'ArrowDown'];
+
+const LEGACY_KEYS: Readonly<Record<SimonAction, readonly string[]>> = {
+  y: ['KeyU'],
+  x: ['KeyL'],
+  b: ['KeyK', 'ShiftLeft'],
+  a: ['KeyJ', 'Space'],
+};
+const SIMON_BUTTON_PADS: Readonly<Record<SimonAction, number>> = { y: 0, x: 1, b: 2, a: 3 };
 
 type SimonAction = Extract<Action, 'a' | 'b' | 'x' | 'y'>;
 type SimonPhase = 'show' | 'input' | 'roundEnd';
@@ -20,6 +29,7 @@ interface PadDefinition {
   key: string;
   color: string;
   midi: number;
+  vowel: BlobVowel;
   lx: number;
   ly: number;
 }
@@ -27,6 +37,8 @@ interface PadDefinition {
 interface SimonPad extends PadDefinition {
   f: number;
   lit: number;
+  voice: number;
+  haloT: number;
   blob: Blob;
 }
 
@@ -37,17 +49,28 @@ interface Dust {
   s: number;
 }
 
+export function simonPadPressed(I: Pick<InputLike, 'keyPressed' | 'pressed'>): number {
+  for (let i = 0; i < SIMON_ARROWS.length; i++) {
+    if (I.keyPressed(SIMON_ARROWS[i])) return i;
+  }
+  for (const action of SIMON_ACTIONS) {
+    if (!I.pressed(action)) continue;
+    if (LEGACY_KEYS[action].some((code) => I.keyPressed(code))) continue;
+    return SIMON_BUTTON_PADS[action];
+  }
+  return -1;
+}
+
 export class SimonGame extends BaseGame {
   static meta: GameMeta = {
     id: 'simon', name: 'BLOB SIMON', accent: '#c084fc', mood: 'simon',
-    desc: 'Mémoire de blob', controls: 'Y · X · A · B (U J K L)',
-    keys: 'U L J K',
-    hint: 'Regarde la séquence puis rejoue-la · Y X A B',
+    desc: 'Mémoire de blob', controls: '↑ · ← · → · ↓  /  Y · X · B · A',
+    keys: '↑ ← → ↓',
+    hint: 'Regarde puis rejoue · flèches ou Y X B A',
     unit: 'notes', ranks: [16, 13, 10, 7, 4],
   };
 
   pads: SimonPad[];
-  btnPad: Record<SimonAction, number>;
   seq: number[];
   round = 1;
   phase: SimonPhase = 'show';
@@ -58,26 +81,28 @@ export class SimonGame extends BaseGame {
   roundEndT = 0;
   winNext = false;
   active = -1;
+  previousActive = -1;
+  linkPulse = 0;
   dust: Dust[] = [];
 
   constructor(engine: ConstructorParameters<typeof BaseGame>[0]) {
     super(engine);
 
-    // Losange de pads : haut=Y, gauche=X, droite=B, bas=A (MIDI 60/64/67/72).
+    // Losange : flèches au clavier, disposition/couleurs Xbox à la manette.
     const definitions: PadDefinition[] = [
-      { x: 640, y: 190, btn: 'y', key: 'U', color: '#f97316', midi: 60, lx: 0, ly: -66 },
-      { x: 430, y: 375, btn: 'x', key: 'L', color: '#22d3ee', midi: 64, lx: -80, ly: 8 },
-      { x: 850, y: 375, btn: 'b', key: 'K', color: '#f472b6', midi: 67, lx: 80, ly: 8 },
-      { x: 640, y: 560, btn: 'a', key: 'J', color: '#a3e635', midi: 72, lx: 0, ly: 66 },
+      { x: 640, y: 190, btn: 'y', key: '↑', color: '#facc15', midi: 60, vowel: 'oh', lx: 0, ly: -70 },
+      { x: 430, y: 375, btn: 'x', key: '←', color: '#3b82f6', midi: 64, vowel: 'ah', lx: -84, ly: 8 },
+      { x: 850, y: 375, btn: 'b', key: '→', color: '#ef4444', midi: 67, vowel: 'oh', lx: 84, ly: 8 },
+      { x: 640, y: 560, btn: 'a', key: '↓', color: '#22c55e', midi: 72, vowel: 'ah', lx: 0, ly: 72 },
     ];
     this.pads = definitions.map((definition) => ({
       ...definition,
       f: midiHz(definition.midi),
       lit: 0,
+      voice: 0,
+      haloT: 0,
       blob: new Blob({ x: definition.x, y: definition.y, r: 46, color: definition.color }),
     }));
-    this.btnPad = { y: 0, x: 1, b: 2, a: 3 };
-
     // Le blob de BaseGame devient un petit spectateur en bas.
     this.blob.x = 640;
     this.blob.y = 660;
@@ -106,33 +131,58 @@ export class SimonGame extends BaseGame {
     return Math.max(0.22, 0.42 - (this.round - 1) * 0.028);
   }
 
-  // Son d'un pad : triangle + octave au-dessus en square très léger.
+  // Son d'un pad : voix de blob synthétique accordée, avec un fond sinusoïdal
+  // très discret pour conserver une hauteur parfaitement lisible.
   playNote(pad: SimonPad, duration: number): void {
-    this.audio.tone({ f: pad.f, type: 'triangle', dur: duration, vol: 0.22 });
-    this.audio.tone({ f: pad.f * 2, type: 'square', dur: duration * 0.8, vol: 0.06 });
+    this.audio.vocalize({ f: pad.f, vowel: pad.vowel, dur: duration * 1.18, vol: 0.24 });
+    this.audio.tone({ f: pad.f, type: 'sine', dur: duration, vol: 0.035, attack: 0.018 });
+  }
+
+  // Les flèches sont l'unique mapping clavier du Simon. Les actions A/B/X/Y
+  // restent réservées aux boutons de façade de la manette dans ce jeu.
+  pressedPad(I: InputLike): number {
+    return simonPadPressed(I);
+  }
+
+  excitePad(pad: SimonPad, duration: number): void {
+    pad.voice = Math.max(pad.voice, duration);
+    pad.haloT = 0;
+    pad.blob.voice = 1;
+    pad.blob.setEmotion('wow');
+  }
+
+  focusPad(index: number): SimonPad {
+    this.previousActive = this.active >= 0 && this.active !== index ? this.active : -1;
+    this.active = index;
+    this.linkPulse = 0.55;
+    return this.pads[index];
   }
 
   // Note de la démo : pad allumé ~litDur, punch, anneau de sa couleur.
   demoNote(index: number): void {
-    const pad = this.pads[index];
-    this.active = index;
+    const pad = this.focusPad(index);
     pad.lit = this.litDur();
+    this.excitePad(pad, this.litDur());
     pad.blob.punch(0.4);
     this.blob.punch(0.12);
     this.playNote(pad, 0.22);
-    this.fx.ring(pad.x, pad.y, { r0: 18, r1: 86, color: pad.color, life: 0.4, width: 4 });
+    this.fx.ring(pad.x, pad.y, { r0: 18, r1: 110, color: pad.color, life: 0.5, width: 5 });
+    this.fx.ring(pad.x, pad.y, { r0: 42, r1: 146, color: '#ffffff', life: 0.42, width: 2 });
+    this.fx.burst(pad.x, pad.y, { n: 12, speed: [60, 250], colors: [pad.color, '#ffffff'], size: [2, 5], life: 0.5 });
   }
 
   onPress(index: number): void {
     const pad = this.pads[index];
     if (this.seq[this.inputIdx] === index) {
       // Bonne note : même son mais court, punch, mini burst.
-      this.active = index;
+      this.focusPad(index);
       pad.lit = 0.2;
+      this.excitePad(pad, 0.22);
       pad.blob.punch(0.3);
       this.blob.punch(0.1);
       this.playNote(pad, 0.12);
-      this.fx.burst(pad.x, pad.y, { n: 7, speed: [40, 190], colors: [pad.color, '#ffffff'], size: [2, 4], life: 0.35 });
+      this.fx.ring(pad.x, pad.y, { r0: 24, r1: 92, color: pad.color, life: 0.32, width: 4 });
+      this.fx.burst(pad.x, pad.y, { n: 15, speed: [50, 270], colors: [pad.color, '#ffffff'], size: [2, 5], life: 0.42 });
       this.input.rumble(0.12, 0.04);
       this.inputIdx++;
       if (this.inputIdx >= this.seq.length) this.roundDone();
@@ -156,6 +206,8 @@ export class SimonGame extends BaseGame {
     this.roundEndT = 0.55;
     this.winNext = this.seq.length >= 16;
     this.active = -1;
+    this.previousActive = -1;
+    this.linkPulse = 0;
   }
 
   fail(pressedIndex: number): void {
@@ -184,6 +236,9 @@ export class SimonGame extends BaseGame {
     this.phase = 'show';
     this.showIdx = 0;
     this.showT = 0.5;
+    this.active = -1;
+    this.previousActive = -1;
+    this.linkPulse = 0;
   }
 
   // Fait regarder un blob vers un point (regard normalisé).
@@ -195,12 +250,73 @@ export class SimonGame extends BaseGame {
     blob.lookY = dy / length;
   }
 
+  drawNoteHalo(ctx: CanvasRenderingContext2D, pad: SimonPad): void {
+    const energy = Math.min(1, pad.lit * 4);
+    const pitch = Math.max(0, Math.min(1, (pad.midi - 60) / 12));
+    // Les graves diffusent largement avec un contour ample ; les aigus sont
+    // plus serrés, plus rapides et portent davantage de petites ondulations.
+    const spread = 104 - pitch * 30;
+    const speed = 1.55 + pitch * 0.9;
+    const lobes = 3 + Math.round(pitch * 3);
+    const amplitude = 6.5 - pitch * 2.5;
+    const auraRadius = pad.blob.r + 28 + Math.sin(this.time * (5 + pitch * 3)) * 4;
+
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    const aura = ctx.createRadialGradient(pad.x, pad.y, pad.blob.r * 0.72, pad.x, pad.y, auraRadius + spread * 0.42);
+    aura.addColorStop(0, pad.color + 'b8');
+    aura.addColorStop(0.38, pad.color + '54');
+    aura.addColorStop(1, pad.color + '00');
+    ctx.globalAlpha = energy * (0.62 - pitch * 0.12);
+    ctx.fillStyle = aura;
+    ctx.beginPath();
+    ctx.arc(pad.x, pad.y, auraRadius + spread * 0.42, 0, Math.PI * 2);
+    ctx.fill();
+
+    for (let layer = 0; layer < 3; layer++) {
+      const progress = (pad.haloT * speed + layer / 3) % 1;
+      const radius = pad.blob.r + 14 + progress * spread;
+      const fade = (1 - progress) * energy;
+      ctx.globalAlpha = fade * (layer === 0 ? 0.72 : 0.42);
+      ctx.strokeStyle = layer === 0 ? '#ffffff' : pad.color;
+      ctx.shadowColor = pad.color;
+      ctx.shadowBlur = 14 + (1 - pitch) * 18;
+      ctx.lineWidth = (2.8 - pitch * 0.8) * (1 - progress * 0.42);
+      ctx.beginPath();
+      for (let i = 0; i <= 72; i++) {
+        const angle = i / 72 * Math.PI * 2;
+        const ripple = Math.sin(angle * lobes - pad.haloT * (5 + pitch * 5) + layer * 1.7);
+        const organicRadius = radius + ripple * amplitude * (0.35 + fade * 0.65);
+        const x = pad.x + Math.cos(angle) * organicRadius;
+        const y = pad.y + Math.sin(angle) * organicRadius;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   update(dt: number): void {
     if (this.baseUpdate(dt)) return;
     const I: InputLike = this.input;
+    this.linkPulse = Math.max(0, this.linkPulse - dt);
 
     for (const pad of this.pads) {
       pad.lit = Math.max(0, pad.lit - dt);
+      pad.voice = Math.max(0, pad.voice - dt);
+      if (pad.lit > 0) pad.haloT += dt;
+      const voiceStrength = Math.min(1, pad.voice / 0.18);
+      pad.blob.voice = voiceStrength;
+      if (voiceStrength > 0) {
+        const syllable = 0.5 + 0.5 * Math.sin(this.time * 24 + pad.midi);
+        pad.blob.setPose(1 + syllable * 0.08, 1 - syllable * 0.045, voiceStrength * 0.55);
+        pad.blob.setEmotion(syllable > 0.42 ? 'wow' : 'happy');
+      } else {
+        pad.blob.setPose(1, 1, 0);
+        if (!pad.blob.scared) pad.blob.setEmotion(this.phase === 'input' ? 'focused' : 'idle');
+      }
       pad.blob.update(dt);
     }
     this.blob.y = 660 + Math.sin(this.time * 2.4) * 3;
@@ -218,7 +334,7 @@ export class SimonGame extends BaseGame {
 
     if (this.phase === 'show') {
       // Démo : inputs verrouillés (un appui ne donne qu'un petit souffle).
-      if (I.pressed('a') || I.pressed('b') || I.pressed('x') || I.pressed('y')) this.audio.whiff();
+      if (this.pressedPad(I) >= 0) this.audio.whiff();
       this.showT -= dt;
       if (this.showT <= 0) {
         if (this.showIdx < this.seq.length) {
@@ -230,17 +346,13 @@ export class SimonGame extends BaseGame {
           this.inputIdx = 0;
           this.idleT = 6;
           this.active = -1;
+          this.previousActive = -1;
+          this.linkPulse = 0;
         }
       }
     } else if (this.phase === 'input') {
       this.idleT -= dt;
-      let hit = -1;
-      for (const action of SIMON_ACTIONS) {
-        if (I.pressed(action)) {
-          hit = this.btnPad[action];
-          break;
-        }
-      }
+      const hit = this.pressedPad(I);
       if (hit >= 0) this.onPress(hit);
       else if (this.idleT <= 0) this.fail(-1);
     } else {
@@ -261,7 +373,8 @@ export class SimonGame extends BaseGame {
       if (!focus) this.watch(pad.blob, 640, 380);
       else if (focus === pad) {
         pad.blob.lookX = 0;
-        pad.blob.lookY = 0.35;
+        // Regard légèrement relevé : la bouche du blob haut reste bien séparée.
+        pad.blob.lookY = -0.08;
       } else this.watch(pad.blob, focus.x, focus.y);
     }
     this.watch(this.blob, focus ? focus.x : 640, focus ? focus.y : 430);
@@ -284,9 +397,10 @@ export class SimonGame extends BaseGame {
     }
     ctx.globalAlpha = 1;
 
-    // Losange reliant les pads.
-    ctx.strokeStyle = this.accent + '2b';
-    ctx.lineWidth = 2;
+    // Fil presque effacé au repos : il ne s'allume que pour matérialiser le
+    // trajet entre deux notes successives.
+    ctx.strokeStyle = this.accent + '12';
+    ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(640, 190);
     ctx.lineTo(430, 375);
@@ -295,22 +409,47 @@ export class SimonGame extends BaseGame {
     ctx.closePath();
     ctx.stroke();
 
+    if (this.active >= 0 && this.linkPulse > 0) {
+      const to = this.pads[this.active];
+      const from = this.previousActive >= 0 ? this.pads[this.previousActive] : { x: 640, y: 375 };
+      const energy = Math.min(1, this.linkPulse / 0.28);
+      const travel = Math.min(1, 1 - this.linkPulse / 0.55 + 0.18);
+      const tx = from.x + (to.x - from.x) * travel;
+      const ty = from.y + (to.y - from.y) * travel;
+      const gradient = ctx.createLinearGradient(from.x, from.y, to.x, to.y);
+      gradient.addColorStop(0, this.previousActive >= 0 ? this.pads[this.previousActive].color : this.accent);
+      gradient.addColorStop(1, to.color);
+
+      ctx.save();
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.strokeStyle = gradient;
+      ctx.shadowColor = to.color;
+      ctx.shadowBlur = 18;
+      ctx.globalAlpha = energy * 0.72;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([9, 13]);
+      ctx.lineDashOffset = -this.time * 110;
+      ctx.beginPath();
+      ctx.moveTo(from.x, from.y);
+      ctx.lineTo(to.x, to.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.globalAlpha = energy;
+      ctx.fillStyle = '#ffffff';
+      ctx.shadowBlur = 24;
+      ctx.beginPath();
+      ctx.arc(tx, ty, 4 + energy * 3, 0, 6.2832);
+      ctx.fill();
+      ctx.restore();
+    }
+
     // Pads : halo quand allumé, blob par-dessus, étiquette bouton+touche.
     for (const pad of this.pads) {
-      if (pad.lit > 0) {
-        ctx.save();
-        ctx.globalAlpha = Math.min(1, pad.lit * 3) * 0.5;
-        ctx.shadowColor = pad.color;
-        ctx.shadowBlur = 44;
-        ctx.fillStyle = pad.color;
-        ctx.beginPath();
-        ctx.arc(pad.x, pad.y, pad.blob.r + 13, 0, 6.2832);
-        ctx.fill();
-        ctx.restore();
-      }
+      if (pad.lit > 0) this.drawNoteHalo(ctx, pad);
       pad.blob.render(ctx);
-      UI.txt(ctx, pad.btn.toUpperCase() + ' · ' + pad.key, pad.x + pad.lx, pad.y + pad.ly, {
-        size: 15, align: 'center', color: pad.color, mono: true, shadow: true, alpha: 0.9,
+      UI.txt(ctx, pad.key + '  ·  ' + pad.btn.toUpperCase(), pad.x + pad.lx, pad.y + pad.ly, {
+        size: 17, align: 'center', color: pad.color, mono: true, shadow: true, alpha: 0.96,
       });
     }
 

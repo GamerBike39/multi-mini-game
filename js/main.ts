@@ -13,6 +13,10 @@ import { BreakerGame } from './games/breaker';
 import { GolfGame } from './games/golf';
 import { FishingGame } from './games/fish';
 import { PongGame } from './games/pong';
+import { ColumnsGame } from './games/columns';
+import { BubbleGame } from './games/bubble';
+import { SortGame } from './games/sort';
+import { PathGame } from './games/path';
 import { MusicTestApp } from './music-test';
 import type { AppLike, GameConstructor } from './core/types';
 
@@ -39,6 +43,10 @@ const GAMES: GameConstructor[] = [
   GolfGame,
   FishingGame,
   PongGame,
+  ColumnsGame,
+  BubbleGame,
+  SortGame,
+  PathGame,
 ];
 
 function element<T extends HTMLElement>(id: string): T {
