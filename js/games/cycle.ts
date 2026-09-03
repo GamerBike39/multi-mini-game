@@ -664,7 +664,13 @@ export class CycleGame extends BaseGame {
     zoom = clamp(zoom - edgeK * 0.16, 0.34, 1);
     // Compression haute vitesse : on rend un peu de champ.
     zoom = clamp(zoom - this.speedNorm() * 0.05, 0.34, 1);
-    this.zoomSm += (zoom - this.zoomSm) * Math.min(1, dt * 2.6);
+    // Anti-pompage : le zoom ne remonte jamais. Dès que la caméra s'est
+    // éloignée (dispersion, approche des bords, vitesse), elle reste large :
+    // aucun retour en arrière, aucun mouvement parasite. Seul le recentrage
+    // (camX/camY) continue de suivre les survivants.
+    if (zoom < this.zoomSm) {
+      this.zoomSm += (zoom - this.zoomSm) * Math.min(1, dt * 2.6);
+    }
     this.camX += (tx - this.camX) * Math.min(1, dt * 4.5);
     this.camY += (ty - this.camY) * Math.min(1, dt * 4.5);
     // Reste dans le monde (avec marge d'écran).
