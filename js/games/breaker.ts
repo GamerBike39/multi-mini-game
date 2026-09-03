@@ -339,14 +339,24 @@ const BREAKER_HUD_URL: Record<string, string> = {
   FREEZE: new URL('../../assets/breaker/HUD/hud_freeze.png', import.meta.url).href,
 };
 
+// LARGE et SMALL n'ont pas encore de PNG HUD dédié : leur icône de drop est
+// réutilisée dans le statut compact au lieu de retomber sur une simple pastille.
+const BREAKER_POWER_ICON_URL: Record<string, string> = {
+  ...BREAKER_HUD_URL,
+  LARGE: BREAKER_BONUS_URL.LARGE,
+  SMALL: BREAKER_BONUS_URL.SMALL,
+};
+
 const BREAKER_GAMEPLAY_URL = {
-  paddle: new URL('../../assets/breaker/Nouveau dossier/basic-border.webp', import.meta.url).href,
-  wall: new URL('../../assets/breaker/Nouveau dossier/wall.webp', import.meta.url).href,
-  bumperOuter: new URL('../../assets/breaker/Nouveau dossier/bumper_out.webp', import.meta.url).href,
-  bumperInner: new URL('../../assets/breaker/Nouveau dossier/bumperèin.webp', import.meta.url).href,
-  reinforced: new URL('../../assets/breaker/Nouveau dossier/renforcer.webp', import.meta.url).href,
-  gravity: new URL('../../assets/breaker/Nouveau dossier/gravity_arrow.webp', import.meta.url).href,
-  explosive: new URL('../../assets/breaker/Nouveau dossier/explode.webp', import.meta.url).href,
+  basic: new URL('../../assets/breaker/briques/basic.webp', import.meta.url).href,
+  paddle: new URL('../../assets/breaker/briques/basic-border.webp', import.meta.url).href,
+  basic2: new URL('../../assets/breaker/briques/basic2.webp', import.meta.url).href,
+  wall: new URL('../../assets/breaker/briques/wall.webp', import.meta.url).href,
+  bumperOuter: new URL('../../assets/breaker/briques/bumper_out.webp', import.meta.url).href,
+  bumperInner: new URL('../../assets/breaker/briques/bumperèin.webp', import.meta.url).href,
+  reinforced: new URL('../../assets/breaker/briques/renforcer.webp', import.meta.url).href,
+  gravity: new URL('../../assets/breaker/briques/gravity_arrow.webp', import.meta.url).href,
+  explosive: new URL('../../assets/breaker/briques/explode.webp', import.meta.url).href,
 } as const;
 
 const breakerImageCache = new Map<string, HTMLImageElement>();
@@ -364,7 +374,7 @@ const breakerImage = (url: string): HTMLImageElement | null => {
 
 const preloadBreakerAssets = (): void => {
   for (const url of Object.values(BREAKER_BONUS_URL)) breakerImage(url);
-  for (const url of Object.values(BREAKER_HUD_URL)) breakerImage(url);
+  for (const url of Object.values(BREAKER_POWER_ICON_URL)) breakerImage(url);
   for (const url of Object.values(BREAKER_GAMEPLAY_URL)) breakerImage(url);
 };
 
@@ -1131,7 +1141,6 @@ export class BreakerGame extends BaseGame {
       // Même règle pour la glue : une seule mécanique de collage à la fois.
       this.glueT = Math.max(this.glueT, 12);
     }
-    this.fx.text(px, py - 14, kind, { color: DCOL[kind], size: 20 });
   }
 
   wallHit(bl: any): void {
@@ -1493,6 +1502,30 @@ export class BreakerGame extends BaseGame {
     ctx.fillStyle = 'rgba(255,255,255,0.14)';
     UI.roundRect(ctx, ox + 5, oy + 4, Math.max(4, br.w - 10), Math.max(2, Math.min(5, br.h * 0.25)), 2.5);
     ctx.fill();
+
+    if (!isGravity && !isExplosive && br.maxHp <= 1) {
+      const imageUrl = (Math.round((br.x + br.y) / 10) % 2 === 0)
+        ? BREAKER_GAMEPLAY_URL.basic
+        : BREAKER_GAMEPLAY_URL.basic2;
+      const image = breakerImage(imageUrl);
+      if (image) {
+        // Les deux variantes basic donnent une matière glossy cohérente sans
+        // perdre la couleur du niveau ni la lecture de la grille.
+        ctx.save();
+        UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+        ctx.clip();
+        const skinX = ox - br.w * 0.06, skinY = oy - br.h * 0.16;
+        const skinW = br.w * 1.12, skinH = br.h * 1.32;
+        ctx.globalCompositeOperation = 'source-over';
+        ctx.globalAlpha = 0.48;
+        ctx.drawImage(image, skinX, skinY, skinW, skinH);
+        ctx.globalCompositeOperation = 'source-atop';
+        ctx.globalAlpha = 0.64;
+        ctx.fillStyle = body;
+        ctx.fillRect(skinX, skinY, skinW, skinH);
+        ctx.restore();
+      }
+    }
 
     // Un filet sombre détache la silhouette des tuiles quand leur taille
     // diminue, puis un liseré clair garde la matière lisible sur le fond.
@@ -2162,37 +2195,30 @@ export class BreakerGame extends BaseGame {
     ctx.translate(pad.x, PAD_Y);
     ctx.scale(1 + sq * 0.1 + Math.sin(this.time * 9) * 0.015, 1 - sq * 0.14 + Math.cos(this.time * 9) * 0.01);
     const paddleColor = this.freezeT > 0 ? '#7dd3fc' : this.accent;
+    // La silhouette principale reste celle du gameplay. Les sprites du pack
+    // ne sont qu'une texture interne clipée : ils ne peuvent plus créer une
+    // seconde enveloppe rectangulaire autour de la planche.
+    ctx.shadowColor = paddleColor;
+    ctx.shadowBlur = 16;
+    UI.roundRect(ctx, -w / 2, -h / 2, w, h, h / 2);
+    ctx.fillStyle = paddleColor;
+    ctx.fill();
+    ctx.shadowBlur = 0;
     if (paddleImage) {
-      // Le visuel est un peu plus haut que la hitbox : la planche paraît
-      // matérielle sans rendre les contacts plus difficiles à anticiper.
-      const visualH = 26;
-      ctx.shadowColor = paddleColor;
-      ctx.shadowBlur = 16;
-      ctx.globalAlpha = 0.96;
-      ctx.drawImage(paddleImage, -w / 2, -visualH / 2, w, visualH);
-      // Teinte légère : on garde les reflets blancs du pack tout en faisant
-      // suivre la couleur de l'état actif (freeze ou accent du niveau).
-      ctx.globalCompositeOperation = 'source-atop';
-      ctx.globalAlpha = 0.3;
-      ctx.fillStyle = paddleColor;
-      ctx.fillRect(-w / 2, -visualH / 2, w, visualH);
-      ctx.globalCompositeOperation = 'source-over';
-      ctx.globalAlpha = 0.5;
-      ctx.fillStyle = '#ffffff';
-      UI.roundRect(ctx, -w / 2 + 8, -visualH * 0.28, w - 16, 3, 1.5);
-      ctx.fill();
-      ctx.shadowBlur = 0;
-    } else {
-      ctx.shadowColor = paddleColor;
-      ctx.shadowBlur = 16;
-      UI.roundRect(ctx, -w / 2, -h / 2, w, h, 9);
-      ctx.fillStyle = paddleColor;
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.fillStyle = 'rgba(255,255,255,0.2)';
-      UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 5, 2.5);
-      ctx.fill();
+      const inset = 4;
+      ctx.save();
+      UI.roundRect(ctx, -w / 2 + inset, -h / 2 + 2, w - inset * 2, h - 4, h / 2 - 2);
+      ctx.clip();
+      ctx.globalCompositeOperation = 'screen';
+      ctx.globalAlpha = 0.42;
+      ctx.drawImage(paddleImage, -w / 2 + inset, -h / 2 + 2, w - inset * 2, h - 4);
+      ctx.restore();
     }
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = '#ffffff';
+    UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 4, 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
     // yeux qui suivent la balle
     const b0 = this.balls[0];
     const lx = b0 ? Math.max(-1, Math.min(1, (b0.x - pad.x) / 320)) * 2.5 : 0;
@@ -2298,30 +2324,46 @@ export class BreakerGame extends BaseGame {
     if (this.balls.length > 1) powers.push(['MULTI', '×' + this.balls.length, DCOL.MULTI]);
     if (!powers.length) return;
 
-    const columns = powers.length > 4 ? 2 : 1;
+    // Le statut reste lisible sans reprendre la place d'un panneau. Chaque
+    // pouvoir est une petite pastille autonome : l'icône identifie le bonus,
+    // la valeur indique sa durée ou le nombre de balles.
+    const chipW = 76;
+    const chipH = 38;
+    const gap = 6;
+    const columns = Math.min(6, powers.length);
     const rows = Math.ceil(powers.length / columns);
-    const rowHeight = 24;
-    const x = 20, y = 514, w = columns === 2 ? 300 : 224, h = 30 + rows * rowHeight;
-    UI.panel(ctx, x, y, w, h, { radius: 12, fill: '#100d18e8', stroke: '#ffffff22', lineWidth: 1 });
-    UI.txt(ctx, 'POUVOIRS', x + 12, y + 18, { size: 10, mono: true, color: '#8b95a8', weight: 800 });
+    const x = 20;
+    const y = 514;
     powers.forEach(([name, value, color], index) => {
       const column = index % columns;
       const row = Math.floor(index / columns);
-      const cellX = x + column * (w / columns);
-      const py = y + 42 + row * rowHeight;
-      const icon = BREAKER_HUD_URL[name] ? breakerImage(BREAKER_HUD_URL[name]) : null;
+      const chipX = x + column * (chipW + gap);
+      const chipY = y + row * (chipH + gap);
+      UI.panel(ctx, chipX, chipY, chipW, chipH, {
+        radius: 13,
+        fill: '#100d18cf',
+        stroke: color + '88',
+        lineWidth: 1,
+      });
+      const iconUrl = BREAKER_POWER_ICON_URL[name];
+      const icon = iconUrl ? breakerImage(iconUrl) : null;
       if (icon) {
         ctx.globalAlpha = 0.96;
-        ctx.drawImage(icon, cellX + 3, py - 22, 22, 22);
+        ctx.drawImage(icon, chipX + 4, chipY + 4, 30, 30);
         ctx.globalAlpha = 1;
       } else {
         ctx.fillStyle = color;
         ctx.beginPath();
-        ctx.arc(cellX + 14, py - 5, 3, 0, 6.2832);
+        ctx.arc(chipX + 18, chipY + 19, 4, 0, 6.2832);
         ctx.fill();
       }
-      UI.txt(ctx, name, cellX + (icon ? 29 : 24), py, { size: 11, mono: true, color, weight: 800 });
-      UI.txt(ctx, value, cellX + w / columns - 12, py, { size: 11, mono: true, color: '#dce3ee', align: 'right' });
+      UI.txt(ctx, value, chipX + chipW - 5, chipY + 24, {
+        size: 10,
+        mono: true,
+        color: '#e8edf6',
+        align: 'right',
+        weight: 900,
+      });
     });
   }
 

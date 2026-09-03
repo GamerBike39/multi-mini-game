@@ -310,3 +310,4 @@ Anti-références : dark souls, milsim, UI plate Material, pixel-art rigide comm
 ## 14. Une phrase pour la suite
 
 > On ne décore pas autour du blob. On **joue de la gelée** : tout ce qui bouge squashe, tout ce qui arrive à l’écran arrive en goutte, et le petit visage dit le reste.
+
