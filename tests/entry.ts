@@ -42,6 +42,21 @@ import {
   flappySpeedFor,
 } from '../js/games/flappy';
 import {
+  DIG_COLS,
+  DIG_O2_ROW,
+  Dig,
+  digCarveRoom,
+  digDepthBand,
+  digGenRow,
+  digGravityStep,
+  digIsFallable,
+  digIsOxygenZone,
+  digIsSolid,
+  digOxygenDrain,
+  digPlanRooms,
+  digVeinGap,
+} from '../js/games/dig';
+import {
   RUNNER_JUMP,
   advanceJumpAir,
   applyJumpCut,
@@ -1214,6 +1229,129 @@ function testJump(): void {
   assert(FLAPPY_FLAP.cutSpeed < -FLAPPY_FLAP_VY, 'Flappy : le tap coupe sous l’impulsion');
 }
 
+function testDig(): void {
+  // Bandes de profondeur.
+  equal(digDepthBand(0), 'surface', 'Dig : la surface commence en haut');
+  equal(digDepthBand(2), 'surface', 'Dig : trois rangées de surface');
+  equal(digDepthBand(3), 'shallow', 'Dig : peu profond ensuite');
+  equal(digDepthBand(16), 'mid', 'Dig : palier intermédiaire');
+  equal(digDepthBand(36), 'deep', 'Dig : les abysses en bas');
+  equal(digDepthBand(1000), 'deep', 'Dig : le fond reste abyssal');
+
+  // Oxygène : gratuit en haut, vital en bas.
+  assert(!digIsOxygenZone(DIG_O2_ROW - 1), 'Dig : pas d’oxygène avant la zone');
+  assert(digIsOxygenZone(DIG_O2_ROW), 'Dig : la zone oxygène commence à 25 m');
+  equal(digOxygenDrain(0), 0, 'Dig : air gratuit en surface');
+  equal(digOxygenDrain(DIG_O2_ROW - 1), 0, 'Dig : air gratuit juste au-dessus');
+  assert(digOxygenDrain(DIG_O2_ROW) > 0, 'Dig : ça consomme dès l’entrée');
+  assert(digOxygenDrain(60) > digOxygenDrain(DIG_O2_ROW), 'Dig : ça empire en profondeur');
+  assert(digOxygenDrain(10000) <= 7, 'Dig : la conso est plafonnée');
+
+  // Solidité : seul le vide laisse passer.
+  assert(!digIsSolid(Dig.Empty), 'Dig : le vide n’est pas solide');
+  for (const cell of [Dig.Dirt, Dig.Stone, Dig.Bedrock, Dig.Boulder, Dig.Diamond, Dig.Air]) {
+    assert(digIsSolid(cell), 'Dig : la case ' + cell + ' porte');
+  }
+  assert(digIsFallable(Dig.Boulder), 'Dig : le rocher tombe');
+  assert(digIsFallable(Dig.Diamond), 'Dig : le diamant tombe');
+  assert(!digIsFallable(Dig.Dirt), 'Dig : la terre ne tombe pas');
+  assert(!digIsFallable(Dig.Air), 'Dig : la bulle ne tombe pas');
+}
+
+function testDigGravity(): void {
+  // Grille 3×5 : rocher en haut, diamant suspendu, vide, sol en terre.
+  //   . O .      O = rocher, D = diamant, # = terre
+  //   . . .
+  //   . D .
+  //   . . .
+  //   # # #
+  const cols = 3;
+  const E = Dig.Empty;
+  const grid = [
+    E, Dig.Boulder, E,
+    E, E, E,
+    E, Dig.Diamond, E,
+    E, E, E,
+    Dig.Dirt, Dig.Dirt, Dig.Dirt,
+  ];
+  const falling = new Array<number>(15).fill(0);
+  const res = digGravityStep(grid, falling, cols, -1);
+  equal(res.moves.length, 2, 'Dig : le rocher et le diamant tombent');
+  equal(res.crushed, false, 'Dig : personne dessous, pas d’écrasé');
+  equal(grid[1 * cols + 1], Dig.Boulder, 'Dig : le rocher descend d’une case');
+  equal(grid[0 * cols + 1], E, 'Dig : la case libérée est vide');
+  equal(grid[3 * cols + 1], Dig.Diamond, 'Dig : le diamant descend d’une case');
+  equal(falling[1 * cols + 1], 1, 'Dig : le rocher est marqué en chute');
+  equal(falling[3 * cols + 1], 1, 'Dig : le diamant est marqué en chute');
+
+  // Tick suivant : le diamant se pose, le rocher continue (un pas par tick).
+  const res2 = digGravityStep(grid, falling, cols, -1);
+  equal(res2.moves.length, 1, 'Dig : un seul mouvement par tick');
+  equal(grid[2 * cols + 1], Dig.Boulder, 'Dig : le rocher continue sa chute');
+  equal(grid[4 * cols + 1], Dig.Dirt, 'Dig : le sol porte toujours');
+  equal(falling[3 * cols + 1], 0, 'Dig : le diamant posé n’est plus en chute');
+
+  // Écrasé : rocher en chute + joueur dessous.
+  const flat = [E, Dig.Boulder, E, E, E, E];
+  const ff = [0, 1, 0, 0, 0, 0];
+  const res3 = digGravityStep(flat, ff, cols, 1 * cols + 1);
+  assert(res3.crushed, 'Dig : le rocher en chute écrase le joueur');
+  equal(flat[1 * cols + 1], Dig.Boulder, 'Dig : le rocher occupe la case du joueur');
+
+  // Retenu : rocher au repos + joueur dessous = ça tient.
+  const hold = [E, Dig.Boulder, E, E, E, E];
+  const hf = [0, 0, 0, 0, 0, 0];
+  const res4 = digGravityStep(hold, hf, cols, 1 * cols + 1);
+  assert(!res4.crushed, 'Dig : le rocher tenu par le joueur ne tombe pas');
+  equal(res4.moves.length, 0, 'Dig : aucun mouvement quand le joueur retient');
+  equal(hold[0 * cols + 1], Dig.Boulder, 'Dig : le rocher reste en place');
+}
+
+function testDigGen(): void {
+  // Déterminisme : même seed -> mêmes rangées.
+  const a = new SeededRng(99);
+  const b = new SeededRng(99);
+  for (const row of [0, 1, 2, 10, 25, 60]) {
+    equal(digGenRow(a, row, DIG_COLS).join(','), digGenRow(b, row, DIG_COLS).join(','), 'Dig : rangée ' + row + ' déterministe');
+  }
+  // Surface : plafond bedrock, poche de départ vide.
+  const top = digGenRow(new SeededRng(1), 0, DIG_COLS);
+  assert(top.every((c) => c === Dig.Bedrock), 'Dig : plafond indestructible');
+  const start = digGenRow(new SeededRng(1), 1, DIG_COLS);
+  for (let c = 8; c <= 11; c++) equal(start[c], Dig.Empty, 'Dig : poche de départ en ' + c);
+  // Cheminée sûre : pas de rocher sur la tête au départ.
+  for (let r = 2; r <= 3; r++) {
+    const row = digGenRow(new SeededRng(r), r, DIG_COLS);
+    for (let c = 8; c <= 11; c++) equal(row[c], Dig.Dirt, 'Dig : cheminée sûre en ' + c + ',' + r);
+  }
+  // Veines : mur + passage obligé d'au moins 2 cases.
+  const rng = new SeededRng(7);
+  for (let k = 0; k < 10; k++) {
+    const { gap, w } = digVeinGap(rng, DIG_COLS);
+    assert(w >= 2, 'Dig : passage d’au moins 2 cases');
+    assert(gap >= 1 && gap + w <= DIG_COLS - 1, 'Dig : passage dans les murs');
+  }
+  const vein = digGenRow(new SeededRng(5000), 22, DIG_COLS);
+  const holes = vein.filter((c) => c !== Dig.Bedrock).length;
+  assert(holes >= 2 && holes <= 3, 'Dig : la veine 22 laisse un passage (' + holes + ')');
+  assert(vein.some((c) => c === Dig.Bedrock), 'Dig : la veine 22 bloque le reste');
+  // Salles : bornées, dans le monde.
+  const rooms = digPlanRooms(new SeededRng(3), DIG_COLS, 4);
+  equal(rooms.length, 4, 'Dig : quatre salles planifiées');
+  for (const room of rooms) {
+    assert(room.x >= 1 && room.x + room.w <= DIG_COLS - 1, 'Dig : salle dans les murs');
+    assert(room.y >= 16, 'Dig : salles en profondeur');
+  }
+  // Sculpture : coffre de pierre + diamants + piège au-dessus.
+  const cells = new Array<number>(DIG_COLS).fill(Dig.Dirt);
+  const room = { x: 4, y: 20, w: 6, h: 3 };
+  digCarveRoom(cells, room, 20, DIG_COLS, new SeededRng(11));
+  assert(cells[4] === Dig.Stone && cells[9] === Dig.Stone, 'Dig : coffre de pierre en haut');
+  digCarveRoom(cells, room, 21, DIG_COLS, new SeededRng(11));
+  assert(cells.slice(5, 9).every((c) => c === Dig.Empty || c === Dig.Diamond), 'Dig : intérieur creux');
+  assert(cells.slice(5, 9).some((c) => c === Dig.Diamond), 'Dig : diamants tapis dedans');
+}
+
 function testFrogInput(): void {
   // Le moteur miroite les directions clavier/croix dans moveX/moveY
   // (composeRawStates) : un appui = front pressed() + stick la même frame.
@@ -1303,6 +1441,9 @@ const tests: readonly [string, Test][] = [
   ['Flappy Blob', testFlappy],
   ['Flappy Blob : un appui = un vol', testFlappyInput],
   ['Saut variable partagé', testJump],
+  ['Blob Digger', testDig],
+  ['Blob Digger : chutes', testDigGravity],
+  ['Blob Digger : génération', testDigGen],
 ];
 
 for (const [name, test] of tests) {

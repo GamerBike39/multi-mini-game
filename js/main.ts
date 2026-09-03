@@ -19,6 +19,7 @@ import { SortGame } from './games/sort';
 import { PathGame } from './games/path';
 import { FrogGame } from './games/frog';
 import { FlappyGame } from './games/flappy';
+import { DigGame } from './games/dig';
 import { MusicTestApp } from './music-test';
 import type { AppLike, GameConstructor } from './core/types';
 
@@ -51,6 +52,7 @@ const GAMES: GameConstructor[] = [
   PathGame,
   FrogGame,
   FlappyGame,
+  DigGame,
 ];
 
 function element<T extends HTMLElement>(id: string): T {

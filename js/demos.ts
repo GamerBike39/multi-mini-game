@@ -1558,6 +1558,112 @@ function demoFlap(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB DIGGER : le mineur creuse, un rocher guette ----------------
+function demoDig(accent: string): DemoImpl {
+  const X0 = 560, CELL = 62, TOP = 210;
+  const cx = (c: number): number => X0 + (c + 0.5) * CELL;
+  const cy = (r: number): number => TOP + (r + 0.5) * CELL;
+  const s: any = {
+    t: 0, stepT: 0, r: 0,
+    blob: new Blob({ x: cx(3), y: cy(0), r: 16, color: accent }),
+    dug: [true, false, false, false, false, false],
+    rockY: cy(1), rockFalling: false, rockT: 0,
+    gemTaken: false, gemT: 0,
+    puffs: new Puffs(),
+  };
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      s.stepT += dt;
+      // Descente scriptée : creuse une case toutes les 0.5 s, boucle en bas.
+      if (s.stepT > 0.5 && s.r < 5) {
+        s.stepT = 0;
+        s.r += 1;
+        s.dug[s.r] = true;
+        s.blob.punch(0.35);
+        s.puffs.burst(cx(3), cy(s.r), ['#8a5a33', '#c98d54', '#ffffff'], 8, [40, 200], 0.4);
+        if (s.r === 4 && !s.gemTaken) {
+          s.gemTaken = true;
+          s.gemT = 0;
+          s.puffs.burst(cx(4), cy(4), ['#22d3ee', '#ffffff'], 16, [60, 300], 0.6);
+        }
+        if (s.r === 2 && !s.rockFalling) {
+          s.rockFalling = true;
+          s.rockT = 0;
+        }
+      }
+      if (s.r >= 5) {
+        s.r = 0;
+        s.dug = [true, false, false, false, false, false];
+        s.rockFalling = false;
+        s.rockY = cy(1);
+        s.gemTaken = false;
+      }
+      // Le rocher éventré dégringole une fois le mineur passé dessous.
+      if (s.rockFalling && s.rockY < cy(4)) {
+        s.rockT += dt;
+        s.rockY = Math.min(cy(4), cy(1) + s.rockT * s.rockT * 900);
+      }
+      const ty = cy(s.r);
+      s.blob.x += (cx(3) - s.blob.x) * Math.min(1, dt * 10);
+      s.blob.y += (ty - s.blob.y) * Math.min(1, dt * 10);
+      s.blob.vx = 0;
+      s.blob.vy = 200;
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      for (let r = 0; r < 6; r++) {
+        for (let c = 1; c < 6; c++) {
+          const dug = (c === 3 && s.dug[r]) || (r === 4 && c === 4 && s.gemTaken);
+          ctx.fillStyle = dug ? '#0b0906' : '#6b4226';
+          ctx.fillRect(X0 + c * CELL, TOP + r * CELL, CELL - 2, CELL - 2);
+          if (!dug) {
+            ctx.fillStyle = 'rgba(201,141,84,0.5)';
+            ctx.beginPath();
+            ctx.arc(X0 + c * CELL + 14, TOP + r * CELL + 18, 3, 0, TAU);
+            ctx.fill();
+          }
+        }
+      }
+      // Mur indestructible à gauche.
+      ctx.fillStyle = '#232a3a';
+      ctx.fillRect(X0, TOP, 22, 6 * CELL);
+      ctx.fillStyle = '#94a3b8';
+      for (let r = 0; r < 6; r++) {
+        ctx.beginPath();
+        ctx.arc(X0 + 11, TOP + r * CELL + 20, 2.4, 0, TAU);
+        ctx.fill();
+      }
+      // Rocher + diamant.
+      ctx.fillStyle = '#6e7683';
+      ctx.beginPath();
+      ctx.arc(cx(4), s.rockFalling ? s.rockY : cy(1), 22, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#a8b0bd';
+      ctx.beginPath();
+      ctx.arc(cx(4) - 6, (s.rockFalling ? s.rockY : cy(1)) - 7, 6, 0, TAU);
+      ctx.fill();
+      if (!s.gemTaken) {
+        ctx.save();
+        ctx.shadowColor = '#22d3ee';
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = '#67e8f9';
+        ctx.beginPath();
+        ctx.moveTo(cx(4), cy(4) - 13);
+        ctx.lineTo(cx(4) + 10, cy(4) - 2);
+        ctx.lineTo(cx(4), cy(4) + 13);
+        ctx.lineTo(cx(4) - 10, cy(4) - 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      s.blob.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1575,6 +1681,7 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   path: demoPath,
   frog: demoFrog,
   flap: demoFlap,
+  dig: demoDig,
 };
 
 export class Demo {

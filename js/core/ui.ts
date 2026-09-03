@@ -478,6 +478,19 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.beginPath(); ctx.moveTo(-28, 6); ctx.lineTo(-14, 6); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-28, 14); ctx.lineTo(-18, 14); ctx.stroke();
     ctx.globalAlpha = 1;
+  } else if (id === 'dig') {
+    // Casque + diamant : la descente du mineur.
+    ctx.beginPath(); ctx.arc(-4, 6, 10, 0, 6.2832); ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(-4, 6, 15, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-4, -9); ctx.lineTo(-4, -15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-4, -18, 3, 0, 6.2832); ctx.fill();
+    ctx.save();
+    ctx.translate(14, -8);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeRect(-6, -6, 12, 12);
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }
