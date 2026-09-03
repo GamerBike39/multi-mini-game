@@ -52,21 +52,21 @@ export class FishingGame extends BaseGame {
     this.fishes = []; this.stars = []; this.bubbles = [];
     for (let i = 0; i < 26; i++) this.stars.push({ x: Math.random() * 1280, y: rand(6, 96), z: rand(0.3, 1), ph: Math.random() * 6.28 });
     for (let i = 0; i < 22; i++) this.bubbles.push({ x: Math.random() * 1280, y: rand(130, 716), r: rand(1.4, 3.4), sp: rand(24, 56), ph: Math.random() * 6.28 });
-    for (let i = 0; i < 7; i++) this.fishes.push(this.makeFish(rand(240, 1320)));
+    for (let i = 0; i < 7; i++) this.fishes.push(this.makeFish(this.rng.float(240, 1320)));
   }
 
   makeFish(x: number = 1330): any {
-    let r = Math.random(), band = BANDS[BANDS.length - 1];
+    let r = this.rng.next(), band = BANDS[BANDS.length - 1];
     for (const b of BANDS) { if (r < b.p) { band = b; break; } r -= b.p; }
-    const legend = Math.random() < LEGEND_P;
-    const w = legend ? LEGEND_W : ri(band.w0, band.w1);
-    const baseY = legend ? rand(520, 650) : rand(band.y0, band.y1);
+    const legend = this.rng.next() < LEGEND_P;
+    const w = legend ? LEGEND_W : this.rng.int(band.w0, band.w1);
+    const baseY = legend ? this.rng.float(520, 650) : this.rng.float(band.y0, band.y1);
     return {
       x, state: 'swim', legend, w,
-      sp: legend ? rand(26, 40) : rand(band.s0, band.s1),
+      sp: legend ? this.rng.float(26, 40) : this.rng.float(band.s0, band.s1),
       baseY, y: baseY, col: legend ? GOLD : band.col,
       r: clamp(9 + Math.sqrt(w) * 0.16, 9, 24),
-      amp: rand(10, 24), ph: Math.random() * 6.28, phSp: rand(1.4, 2.8),
+      amp: this.rng.float(10, 24), ph: this.rng.float(0, 6.28), phSp: this.rng.float(1.4, 2.8),
       fleeT: 0, tilt: 0, jx: 0, jy: 0, dead: false,
     };
   }
@@ -117,7 +117,7 @@ export class FishingGame extends BaseGame {
   startReel(): void {
     this.phase = 'reel';
     this.tension = 0.15;
-    this.jerk = 0; this.jerkT = rand(0.8, 1.5);
+    this.jerk = 0; this.jerkT = this.rng.float(0.8, 1.5);
     this.hooked.state = 'reel';
     this.audio.hitEnemy();
     this.input.rumble(0.2, 0.08);
@@ -239,7 +239,7 @@ export class FishingGame extends BaseGame {
       else {
         this.jerkT -= dt;
         if (this.jerkT <= 0) {
-          this.jerk = 0.35; this.jerkT = rand(0.8, 1.5);
+          this.jerk = 0.35; this.jerkT = this.rng.float(0.8, 1.5);
           this.audio.tone({ f: 220, f1: 140, type: 'sawtooth', dur: 0.1, vol: 0.09 });
           this.input.rumble(0.24, 0.09);
           b.punch(0.15);
@@ -278,7 +278,7 @@ export class FishingGame extends BaseGame {
 
     // --- poissons ---
     this.spawnT -= dt;
-    if (this.fishes.length < 10 && this.spawnT <= 0) { this.fishes.push(this.makeFish()); this.spawnT = rand(0.4, 1.2); }
+    if (this.fishes.length < 10 && this.spawnT <= 0) { this.fishes.push(this.makeFish()); this.spawnT = this.rng.float(0.4, 1.2); }
     if (this.fishes.length < 6) this.fishes.push(this.makeFish());
     for (const f of this.fishes) {
       f.jx = 0; f.jy = 0;

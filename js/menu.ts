@@ -13,20 +13,18 @@ import { MenuMusicAdapter } from './core/music/game-adapter';
 import type { GameConstructor, GameMeta, InputLike, EngineLike, AudioLike } from './core/types';
 
 // Grille (vue globale).
-const COLS = 5;
-const CARD_W = 170;
-const CARD_H = 205;
-const GAP_X = 22;
-const GAP_Y = 26;
+const COLS = 6;
+const CARD_W = 160;
+const CARD_H = 190;
+const GAP_X = 16;
+const GAP_Y = 18;
 const START_X = (1280 - (COLS * CARD_W + (COLS - 1) * GAP_X)) / 2;
 const ROW0_Y = 178;
 const DIGIT_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'] as const;
 
 // Bandeau de vignettes (fiche).
-const TH_W = 108;
 const TH_H = 74;
-const TH_GAP = 12;
-const TH_X0 = (1280 - (10 * TH_W + 9 * TH_GAP)) / 2;
+const TH_GAP = 8;
 const TH_Y = 626;
 
 // Bouton lancer (fiche) : zone de clic fixe, le dessin pulse autour.
@@ -154,11 +152,7 @@ export class Menu {
   launch(): void {
     const game = this.games[this.sel];
     this.audio.uiOk();
-    this.eng.transitionTo(new game(this.eng), {
-      accent: game.meta.accent,
-      title: game.meta.name,
-      from: { x: this.blob.x, y: this.blob.y },
-    });
+    this.eng.startGame(game);
   }
 
   cardPos(index: number): Point {
@@ -168,7 +162,14 @@ export class Menu {
   }
 
   thumbRect(index: number): { x: number; y: number; w: number; h: number } {
-    return { x: TH_X0 + index * (TH_W + TH_GAP), y: TH_Y, w: TH_W, h: TH_H };
+    const width = this.thumbWidth();
+    const total = this.games.length * width + Math.max(0, this.games.length - 1) * TH_GAP;
+    const x0 = (1280 - total) / 2;
+    return { x: x0 + index * (width + TH_GAP), y: TH_Y, w: width, h: TH_H };
+  }
+
+  thumbWidth(): number {
+    return Math.min(108, Math.max(76, (1280 - 40 - Math.max(0, this.games.length - 1) * TH_GAP) / Math.max(1, this.games.length)));
   }
 
   // ---------- souris (interface uniquement) ----------
@@ -305,7 +306,7 @@ export class Menu {
     this.hop = Math.max(0, this.hop - dt);
 
     const pos = this.view === 'detail' ? this.thumbRect(this.sel) : this.cardPos(this.sel);
-    const cx = pos.x + (this.view === 'detail' ? TH_W : CARD_W) / 2;
+    const cx = pos.x + (this.view === 'detail' ? this.thumbWidth() : CARD_W) / 2;
     const hopH = this.hop > 0 ? Math.sin((1 - this.hop / 0.26) * Math.PI) * 16 : 0;
     const prevX = this.blob.x;
     const prevY = this.blob.y;

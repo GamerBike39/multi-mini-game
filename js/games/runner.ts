@@ -4,6 +4,8 @@
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
+import { SeededRng } from '../core/rng';
+import { ObjectPool } from '../core/pool';
 
 const GY = 600;           // sol
 const PX = 320;           // x écran du joueur
@@ -20,13 +22,6 @@ const COYOTE_TIME = 0.11;
 const JUMP_BUFFER_TIME = 0.13;
 const MAX_JUMPS = 2;
 const RUNNER_BPM = 138;
-
-function runnerSeedFromLocation(): number {
-  const raw = new URLSearchParams(location.search).get('runnerSeed');
-  const requested = raw === null ? Number.NaN : Number(raw);
-  if (Number.isFinite(requested)) return (Math.trunc(requested) >>> 0) || 1;
-  return (Math.floor(Math.random() * 0x100000000) >>> 0) || 1;
-}
 
 type RunnerObstacleType = 'spike' | 'block' | 'platform' | 'bar' | 'ceiling' | 'saw' | 'gap';
 
@@ -52,6 +47,7 @@ interface RunnerSpeedLine {
 
 export class RunnerGame extends BaseGame {
   [key: string]: any;
+  readonly obstaclePool = new ObjectPool<RunnerObstacle>(() => ({ type: 'spike', x: 0 }), 48);
   static meta: GameMeta = {
     id: 'run', name: 'BLOB RUN', accent: '#a3e635', mood: 'runner',
     desc: 'Saute. Baisse-toi. Vite.', controls: 'A sauter · A en l’air = double saut · B duck',
@@ -62,8 +58,8 @@ export class RunnerGame extends BaseGame {
 
   constructor(engine: EngineLike) {
     super(engine);
-    this.seed = runnerSeedFromLocation();
-    this.rngState = this.seed;
+    this.seed = this.session.seed;
+    this.visualRng = new SeededRng(this.session.seed ^ 0x56495355);
     this.blob.x = PX; this.blob.y = GY - 22; this.blob.r = 22;
     // La traînée générique suit les positions d'écran du blob. Comme le
     // runner le maintient sur un axe fixe, elle devenait une colonne verticale
@@ -77,7 +73,7 @@ export class RunnerGame extends BaseGame {
     this.duck = 0;           // 0..1
     this.speed = 380;
     this.dist = 0;
-    this.obs = [] as RunnerObstacle[];
+    this.obs = this.obstaclePool.active;
     this.spawnGap = 500;
     this.milestone = 250;
     this.jumpT = 0;
@@ -91,14 +87,14 @@ export class RunnerGame extends BaseGame {
     this.nearMisses = 0;
     this.eaten = 0;
     this.bgDots = [];
-    for (let i = 0; i < 40; i++) this.bgDots.push({ x: this.rng() * 1280, y: this.rng() * 560, z: 0.2 + this.rng() * 0.6 });
+    for (let i = 0; i < 40; i++) this.bgDots.push({ x: this.visualUnit() * 1280, y: this.visualUnit() * 560, z: 0.2 + this.visualUnit() * 0.6 });
     this.speedLines = [] as RunnerSpeedLine[];
     for (let i = 0; i < 13; i++) {
       this.speedLines.push({
-        x: this.rng() * 1480 - 80,
-        y: 150 + this.rng() * 360,
-        length: 22 + this.rng() * 48,
-        depth: 0.25 + this.rng() * 0.75,
+        x: this.visualUnit() * 1480 - 80,
+        y: 150 + this.visualUnit() * 360,
+        length: 22 + this.visualUnit() * 48,
+        depth: 0.25 + this.visualUnit() * 0.75,
       });
     }
     this.tickOff = 0;
@@ -111,18 +107,19 @@ export class RunnerGame extends BaseGame {
   speedFactor(): number { return Math.max(0, Math.min(1, (this.speed - 380) / 400)); }
   totalScore(): number { return this.meters() + this.bonusScore; }
 
-  rng(): number {
-    let t = (this.rngState = (this.rngState + 0x6D2B79F5) >>> 0);
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 0x100000000;
+  randomUnit(): number {
+    return this.rng.next();
+  }
+
+  visualUnit(): number {
+    return this.visualRng.next();
   }
 
   choosePattern(pool: string[]): string {
     const recent = this.patternHistory.slice(-2);
     const available = pool.filter((pattern) => !recent.includes(pattern));
     const source = available.length ? available : pool;
-    const pattern = source[Math.floor(this.rng() * source.length)] ?? 's1';
+    const pattern = source[Math.floor(this.randomUnit() * source.length)] ?? 's1';
     this.patternHistory.push(pattern);
     if (this.patternHistory.length > 8) this.patternHistory.shift();
     return pattern;
@@ -233,7 +230,10 @@ export class RunnerGame extends BaseGame {
       o.x -= this.speed * dt;
       if (o.type === 'saw') { o.x -= 115 * dt; o.ang += dt * 9; }
     }
-    this.obs = this.obs.filter((o: any) => o.x + (o.w || 60) > -80);
+    for (let i = this.obstaclePool.active.length - 1; i >= 0; i--) {
+      const obstacle = this.obstaclePool.active[i];
+      if (obstacle.x + (obstacle.w || 60) <= -80) this.obstaclePool.releaseAt(i);
+    }
 
     // spawn
     this.spawnGap -= this.speed * dt;
@@ -467,13 +467,24 @@ export class RunnerGame extends BaseGame {
     const beat = this.beatDistance();
     let endX = startX;
     const place = (o: Omit<RunnerObstacle, 'x'>, at = endX): void => {
-      const obstacle = { ...o, x: at } as RunnerObstacle;
+      const obstacle = this.obstaclePool.acquire();
+      obstacle.type = o.type;
+      obstacle.x = at;
+      obstacle.y = undefined;
+      obstacle.w = undefined;
+      obstacle.h = undefined;
+      obstacle.r = undefined;
+      obstacle.base = undefined;
+      obstacle.ang = undefined;
+      obstacle.minClearance = undefined;
+      obstacle.nearAwarded = false;
+      Object.assign(obstacle, o);
       if (obstacle.type === 'block') obstacle.y = GY - (obstacle.h ?? 0);
-      this.obs.push(obstacle);
-      endX = Math.max(endX, at + (obstacle.w ?? (obstacle.r ? obstacle.r * 2 : 60)));
+      const footprint = obstacle.type === 'saw' ? (obstacle.r ?? 17) : (obstacle.w ?? (obstacle.r ? obstacle.r * 2 : 60));
+      endX = Math.max(endX, at + footprint);
     };
     const placeSaw = (at: number): void => {
-      this.obs.push({ type: 'saw', x: at, y: GY - 17, r: 17, ang: 0 });
+      place({ type: 'saw', y: GY - 17, r: 17, ang: 0 }, at);
       endX = Math.max(endX, at + 17);
     };
 
@@ -557,7 +568,7 @@ export class RunnerGame extends BaseGame {
       place({ type: 'gap', w: 300 }, startX + 240);
     }
     const width = endX - startX;
-    const breathingRoom = 0.82 - difficulty * 0.23 + this.rng() * (0.18 - difficulty * 0.06);
+    const breathingRoom = 0.82 - difficulty * 0.23 + this.randomUnit() * (0.18 - difficulty * 0.06);
     this.spawnGap = width + this.speed * breathingRoom + 90 - difficulty * 30;
   }
 

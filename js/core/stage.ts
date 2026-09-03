@@ -351,7 +351,7 @@ export class IntroApp implements AppLike {
       weight: 900,
       shadow: true,
     });
-    UI.txt(ctx, 'un blob, dix jeux', 640, 172, {
+    UI.txt(ctx, 'un blob, onze jeux', 640, 172, {
       size: 16,
       align: 'center',
       color: '#8b95a8',

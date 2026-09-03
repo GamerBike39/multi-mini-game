@@ -39,7 +39,7 @@ export class SnakeGame extends BaseGame {
     this.stepTime = STEP0;
     this.eaten = 0;
     this.sinceGold = 0;
-    this.goldEvery = 6 + ((Math.random() * 3) | 0);
+    this.goldEvery = this.rng.int(6, 8);
     this.goldT = 0;
     this.coinStep = 0; this.chainT = 0;
     this.food = null;
@@ -92,10 +92,10 @@ export class SnakeGame extends BaseGame {
       }
     }
     if (!free.length) { this.over(true); return; } // grille remplie : victoire !
-    const c = free[(Math.random() * free.length) | 0];
+    const c = this.rng.pick(free);
     const gold = this.sinceGold >= this.goldEvery;
-    if (gold) { this.sinceGold = 0; this.goldEvery = 6 + ((Math.random() * 3) | 0); this.goldT = 6; }
-    this.food = { x: c.x, y: c.y, gold, ph: Math.random() * 6.28 };
+    if (gold) { this.sinceGold = 0; this.goldEvery = this.rng.int(6, 8); this.goldT = 6; }
+    this.food = { x: c.x, y: c.y, gold, ph: this.rng.float(0, 6.28) };
   }
 
   eat(): void {

@@ -83,7 +83,7 @@ export class SimonGame extends BaseGame {
     this.blob.y = 660;
     this.blob.r = 14;
 
-    this.seq = [(Math.random() * 4) | 0];
+    this.seq = [this.rng.int(0, 3)];
     this.seq.push(this.randNote()); // séquence initiale de 2 notes (jamais deux fois la même de suite)
 
     // Poussière d'ambiance.
@@ -96,7 +96,7 @@ export class SimonGame extends BaseGame {
   randNote(): number {
     let note = 0;
     do {
-      note = (Math.random() * 4) | 0;
+      note = this.rng.int(0, 3);
     } while (note === this.seq[this.seq.length - 1]);
     return note;
   }

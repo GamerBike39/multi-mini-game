@@ -6,6 +6,7 @@ import { BaseGame } from '../core/game';
 import { Blob } from '../core/blob';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
+import { ObjectPool } from '../core/pool';
 
 const WALL = 20;             // marge de jeu (murs latéraux + plafond)
 const PAD_Y = 660;           // y du paddle
@@ -252,6 +253,7 @@ interface LaserBolt {
 
 export class BreakerGame extends BaseGame {
   [key: string]: any;
+  readonly dropPool = new ObjectPool<BreakerDrop>(() => ({ x: 0, y: 0, kind: 'SMALL', dead: false }), 20);
   static meta: GameMeta = {
     id: 'breaker', name: 'BLOB BREAKER', accent: '#fb7185', mood: 'shooter',
     desc: 'Casse tout au blob-rebond', controls: 'Stick G / ZQSD paddle · Espace / J lancer',
@@ -285,7 +287,7 @@ export class BreakerGame extends BaseGame {
     this.broken = 0;
     this.comboStep = 0; this.comboT = 0;
     this.slowT = 0;
-    this.drops = [] as BreakerDrop[];
+    this.drops = this.dropPool.active;
     this.lasers = [] as LaserBolt[];
     this.explosionQueue = [] as PendingExplosion[];
     this.explosions = [] as ExplosionPulse[];
@@ -504,14 +506,15 @@ export class BreakerGame extends BaseGame {
     this[name] = Math.min(max, this[name] + amount);
   }
 
-  launchBall(bl: any, angle = (Math.random() * 2 - 1) * (Math.PI / 9)): void {
+  launchBall(bl: any, angle?: number): void {
+    const launchAngle = angle ?? this.rng.float(-1, 1) * (Math.PI / 9);
     bl.glued = false;
     bl.glueWait = 0;
     bl.lastBrick = null;
     bl.lastBrickT = 0;
     const launchSpeed = this.targetBallSpeed(bl);
-    bl.vx = Math.sin(angle) * launchSpeed;
-    bl.vy = -Math.cos(angle) * launchSpeed;
+    bl.vx = Math.sin(launchAngle) * launchSpeed;
+    bl.vy = -Math.cos(launchAngle) * launchSpeed;
     this.audio.jump();
     this.input.rumble(0.12, 0.05);
     this.fx.burst(bl.x, bl.y, { n: 8, speed: [40, 200], colors: [this.accent, '#ffffff'], life: 0.35 });
@@ -522,7 +525,7 @@ export class BreakerGame extends BaseGame {
     if (!b) return;
     // Les scènes B-LAB commencent sur un axe fixe pour rendre les mesures et
     // les captures comparables d'une tentative à l'autre.
-    const angle = this.lab ? 0 : (Math.random() * 2 - 1) * (Math.PI / 9);
+    const angle = this.lab ? 0 : this.rng.float(-1, 1) * (Math.PI / 9);
     this.launchBall(b, angle);
     this.stuck = false;
   }
@@ -530,7 +533,7 @@ export class BreakerGame extends BaseGame {
   releaseGluedBalls(): void {
     for (const b of this.balls) {
       if (!b.glued) continue;
-      const angle = b.glueAngle ?? (Math.random() * 2 - 1) * (Math.PI / 3);
+      const angle = b.glueAngle ?? this.rng.float(-1, 1) * (Math.PI / 3);
       this.launchBall(b, angle);
     }
   }
@@ -587,9 +590,13 @@ export class BreakerGame extends BaseGame {
         this.fx.text(cx, cy - 12, '+' + (br.pts + chainBonus), { color: br.color, size: 15, mono: true });
       }
     }
-    if (allowDrop && Math.random() < 0.12) {
+    if (allowDrop && this.rng.next() < 0.12) {
       const kinds: DropKind[] = ['MULTI', 'LARGE', 'SLOW', 'LASER', 'GLUE', 'FLAME', 'GIANT', 'SMALL'];
-      this.drops.push({ x: cx, y: cy, kind: kinds[(Math.random() * kinds.length) | 0] });
+      const drop = this.dropPool.acquire();
+      drop.x = cx;
+      drop.y = cy;
+      drop.kind = this.rng.pick(kinds);
+      drop.dead = false;
     }
   }
 
@@ -883,10 +890,10 @@ export class BreakerGame extends BaseGame {
         nb.trailOn = true;
         const splitSpeed = this.targetBallSpeed(b);
         if (this.stuck && b === this.balls[0]) {
-          const a = (Math.random() - 0.5) * 0.7;
+          const a = this.rng.float(-0.5, 0.5) * 0.7;
           nb.vx = Math.sin(a) * splitSpeed; nb.vy = -Math.cos(a) * splitSpeed;
         } else if (b.glued) {
-          const a = b.glueAngle ?? (Math.random() - 0.5) * 0.7;
+          const a = b.glueAngle ?? this.rng.float(-0.5, 0.5) * 0.7;
           nb.vx = Math.sin(a) * splitSpeed; nb.vy = -Math.cos(a) * splitSpeed;
         } else {
           const a = Math.atan2(b.vy, b.vx) + 0.45;
@@ -1220,7 +1227,9 @@ export class BreakerGame extends BaseGame {
         this.applyDrop(d.kind);
       }
     }
-    this.drops = this.drops.filter((d: any) => !d.dead);
+    for (let i = this.dropPool.active.length - 1; i >= 0; i--) {
+      if (this.dropPool.active[i].dead) this.dropPool.releaseAt(i);
+    }
 
     // flash et cicatrice d'impact des briques abîmées
     for (const br of this.bricks as BreakerBrick[]) {

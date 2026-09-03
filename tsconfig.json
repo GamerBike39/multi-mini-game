@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["js/**/*.ts", "js/**/*.d.ts"]
+  "include": ["js/**/*.ts", "js/**/*.d.ts", "tests/**/*.ts"]
 }

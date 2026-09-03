@@ -120,31 +120,94 @@ export function grid(ctx: CanvasRenderingContext2D, { gap = 64, off = 0, offY = 
 }
 
 export function vignette(ctx: CanvasRenderingContext2D): void {
-  const gradient = ctx.createRadialGradient(640, 360, 340, 640, 360, 780);
-  gradient.addColorStop(0, 'rgba(0,0,0,0)');
-  gradient.addColorStop(1, 'rgba(0,0,0,0.42)');
+  let gradient = vignetteCache.get(ctx);
+  if (!gradient) {
+    gradient = ctx.createRadialGradient(640, 360, 340, 640, 360, 780);
+    gradient.addColorStop(0, 'rgba(0,0,0,0)');
+    gradient.addColorStop(1, 'rgba(0,0,0,0.42)');
+    vignetteCache.set(ctx, gradient);
+  }
   ctx.fillStyle = gradient;
   ctx.fillRect(0, 0, 1280, 720);
 }
 
+const vignetteCache = new WeakMap<CanvasRenderingContext2D, CanvasGradient>();
+
 // ---------- records ----------
-export function getBest(id: string): number {
+const bestCache = new Map<string, number>();
+const statsCache = new Map<string, GameStats>();
+const dirtyBest = new Set<string>();
+const dirtyStats = new Set<string>();
+let profileLoaded = false;
+let profileFlushTimer: number | null = null;
+
+function loadProfileOnce(): void {
+  if (profileLoaded) return;
+  profileLoaded = true;
   try {
-    return Number(localStorage.getItem('blobArcade.best.' + id) ?? 0) || 0;
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key) continue;
+      if (key.startsWith('blobArcade.best.')) {
+        const id = key.slice('blobArcade.best.'.length);
+        const value = Number(localStorage.getItem(key) || 0);
+        bestCache.set(id, Number.isFinite(value) ? value : 0);
+      } else if (key.startsWith('blobArcade.stat.')) {
+        const id = key.slice('blobArcade.stat.'.length);
+        try {
+          const value = JSON.parse(localStorage.getItem(key) || '{}') as GameStats;
+          statsCache.set(id, value && typeof value === 'object' ? value : {});
+        } catch {
+          statsCache.set(id, {});
+        }
+      }
+    }
   } catch {
-    return 0;
+    // Le profil reste en mémoire même si le stockage est indisponible.
   }
+}
+
+function scheduleProfileFlush(): void {
+  if (profileFlushTimer !== null) return;
+  if (typeof window === 'undefined') return;
+  profileFlushTimer = window.setTimeout(() => {
+    profileFlushTimer = null;
+    try {
+      for (const id of dirtyBest) localStorage.setItem('blobArcade.best.' + id, String(bestCache.get(id) || 0));
+      for (const id of dirtyStats) localStorage.setItem('blobArcade.stat.' + id, JSON.stringify(statsCache.get(id) || {}));
+    } catch {
+      // La session continue normalement avec le cache mémoire.
+    }
+    dirtyBest.clear();
+    dirtyStats.clear();
+  }, 120);
+}
+
+if (typeof addEventListener === 'function') addEventListener('pagehide', () => {
+  if (profileFlushTimer !== null) window.clearTimeout(profileFlushTimer);
+  profileFlushTimer = null;
+  try {
+    for (const id of dirtyBest) localStorage.setItem('blobArcade.best.' + id, String(bestCache.get(id) || 0));
+    for (const id of dirtyStats) localStorage.setItem('blobArcade.stat.' + id, JSON.stringify(statsCache.get(id) || {}));
+  } catch {
+    // Rien à faire si le stockage est fermé au moment de quitter la page.
+  }
+  dirtyBest.clear();
+  dirtyStats.clear();
+});
+
+export function getBest(id: string): number {
+  loadProfileOnce();
+  return bestCache.get(id) || 0;
 }
 
 export function saveBest(id: string, val: number): SaveBestResult {
   const prev = getBest(id);
   const isNew = val > prev;
   if (isNew) {
-    try {
-      localStorage.setItem('blobArcade.best.' + id, String(Math.floor(val)));
-    } catch {
-      // Persistance indisponible : le score courant reste affichable.
-    }
+    bestCache.set(id, Math.floor(val));
+    dirtyBest.add(id);
+    scheduleProfileFlush();
   }
   return { best: Math.max(prev, val), isNew };
 }
@@ -153,19 +216,19 @@ export function saveBest(id: string, val: number): SaveBestResult {
 // { plays: parties terminées, time: secondes jouées, total: somme des scores,
 //   last: dernier score, wins: parties gagnées }
 export function getStats(id: string): GameStats {
-  try {
-    return JSON.parse(localStorage.getItem('blobArcade.stat.' + id) || '{}') as GameStats;
-  } catch {
-    return {};
+  loadProfileOnce();
+  let stats = statsCache.get(id);
+  if (!stats) {
+    stats = {};
+    statsCache.set(id, stats);
   }
+  return stats;
 }
 
 function saveStats(id: string, stats: GameStats): void {
-  try {
-    localStorage.setItem('blobArcade.stat.' + id, JSON.stringify(stats));
-  } catch {
-    // Persistance indisponible : pas de drame.
-  }
+  statsCache.set(id, stats);
+  dirtyStats.add(id);
+  scheduleProfileFlush();
 }
 
 export function addStat(id: string, { score = 0, time = 0, win = false }: { score?: number; time?: number; win?: boolean } = {}): GameStats {
@@ -342,6 +405,13 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.globalAlpha = 0.5;
     ctx.beginPath(); ctx.arc(-4, -17, 3, 0, 6.2832); ctx.fill();
     ctx.beginPath(); ctx.arc(4, -24, 2, 0, 6.2832); ctx.fill();
+  } else if (id === 'pong') {
+    ctx.beginPath(); ctx.moveTo(-23, -18); ctx.lineTo(-23, 18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(23, -18); ctx.lineTo(23, 18); ctx.stroke();
+    ctx.beginPath(); ctx.arc(0, 0, 6, 0, 6.2832); ctx.fill();
+    ctx.setLineDash([4, 5]);
+    ctx.beginPath(); ctx.moveTo(0, -25); ctx.lineTo(0, 25); ctx.stroke();
+    ctx.setLineDash([]);
   }
   ctx.restore();
 }

@@ -5,7 +5,8 @@ import { Fx } from './fx';
 import { Blob } from './blob';
 import * as UI from './ui';
 import { GameMusicAdapter, type GameMusicSource } from './music/game-adapter';
-import type { AudioLike, EngineLike, GameMeta, InputLike, SettingsLike } from './types';
+import { SeededRng } from './rng';
+import type { AudioLike, DebugValue, EngineLike, GameConstructor, GameMeta, GameSession, InputHubLike, PlayerInputLike, SettingsLike } from './types';
 
 interface BestResult {
   best: number;
@@ -16,7 +17,7 @@ export class BaseGame {
   static meta: GameMeta;
 
   readonly eng: EngineLike;
-  readonly input: InputLike;
+  readonly input: InputHubLike;
   readonly audio: AudioLike;
   readonly fx: Fx;
   readonly meta: GameMeta;
@@ -45,10 +46,13 @@ export class BaseGame {
   bestResult?: BestResult;
   musicOpts?: Record<string, unknown>;
   onPauseChange?: (paused: boolean) => void;
+  readonly session: GameSession;
+  readonly players: readonly PlayerInputLike[];
+  readonly rng: SeededRng;
   // Certains jeux (notamment Breaker) remplacent la balle principale.
   blob: InstanceType<typeof Blob>;
 
-  constructor(engine: EngineLike) {
+  constructor(engine: EngineLike, session?: GameSession) {
     this.eng = engine;
     this.input = engine.input;
     this.audio = engine.audio;
@@ -59,6 +63,18 @@ export class BaseGame {
     this.hint = this.meta.hint;
     this.blob = new Blob({ r: 22, color: this.accent });
     this.musicAdapter = new GameMusicAdapter(this.audio, this.meta);
+    this.session = session || engine.session || {
+      id: 'legacy',
+      gameId: this.meta.id,
+      mode: 'solo',
+      playerCount: 1,
+      seed: Date.now() >>> 0,
+      buildVersion: 'legacy',
+      replayMode: 'live',
+    };
+    this.players = Array.from({ length: Math.max(1, this.session.playerCount) }, (_, i) => engine.input.player(i));
+    this.rng = new SeededRng(this.session.seed);
+    this.bestKey = this.session.mode === 'local' ? `local.${this.meta.id}.${this.session.playerCount}` : this.meta.id;
   }
 
   get isOver(): boolean {
@@ -76,12 +92,21 @@ export class BaseGame {
   exit(): void {
     this.musicAdapter.stop();
     // Temps non comptabilisé par over() (partie abandonnée) : on le crédite quand même.
-    if (!this._statDone && this.time > 0) UI.addTime(this.meta.id, this.time);
+    if (!this._statDone && this.time > 0) UI.addTime(this.bestKey || this.meta.id, this.time);
   }
 
   // Retourne true si l'update "jeu" doit être sauté (pause, over, réglages, transition).
   baseUpdate(dt: number): boolean {
     this.time += dt;
+    this.eng.dev.count('players', this.players.length);
+    this.eng.dev.state('game-state', this.state);
+    this.eng.dev.state('score', Math.floor(this.score));
+    this.eng.dev.assertFinite('time', this.time);
+    this.eng.dev.assertFinite('score', this.score);
+    this.eng.dev.assertFinite('blob.x', this.blob.x);
+    this.eng.dev.assertFinite('blob.y', this.blob.y);
+    this.eng.dev.assertFinite('blob.vx', this.blob.vx);
+    this.eng.dev.assertFinite('blob.vy', this.blob.vy);
     if (this.hintT > 0) this.hintT -= dt;
     const I = this.input;
 
@@ -167,7 +192,7 @@ export class BaseGame {
     this.bestResult = UI.saveBest(this.bestKey || this.meta.id, Math.floor(this.score));
     // Statistiques : une partie "comptée" = une partie arrivée à son terme.
     this._statDone = true;
-    UI.addStat(this.meta.id, { score: Math.floor(this.score), time: this.time, win });
+    UI.addStat(this.bestKey || this.meta.id, { score: Math.floor(this.score), time: this.time, win });
     this.audio.explode(1.3);
     this.musicEvent(win ? 'waveComplete' : 'playerHit', win ? 0.8 : 1);
     this.input.rumble(1, 0.35);
@@ -179,8 +204,12 @@ export class BaseGame {
 
   restart(): void {
     this.audio.uiOk();
-    const Game = this.constructor as unknown as new (engine: EngineLike) => BaseGame;
-    this.eng.setApp(new Game(this.eng), false);
+    const Game = this.constructor as unknown as GameConstructor;
+    this.eng.startGame(Game, {
+      mode: this.session.mode,
+      playerCount: this.session.playerCount,
+      skipLobby: true,
+    });
   }
 
   quit(): void {
@@ -260,7 +289,7 @@ export class BaseGame {
         title: this.win ? 'BRAVO !' : 'GAME OVER',
         score: Math.floor(this.score),
         unit: this.meta.unit,
-        best: this.bestResult?.best ?? UI.getBest(this.meta.id),
+        best: this.bestResult?.best ?? UI.getBest(this.bestKey || this.meta.id),
         isNew: this.bestResult?.isNew,
         rankLabel: UI.rank(this.meta.ranks, this.score),
       });
@@ -269,6 +298,17 @@ export class BaseGame {
     } else if (this.hintT > 0 && this.hint) {
       UI.drawHint(ctx, this.hint, this.hintT);
     }
+  }
+
+  debugSnapshot(): Record<string, DebugValue> {
+    return {
+      game: this.meta.id,
+      state: this.state,
+      score: Math.floor(this.score),
+      time: Number(this.time.toFixed(2)),
+      players: this.players.length,
+      seed: this.session.seed,
+    };
   }
 
   // Aide : mouvement lissé type "approche de la cible" (ressenti d'accélération).
