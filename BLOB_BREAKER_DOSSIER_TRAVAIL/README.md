@@ -14,14 +14,25 @@ Le périmètre volontairement retenu est :
 
 2. **Chantier B — Géométrie**
    - introduire une famille d'objets de niveau indépendante des briques ;
-   - implémenter `Wall` puis `Bumper` ;
-   - tester leur valeur de gameplay dans un laboratoire dédié avant d'ajouter Portal / Ghost / Switch / Moving.
+   - implémenter `Wall`, `Bumper` puis `Moving` ;
+   - tester leur valeur de gameplay dans un laboratoire dédié avant d'ajouter Portal / Ghost / Switch.
 
 3. **B-LAB — Debug & validation**
    - visualiser les collisions ;
    - visualiser les normales et vitesses ;
    - afficher une prédiction de trajectoire strictement réservée au debug ;
    - disposer de scènes de test reproductibles et de quelques compteurs simples.
+
+## Statut du prototype V1
+
+La première boucle de prototype A3 / Wall / Bumper / B-LAB a été validée par
+l'utilisateur à 90 %. Le chantier suivant, `Moving`, est maintenant intégré à
+la progression à partir du niveau 5 et dispose de son B-LAB dédié ; il reste
+ouvert au tuning terrain avant d'ouvrir Portal / Ghost / Switch.
+
+Les motifs de niveaux, les types de tuiles, les pouvoirs, les réactions en
+chaîne, les feedbacks visuels/sonores/haptiques et les assets Breaker ont été
+ajoutés au prototype au-delà du périmètre initial.
 
 ## Décisions structurantes
 
@@ -41,11 +52,12 @@ Créer une nouvelle famille évite de polluer :
 Architecture cible minimale :
 
 ```ts
-type ObstacleKind = 'wall' | 'bumper';
+type ObstacleKind = 'wall' | 'bumper' | 'moving';
 
 type BreakerObstacle =
   | BreakerWall
-  | BreakerBumper;
+  | BreakerBumper
+  | BreakerMoving;
 ```
 
 ### 2. Pas de refonte générale de la physique dans le premier lot
@@ -55,6 +67,8 @@ Le jeu fonctionne aujourd'hui. Le but n'est pas de réécrire le moteur.
 - les collisions actuelles balle/brique restent en place dans le premier lot ;
 - une fonction robuste `circleVsAabb()` est ajoutée pour les nouveaux Walls ;
 - une fonction `circleVsCircle()` est ajoutée pour les Bumpers ;
+- `Moving` réutilise l'AABB du Wall, avec une réflexion dans le référentiel
+  de sa vitesse pour transmettre son élan à la balle ;
 - l'unification complète des collisions peut venir plus tard si le prototype est validé.
 
 ### 3. La lisibilité précède la couleur
@@ -85,12 +99,11 @@ Ne pas implémenter maintenant :
 - Ghost ;
 - Switch ;
 - Reflector incliné ;
-- Moving obstacles ;
 - refonte des drops ;
 - refonte générale du système de niveaux ;
 - gros système d'analytics.
 
-Ces sujets restent dans la roadmap, mais seulement après validation de `Wall + Bumper`.
+Ces sujets restent dans la roadmap, mais seulement après validation de `Wall + Bumper + Moving`.
 
 ---
 
@@ -101,6 +114,7 @@ Ces sujets restent dans la roadmap, mais seulement après validation de `Wall + 
 - `03_BLAB_DEBUG_VALIDATION.md`
 - `04_PLAN_IMPLEMENTATION_CODEX.md`
 - `05_SPEC_PLANCHE_ASSETS.md`
+- `06_C_MOVING.md`
 - `MASTER_BLOB_BREAKER.html`
 
 Le HTML est la version de lecture/navigation. Les Markdown sont conçus pour être donnés directement à un agent de code.

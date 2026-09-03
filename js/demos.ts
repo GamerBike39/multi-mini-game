@@ -921,6 +921,277 @@ function demoFish(accent: string): DemoImpl {
   };
 }
 
+// ---------------- DR BLOB : trio qui tombe, groupes qui éclatent ----------------
+function demoColumns(accent: string): DemoImpl {
+  const COLS = 6, ROWS = 9, CELL = 34, OX = 512, OY = 190;
+  const cols = ['#f472b6', '#22d3ee', '#22c55e', '#fbbf24', '#c084fc'];
+  const px = (c: number): number => OX + (c + 0.5) * CELL;
+  const py = (r: number): number => OY + (r + 0.5) * CELL;
+  let s: any;
+  const trio = (): number[] => [0, 1, 2].map(() => (Math.random() * cols.length) | 0);
+  const reset = () => {
+    const grid: number[][] = [];
+    for (let r = 0; r < ROWS; r++) grid.push(new Array(COLS).fill(-1));
+    // socle bas prédéfini avec un trou stratégique pour la démo
+    for (let c = 0; c < COLS; c++) {
+      grid[ROWS - 1][c] = (c * 2 + 1) % cols.length;
+      if (c !== 2) grid[ROWS - 2][c] = (c + 2) % cols.length;
+    }
+    grid[ROWS - 1][2] = 1;
+    grid[ROWS - 2][2] = 1;
+    grid[ROWS - 3][2] = 1;
+    s = {
+      grid, active: { c: 2, r: -2, colors: [1, 1, 2] }, fallT: 0,
+      clear: null as null | { cells: any[]; t: number },
+      puffs: new Puffs(), t: 0,
+      blob: new Blob({ x: 0, y: 0, r: 13, color: accent }),
+    };
+  };
+  // Même règle que le jeu : groupes liés orthogonaux de 4+, diagonales ignorées.
+  const matches = (): any[] => {
+    const out: any[] = [];
+    const seen = new Set<number>();
+    const todo: any[] = [];
+    const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+      const v = s.grid[r][c];
+      if (v < 0 || seen.has(r * COLS + c)) continue;
+      const group: any[] = [];
+      todo.length = 0;
+      todo.push({ r, c });
+      seen.add(r * COLS + c);
+      while (todo.length) {
+        const cur = todo.pop();
+        group.push(cur);
+        for (const [dr, dc] of dirs) {
+          const nr = cur.r + dr, nc = cur.c + dc;
+          if (nr < 0 || nr >= ROWS || nc < 0 || nc >= COLS) continue;
+          if (s.grid[nr][nc] !== v || seen.has(nr * COLS + nc)) continue;
+          seen.add(nr * COLS + nc);
+          todo.push({ r: nr, c: nc });
+        }
+      }
+      if (group.length >= 4) for (const cell of group) out.push(cell);
+    }
+    return out;
+  };
+  const gravity = () => {
+    for (let c = 0; c < COLS; c++) {
+      let w = ROWS - 1;
+      for (let r = ROWS - 1; r >= 0; r--) {
+        if (s.grid[r][c] >= 0) { s.grid[w][c] = s.grid[r][c]; if (w !== r) s.grid[r][c] = -1; w--; }
+      }
+      for (let r = w; r >= 0; r--) s.grid[r][c] = -1;
+    }
+  };
+  reset();
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      if (s.clear) {
+        s.clear.t -= dt;
+        if (s.clear.t <= 0) {
+          for (const cell of s.clear.cells) {
+            s.puffs.burst(px(cell.c), py(cell.r), [cols[s.grid[cell.r][cell.c]] || '#fff', '#ffffff'], 10, [50, 260], 0.45);
+            s.grid[cell.r][cell.c] = -1;
+          }
+          gravity();
+          const m = matches();
+          s.clear = m.length ? { cells: m, t: 0.4 } : null;
+          if (!m.length && Math.random() < 0.25) reset();
+        }
+        s.puffs.update(dt);
+        return;
+      }
+      if (!s.active) {
+        s.active = { c: (Math.random() * COLS) | 0, r: -2, colors: trio() };
+        s.fallT = 0;
+        return;
+      }
+      s.fallT += dt;
+      const step = 0.16;
+      // petit pilotage : vise la colonne 2 pour boucler une démo lisible
+      if (Math.random() < dt * 3 && s.active.c !== 2) s.active.c += Math.sign(2 - s.active.c);
+      while (s.fallT >= step) {
+        s.fallT -= step;
+        let blocked = false;
+        for (let i = 0; i < 3; i++) {
+          const rr = s.active.r + i + 1, cc = s.active.c;
+          if (rr >= ROWS || (rr >= 0 && s.grid[rr][cc] >= 0)) { blocked = true; break; }
+        }
+        if (blocked) {
+          for (let i = 0; i < 3; i++) {
+            const rr = s.active.r + i;
+            if (rr >= 0) s.grid[rr][s.active.c] = s.active.colors[i];
+          }
+          s.active = null;
+          const m = matches();
+          if (m.length) s.clear = { cells: m, t: 0.4 };
+          break;
+        } else s.active.r++;
+      }
+      // recycle si ça déborde
+      if (s.grid[0].some((v: number) => v >= 0) && s.grid[1].some((v: number) => v >= 0)) reset();
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(OX, OY, COLS * CELL, ROWS * CELL);
+      ctx.globalAlpha = 1;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+        const v = s.grid[r][c];
+        if (v < 0) continue;
+        const hot = s.clear && s.clear.cells.some((cell: any) => cell.r === r && cell.c === c);
+        ctx.globalAlpha = hot ? 0.6 + 0.4 * Math.sin(s.t * 30) : 1;
+        ctx.fillStyle = cols[v];
+        ctx.shadowColor = cols[v];
+        ctx.shadowBlur = hot ? 22 : 8;
+        ctx.beginPath(); ctx.arc(px(c), py(r), hot ? 15 : 13, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.beginPath(); ctx.arc(px(c) - 4, py(r) - 5, 3.4, 0, TAU); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      if (s.active) {
+        for (let i = 0; i < 3; i++) {
+          const rr = s.active.r + i;
+          if (rr < 0) continue;
+          ctx.fillStyle = cols[s.active.colors[i]];
+          ctx.shadowColor = cols[s.active.colors[i]];
+          ctx.shadowBlur = 12;
+          ctx.beginPath(); ctx.arc(px(s.active.c), py(rr), 13, 0, TAU); ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
+// ---------------- BLOB POP : tir de bulles sur grappe hexagonale ----------------
+function demoBubble(accent: string): DemoImpl {
+  const COLS = 8, ROWS = 7, R = 26, RH = R * 1.732;
+  const OX = 540, OY = 210, SX = 690, SY = 590;
+  const cols = ['#f472b6', '#22d3ee', '#22c55e', '#fbbf24', '#c084fc'];
+  const cc = (r: number, c: number): { x: number; y: number } => ({
+    x: OX + c * 2 * R + (r % 2 === 1 ? R : 0),
+    y: OY + r * RH,
+  });
+  const s: any = { grid: [], shots: [], fireT: 0.5, t: 0, aim: 0, puffs: new Puffs() };
+  const refill = () => {
+    s.grid = [];
+    for (let r = 0; r < ROWS; r++) {
+      const row: number[] = [];
+      for (let c = 0; c < COLS; c++) row.push(r < 4 ? (Math.random() * cols.length) | 0 : -1);
+      s.grid.push(row);
+    }
+  };
+  const neighbors = (r: number, c: number): any[] => {
+    const odd = r % 2 === 1;
+    const ds = odd ? [[1, 0], [-1, 0], [1, -1], [0, -1], [1, 1], [0, 1]] : [[1, 0], [-1, 0], [0, -1], [-1, -1], [0, 1], [-1, 1]];
+    return ds.map(([dc, dr]) => ({ r: r + dr, c: c + dc }))
+      .filter((p: any) => p.r >= 0 && p.r < ROWS && p.c >= 0 && p.c < COLS);
+  };
+  const flood = (r: number, c: number): any[] => {
+    const v = s.grid[r][c];
+    if (v < 0) return [];
+    const seen = new Set([r * 100 + c]);
+    const stack = [{ r, c }];
+    while (stack.length) {
+      const cur = stack.pop() as { r: number; c: number };
+      for (const nb of neighbors(cur.r, cur.c)) {
+        const k = nb.r * 100 + nb.c;
+        if (!seen.has(k) && s.grid[nb.r][nb.c] === v) { seen.add(k); stack.push(nb); }
+      }
+    }
+    return Array.from(seen).map((k: any) => ({ r: Math.floor(k / 100), c: k % 100 }));
+  };
+  refill();
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      s.aim = Math.sin(s.t * 0.8) * 0.7;
+      s.fireT -= dt;
+      if (s.fireT <= 0 && s.shots.length < 3) {
+        s.fireT = 0.9;
+        s.shots.push({ x: SX, y: SY - 30, vx: Math.sin(s.aim) * 520, vy: -Math.cos(s.aim) * 520, color: (Math.random() * cols.length) | 0 });
+      }
+      for (let i = s.shots.length - 1; i >= 0; i--) {
+        const b = s.shots[i];
+        b.x += b.vx * dt;
+        b.y += b.vy * dt;
+        if (b.x < OX - R + 8) { b.x = OX - R + 8; b.vx = Math.abs(b.vx); }
+        if (b.x > OX + COLS * 2 * R - 8) { b.x = OX + COLS * 2 * R - 8; b.vx = -Math.abs(b.vx); }
+        if (b.y <= OY + 20 || Math.random() < dt * 0.8) {
+          // colle : cherche la cellule libre la plus proche
+          let best = null, bd = 1e9;
+          for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+            if (s.grid[r][c] >= 0) continue;
+            const p = cc(r, c);
+            const d = (p.x - b.x) * (p.x - b.x) + (p.y - b.y) * (p.y - b.y);
+            if (d < bd) { bd = d; best = { r, c }; }
+          }
+          if (best) {
+            s.grid[best.r][best.c] = b.color;
+            const group = flood(best.r, best.c);
+            if (group.length >= 3) {
+              for (const cell of group) {
+                const p = cc(cell.r, cell.c);
+                s.puffs.burst(p.x, p.y, [cols[s.grid[cell.r][cell.c]], '#ffffff'], 12, [60, 300], 0.5);
+                s.grid[cell.r][cell.c] = -1;
+              }
+            }
+          }
+          s.shots.splice(i, 1);
+        }
+      }
+      // recycle : la grappe se régénère en boucle pour l'attract mode
+      let filled = 0;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) if (s.grid[r][c] >= 0) filled++;
+      if (filled < 8) refill();
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.globalAlpha = 0.25;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(OX - R - 6, OY - R - 6, COLS * 2 * R + 12, ROWS * RH + 12);
+      ctx.globalAlpha = 1;
+      for (let r = 0; r < ROWS; r++) for (let c = 0; c < COLS; c++) {
+        const v = s.grid[r][c];
+        if (v < 0) continue;
+        const p = cc(r, c);
+        ctx.fillStyle = cols[v];
+        ctx.shadowColor = cols[v];
+        ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(p.x, p.y, R - 3, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.beginPath(); ctx.arc(p.x - 6, p.y - 8, 5, 0, TAU); ctx.fill();
+      }
+      // canon + viseur
+      ctx.strokeStyle = '#ffffff88';
+      ctx.setLineDash([4, 6]);
+      ctx.beginPath();
+      ctx.moveTo(SX, SY - 30);
+      ctx.lineTo(SX + Math.sin(s.aim) * 130, SY - 30 - Math.cos(s.aim) * 130);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const b of s.shots) {
+        ctx.fillStyle = cols[b.color];
+        ctx.shadowColor = cols[b.color];
+        ctx.shadowBlur = 14;
+        ctx.beginPath(); ctx.arc(b.x, b.y, R - 3, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+      }
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 // ---------------- fallback : blobs flottants ----------------
 function demoFallback(accent: string): DemoImpl {
   const s: any = { blobs: [], t: 0 };
@@ -954,6 +1225,8 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   breaker: demoBreaker,
   golf: demoGolf,
   fish: demoFish,
+  columns: demoColumns,
+  bubble: demoBubble,
 };
 
 export class Demo {

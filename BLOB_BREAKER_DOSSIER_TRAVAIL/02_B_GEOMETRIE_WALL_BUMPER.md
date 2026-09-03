@@ -7,10 +7,10 @@ Ajouter une deuxième couche au casse-brique :
 - **Briques** = objectifs à détruire.
 - **Obstacles** = géométrie qui modifie la trajectoire.
 
-Le premier prototype ne contient que :
+La couche d'obstacles contient désormais :
 
 ```ts
-type ObstacleKind = 'wall' | 'bumper';
+type ObstacleKind = 'wall' | 'bumper' | 'moving';
 ```
 
 ---
@@ -39,7 +39,20 @@ interface BreakerBumper {
   pulseT: number;
 }
 
-type BreakerObstacle = BreakerWall | BreakerBumper;
+interface BreakerMoving {
+  id: number;
+  kind: 'moving';
+  x: number; y: number; w: number; h: number;
+  baseX: number; baseY: number;
+  axis: 'x' | 'y';
+  range: number;
+  frequency: number;
+  phase: number;
+  vx: number; vy: number;
+  pulseT: number;
+}
+
+type BreakerObstacle = BreakerWall | BreakerBumper | BreakerMoving;
 ```
 
 Dans `BreakerGame` :
@@ -48,7 +61,7 @@ Dans `BreakerGame` :
 this.obstacles = [] as BreakerObstacle[];
 ```
 
-Ne pas mettre Wall/Bumper dans `this.bricks`.
+Ne pas mettre les obstacles dans `this.bricks`.
 
 ---
 
@@ -63,10 +76,10 @@ buildLevel(): void {
 }
 ```
 
-Pour le premier lot :
-- niveaux normaux : `buildObstacles()` peut retourner `[]` ;
+Pour cette boucle :
+- niveaux normaux : `Moving` est introduit à partir du niveau 5 ;
 - B-LAB : layouts explicites ;
-- intégration à la progression seulement après validation.
+- `Wall` et `Bumper` restent disponibles dans les layouts de validation.
 
 `levelCleared()` ne doit jamais dépendre des obstacles.
 
@@ -333,20 +346,46 @@ Ne pas autoriser un Wall et une brique à occuper volontairement la même surfac
 | balle FLAME ↔ Wall | rebond |
 | balle ↔ Bumper | rebond + boost |
 | balle FLAME ↔ Bumper | rebond + boost |
+| balle ↔ Moving | rebond relatif à la vitesse de surface |
+| balle FLAME ↔ Moving | rebond relatif à la vitesse de surface |
 | laser ↔ Wall | laser détruit |
+| laser ↔ Moving | laser détruit |
 | laser ↔ Bumper | ignoré en V1 |
 | explosion ↔ Wall | aucun effet |
 | explosion ↔ Bumper | aucun effet |
 | gravity falling ↔ Wall | ignore |
 | gravity falling ↔ Bumper | ignore |
+| gravity falling ↔ Moving | ignore |
 | Wall ↔ clear level | ignoré |
 | Bumper ↔ clear level | ignoré |
+| Moving ↔ clear level | ignoré |
 
 Ces choix limitent volontairement la combinatoire pendant le prototype.
 
 ---
 
-# 11. Définition de terminé B1/B2
+# 11. MOVING
+
+`Moving` est une AABB indestructible animée par une sinusoïde déterministe.
+Sa position est mise à jour avant les balles et sa vitesse de surface est
+conservée pour calculer la réflexion dans le référentiel de l'obstacle. La
+tolérance de collision du Wall est réutilisée afin que les coins restent
+atteignables et lisibles.
+
+Le rendu ajoute un rail et des marqueurs d'extrémité, puis réutilise la texture
+du Wall à l'intérieur du corps avec une teinte dorée. Il n'ajoute pas de
+contour en pointillés à la texture.
+
+Le feedback d'un contact comprend un punch, un ring, des étincelles, un rumble
+court et le SFX remplaçable `breaker.obstacle.moving`.
+
+Le B-LAB `?breakerLab=moving` expose un Moving horizontal, un Moving vertical et
+deux murs latéraux. Dans la progression, l'horizontal arrive au niveau 5 et le
+vertical au niveau 9.
+
+---
+
+# 12. Définition de terminé B1/B2
 
 ## Wall
 - aucune balle ne traverse à vitesse normale ;
@@ -363,6 +402,14 @@ Ces choix limitent volontairement la combinatoire pendant le prototype.
 - boost revient à la vitesse normale ;
 - `this.speed` global n'est pas corrompu ;
 - plusieurs balles peuvent toucher le même bumper indépendamment.
+
+## Moving
+- aucune traversée à vitesse normale ;
+- position et sens de déplacement lisibles ;
+- transmission d'élan perceptible mais contrôlable ;
+- coins tolérants et sans double SFX ;
+- laser bloqué ;
+- clear du niveau inchangé.
 
 ## Performance
 Pas d'allocation massive par frame dans la boucle de collision.

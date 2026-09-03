@@ -30,6 +30,7 @@ Proposition simple et non intrusive :
 ?breakerLab=bumper
 ?breakerLab=billiard
 ?breakerLab=chain
+?breakerLab=moving
 ```
 
 Dans `BreakerGame`, lire le paramètre uniquement en DEV.
@@ -52,6 +53,7 @@ L'utilisateur peut toujours sélectionner BLOB BREAKER normalement depuis le men
 Afficher :
 - AABB des Walls ;
 - cercle des Bumpers ;
+- AABB des Moving et rail de déplacement ;
 - cercle physique des balles ;
 - AABB des briques uniquement si utile.
 
@@ -88,6 +90,7 @@ Simulation :
   - limites du monde ;
   - Walls ;
   - Bumpers ;
+  - Moving, avec sa position future et sa vitesse de surface ;
 - ignorer :
   - paddle ;
   - briques ;
@@ -123,6 +126,7 @@ Compteurs proposés :
 interface BreakerLabStats {
   wallHits: number;
   bumperHits: number;
+  movingHits: number;
   bumperToBrick: number;
   bumperToExplosive: number;
   maxCombo: number;
@@ -221,6 +225,27 @@ Observer :
 
 ---
 
+## LAB 06 — MOVING
+
+Question :
+**un obstacle qui se déplace crée-t-il une anticipation intéressante sans
+devenir injuste ?**
+
+Structure :
+- deux murs latéraux de sécurité ;
+- un Moving horizontal avec rail visible ;
+- un Moving vertical ;
+- briques simples en partie haute.
+
+Observer :
+- lecture de la position et du sens de déplacement ;
+- rebond relatif à la vitesse de la surface ;
+- tolérance des coins ;
+- laser bloqué par le Moving ;
+- feedback SFX / haptique / particules sans double déclenchement.
+
+---
+
 # 6. Debug A3 dans B-LAB
 
 Le lab doit également offrir une scène de lisibilité :
@@ -270,11 +295,14 @@ Il sert à vérifier que le langage reste lisible quand l'écran est chargé.
 - déplacement parallèle à un Wall ;
 - contact Bumper au centre ;
 - contact tangent au Bumper ;
+- contact frontal Moving ;
+- coin Moving pendant son déplacement ;
 - multiball simultané sur Bumper.
 
 ## Laser
 - impact brique ;
 - impact Wall ;
+- impact Moving ;
 - aucune interaction Bumper V1.
 
 ---
@@ -294,7 +322,7 @@ Est-ce que Wall + Bumper produisent des trajectoires et réactions impossibles d
 
 Si les trois réponses sont oui :
 - valider Chantier B ;
-- passer à Moving ou Portal.
+- passer à Portal après le tuning de Moving.
 
 Si Wall oui / Bumper non :
 - conserver Wall ;

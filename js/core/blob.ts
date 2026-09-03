@@ -126,6 +126,9 @@ export class Blob {
   poseY = 1;
   liquid = 0;
   poseOffsetY = 0;
+  // Intensité de vocalisation (0..1), pilotée par les jeux musicaux.
+  // Elle anime la bouche et dégage le regard sans modifier la hitbox.
+  voice = 0;
   // Suivi visuel du jig : plus doux, n'entre pas dans le squash gameplay.
   private jigSoft = 0;
 
@@ -347,9 +350,10 @@ export class Blob {
 
   private drawEyes(ctx: CanvasRenderingContext2D, r: number, face: EmotionFace): void {
     const ex = this.lookX * r * 0.22;
-    const ey = this.lookY * r * 0.22 + face.lookBiasY * r;
+    const voicePulse = this.voice * (0.55 + Math.sin(this.t * 22) * 0.08);
+    const ey = this.lookY * r * 0.22 + face.lookBiasY * r - voicePulse * r * 0.075;
     const blink = this.blink > 0 ? 0.14 : face.eyeOpen;
-    const whiteR = r * 0.168 * face.eyeScale;
+    const whiteR = r * 0.168 * face.eyeScale * (1 + voicePulse * 0.08);
     const pupilR = r * 0.092 * face.pupilScale;
     const px = this.lookX * r * 0.055;
     const py = this.lookY * r * 0.055;
@@ -400,10 +404,25 @@ export class Blob {
 
   private drawMouth(ctx: CanvasRenderingContext2D, r: number, face: EmotionFace): void {
     const mx = this.lookX * r * 0.08;
-    const my = r * 0.22 + face.lookBiasY * r * 0.4;
+    // La bouche reste dans le tiers inférieur, même quand le blob regarde vers
+    // le bas. Cela évite notamment qu'elle remonte entre les yeux du pad haut.
+    const my = r * 0.29 + face.lookBiasY * r * 0.25;
     const w = r * 0.20 * face.mouthWidth;
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    if (this.voice > 0.02) {
+      const syllable = 0.5 + 0.5 * Math.sin(this.t * 24);
+      const open = this.voice * (0.45 + syllable * 0.55);
+      ctx.beginPath();
+      ctx.ellipse(mx, my, w * (0.48 + syllable * 0.18), r * (0.045 + open * 0.105), 0, 0, TAU);
+      ctx.fillStyle = '#0b0e14';
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(mx, my + r * 0.045, w * 0.30, r * 0.025, 0, 0, TAU);
+      ctx.fillStyle = 'rgba(255,126,155,0.78)';
+      ctx.fill();
+      return;
+    }
     if (face.mouthOpen > 0.35) {
       ctx.beginPath();
       ctx.ellipse(mx, my + r * 0.02, w * 0.42, r * (0.05 + 0.07 * face.mouthOpen), 0, 0, TAU);

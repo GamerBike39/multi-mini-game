@@ -224,6 +224,15 @@ export interface ToneLikeOptions {
   dest?: AudioNode | null;
 }
 
+export type BlobVowel = 'oh' | 'ah';
+
+export interface VoiceLikeOptions {
+  f?: number;
+  vowel?: BlobVowel;
+  dur?: number;
+  vol?: number;
+}
+
 export interface NoiseLikeOptions {
   t?: number;
   dur?: number;
@@ -276,9 +285,11 @@ export interface AudioLike {
   setVol(key: VolumeKey, value: number): void;
   setMuted(muted: boolean): void;
   tone(options?: ToneLikeOptions): void;
+  vocalize(options?: VoiceLikeOptions): void;
   noise(options?: NoiseLikeOptions): void;
   thump(vol?: number, options?: ThumpLikeOptions): void;
   loadSample?(key: string, url: string): void;
+  hasSample?(key: string): boolean;
   playSample?(key: string, options?: SampleLikeOptions): void;
   beat(): number;
   uiMove(): void;
@@ -291,6 +302,8 @@ export interface AudioLike {
   hitEnemy(): void;
   hurt(): void;
   coin(step?: number): void;
+  red(step?: number): void;
+  turboSet(on: boolean, level?: number): void;
   perfect(): void;
   good(): void;
   milestone(): void;

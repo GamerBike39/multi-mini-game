@@ -55,7 +55,7 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **BLOBBLASTER** | Twin-stick shooter | Stick G bouge, stick D vise | ZQSD + Espace (auto-visée) |
 | **BLOB RUN** | Auto-runner : sauts courts/hauts, double saut, plateformes, fossés, plafonds, scies et bonus de proximité | A saute, A en l’air = double saut, B se baisse | Espace / K |
 | **CAVE RACER** | Tunnel procédural de plus en plus serré, boost, near-miss bonus | Stick + A (boost) | ZQSD/Flèches + Espace |
-| **BLOB SIMON** | Mémoire : regarde la séquence de blobs, rejoue-la | Y X A B | U L J K |
+| **BLOB SIMON** | Mémoire : regarde la séquence de blobs, rejoue-la | Y X B A | Flèches ↑ ← → ↓ |
 | **BLOB SNAKE** | Serpent sur grille, lucioles, fruit doré, ça accélère | Stick / D-pad | Flèches / ZQSD |
 | **BLOB BREAKER** | Casse-briques, balle-blob, drops (multi, large, slow) | Stick G paddle + A | ZQSD + Espace |
 | **BLOB GOLF** | 9 trous faits main, visée + puissance, sable et banques | Stick viser + A (charge) | Flèches + Espace |
