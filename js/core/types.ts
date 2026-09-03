@@ -1,4 +1,5 @@
 import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
+import type { AchievementSystem } from './achievements';
 
 export const ACTIONS = [
   'a', 'b', 'x', 'y',
@@ -50,7 +51,7 @@ export interface RenderPresenter {
   readonly available: boolean;
   readonly active: boolean;
   resize(width: number, height: number): void;
-  present(source: CanvasImageSource, time: number, intensity?: number, legacyCrt?: boolean, legacyNoise?: boolean): void;
+  present(source: CanvasImageSource, time: number, intensity?: number, crt?: number, noise?: number): void;
   enable(enabled: boolean): void;
   dispose(): void;
 }
@@ -187,11 +188,14 @@ export interface GameMeta {
   hint: string;
   unit: string;
   ranks: readonly number[];
+  genre?: GameGenre;
   players?: {
     min: 1;
     max: 1 | 2 | 4;
   };
 }
+
+export type GameGenre = 'action' | 'pilotage' | 'puzzle' | 'flow';
 
 export interface InputLike {
   moveX: number;
@@ -271,7 +275,10 @@ export interface TrackLikeOptions {
   bpm?: number;
 }
 
-export type MusicLayerName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx';
+export type MusicLayerName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx' | 'brass' | 'vox';
+
+/** Ponctuation musicale des transitions : lancement, fin, victoire, record. */
+export type StingerKind = 'launch' | 'over' | 'victory' | 'record';
 
 export interface AudioLike {
   ctx: AudioContext | null;
@@ -319,6 +326,7 @@ export interface AudioLike {
   trackPos(): number;
   songTime(): number;
   drum(kind: string, t: number): void;
+  stinger(kind: StingerKind): void;
   startReference(reference: ReferenceMusic): void;
   pauseMusic(): void;
   resumeMusic(): void;
@@ -378,6 +386,7 @@ export interface AppLike {
   onPointerMove?(x: number, y: number): void;
   onPointerUp?(): void;
   onPointerLeave?(): void;
+  onWheel?(deltaY: number): void;
   debugRender?(ctx: CanvasRenderingContext2D): void;
   debugSnapshot?(): Record<string, DebugValue>;
 }
@@ -398,6 +407,7 @@ export interface EngineLike {
   input: InputHubLike;
   audio: AudioLike;
   settings: SettingsLike;
+  readonly achievements: AchievementSystem;
   readonly dev: DevToolsLike;
   readonly metrics: FrameMetrics;
   readonly session: GameSession | null;

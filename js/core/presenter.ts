@@ -15,8 +15,8 @@ uniform sampler2D u_scene;
 uniform vec2 u_resolution;
 uniform float u_time;
 uniform float u_intensity;
-uniform float u_legacyCrt;
-uniform float u_legacyNoise;
+uniform float u_crt;
+uniform float u_noise;
 varying vec2 v_uv;
 
 float hash21(vec2 p) {
@@ -27,21 +27,51 @@ float hash21(vec2 p) {
 
 void main() {
   vec2 centered = v_uv - 0.5;
-  float edge = dot(centered, centered) * 1.8;
-  float split = u_intensity * 0.0035 * (0.35 + edge);
-  vec2 direction = normalize(centered + vec2(0.0001));
-  vec2 redUv = clamp(v_uv + direction * split, 0.0, 1.0);
-  vec2 blueUv = clamp(v_uv - direction * split, 0.0, 1.0);
+  float r2 = dot(centered, centered);
+
+  // Potard GPU : même à 0 le look a une identité (lentille + phosphore),
+  // à 1 il reste lisible — plus d'aberration / vignette qui noient le jeu.
+  float gpu = mix(0.28, 1.0, clamp(u_intensity, 0.0, 1.0));
+
+  float barrel = gpu * 0.07;
+  vec2 warped = centered * (1.0 + barrel * r2) * 0.985;
+  vec2 baseUv = clamp(warped + 0.5, 0.0, 1.0);
+
+  float split = gpu * (0.0011 + r2 * 0.0024);
+  vec2 dir = normalize(centered + vec2(0.0001));
   vec3 color = vec3(
-    texture2D(u_scene, redUv).r,
-    texture2D(u_scene, v_uv).g,
-    texture2D(u_scene, blueUv).b
+    texture2D(u_scene, clamp(baseUv + dir * split, 0.0, 1.0)).r,
+    texture2D(u_scene, baseUv).g,
+    texture2D(u_scene, clamp(baseUv - dir * split, 0.0, 1.0)).b
   );
-  float scan = sin((v_uv.y * u_resolution.y + u_time * 18.0) * 3.14159265) * 0.018 * (1.0 - u_legacyCrt);
-  float grain = (hash21(v_uv * u_resolution + u_time * 7.0) - 0.5) * 0.028 * (1.0 - u_legacyNoise);
-  color += (scan + grain) * u_intensity;
-  color *= 1.0 - edge * 0.16 * u_intensity;
-  gl_FragColor = vec4(max(color, 0.0), 1.0);
+
+  float luma = dot(color, vec3(0.299, 0.587, 0.114));
+  color += color * luma * gpu * 0.055;
+  color *= mix(vec3(1.0), vec3(1.035, 1.0, 0.975), gpu * 0.4);
+
+  float vig = 1.0 - r2 * (0.12 + gpu * 0.16);
+  color *= mix(1.0, clamp(vig, 0.72, 1.0), 0.9);
+
+  if (u_crt > 0.001) {
+    float crt = clamp(u_crt, 0.0, 1.0);
+    float py = baseUv.y * u_resolution.y;
+    float scan = 0.82 + 0.18 * sin(py * 3.14159265);
+    color *= mix(1.0, scan, crt * 0.72);
+    float px = baseUv.x * u_resolution.x;
+    float mask = 0.94 + 0.06 * sin(px * 2.094395);
+    color *= mix(1.0, mask, crt * 0.28);
+    float roll = fract(baseUv.y * 0.28 + u_time * 0.035);
+    float bar = smoothstep(0.0, 0.03, roll) * (1.0 - smoothstep(0.03, 0.08, roll));
+    color += vec3(0.55, 0.82, 1.0) * bar * crt * 0.028;
+  }
+
+  if (u_noise > 0.001) {
+    float n = hash21(gl_FragCoord.xy + vec2(u_time * 47.0, u_time * 19.0));
+    float grain = (n - 0.5) * clamp(u_noise, 0.0, 1.0) * 0.04 * (0.4 + luma * 0.6);
+    color += grain;
+  }
+
+  gl_FragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
 `;
 
@@ -54,8 +84,8 @@ interface GpuResources {
   resolution: WebGLUniformLocation | null;
   time: WebGLUniformLocation | null;
   intensity: WebGLUniformLocation | null;
-  legacyCrt: WebGLUniformLocation | null;
-  legacyNoise: WebGLUniformLocation | null;
+  crt: WebGLUniformLocation | null;
+  noise: WebGLUniformLocation | null;
 }
 
 type Context = WebGLRenderingContext | WebGL2RenderingContext;
@@ -142,7 +172,7 @@ export class WebGLPresenter implements RenderPresenter {
     if (this.gl) this.gl.viewport(0, 0, this.canvas.width, this.canvas.height);
   }
 
-  present(source: CanvasImageSource, time: number, intensity = 0.45, legacyCrt = false, legacyNoise = false): void {
+  present(source: CanvasImageSource, time: number, intensity = 0.45, crt = 0, noise = 0): void {
     const gl = this.gl;
     const resources = this.resources;
     if (!this.active || !gl || !resources) return;
@@ -162,8 +192,8 @@ export class WebGLPresenter implements RenderPresenter {
     gl.uniform2f(resources.resolution, this.canvas.width, this.canvas.height);
     gl.uniform1f(resources.time, time);
     gl.uniform1f(resources.intensity, Math.max(0, Math.min(1, intensity)));
-    gl.uniform1f(resources.legacyCrt, legacyCrt ? 1 : 0);
-    gl.uniform1f(resources.legacyNoise, legacyNoise ? 1 : 0);
+    gl.uniform1f(resources.crt, Math.max(0, Math.min(1, crt)));
+    gl.uniform1f(resources.noise, Math.max(0, Math.min(1, noise)));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   }
 
@@ -221,8 +251,8 @@ export class WebGLPresenter implements RenderPresenter {
       resolution: gl.getUniformLocation(program, 'u_resolution'),
       time: gl.getUniformLocation(program, 'u_time'),
       intensity: gl.getUniformLocation(program, 'u_intensity'),
-      legacyCrt: gl.getUniformLocation(program, 'u_legacyCrt'),
-      legacyNoise: gl.getUniformLocation(program, 'u_legacyNoise'),
+      crt: gl.getUniformLocation(program, 'u_crt'),
+      noise: gl.getUniformLocation(program, 'u_noise'),
     };
     this.available = true;
   }

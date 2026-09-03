@@ -7,7 +7,7 @@ import { DEFAULT_MUSIC_STATE, MusicStateController } from './state';
 import { MusicTransport, type ScheduledStep } from './transport';
 import type { GameMusicEventName, MusicState, MusicalSection } from './types';
 
-const LAYERS: readonly MusicLayerName[] = ['drums', 'bass', 'harmony', 'arp', 'lead', 'fx'];
+const LAYERS: readonly MusicLayerName[] = ['drums', 'bass', 'harmony', 'arp', 'lead', 'fx', 'brass', 'vox'];
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 
@@ -44,6 +44,8 @@ export class AdaptiveDirector {
   private readonly leadGate = new HysteresisGate(0.56, 0.38);
   private readonly fxGate = new HysteresisGate(0.62, 0.42);
   private readonly dangerGate = new HysteresisGate(0.65, 0.45);
+  private readonly brassGate = new HysteresisGate(0.4, 0.25);
+  private readonly voxGate = new HysteresisGate(0.45, 0.3);
   private unsubscribeBar: (() => void) | null = null;
   private lastPhrase = 0;
 
@@ -75,6 +77,8 @@ export class AdaptiveDirector {
     this.leadGate.reset();
     this.fxGate.reset();
     this.dangerGate.reset();
+    this.brassGate.reset();
+    this.voxGate.reset();
     this.rack.resetLayers(this.transport.running ? this.transport.nextStepTime() : undefined);
   }
 
@@ -129,9 +133,13 @@ export class AdaptiveDirector {
     const arpSignal = weighted(state.complexity * 0.6, state.momentum * 0.25, state.intensity * 0.15);
     const leadSignal = weighted(state.brightness * 0.42, state.intensity * 0.28, state.tension * 0.12, state.triumph * 0.4);
     const fxSignal = weighted(state.triumph * 0.55, state.danger * 0.25, state.narrativeArc * 0.2);
+    const brassSignal = weighted(state.triumph * 0.7, state.brightness * 0.3);
+    const voxSignal = weighted(state.triumph * 0.9, state.narrativeArc * 0.2);
     const arp = this.arpGate.update(arpSignal);
     const lead = this.leadGate.update(leadSignal);
     const fx = this.fxGate.update(fxSignal);
+    const brass = this.brassGate.update(brassSignal);
+    const vox = this.voxGate.update(voxSignal);
     const sectionPresence = this.section === 'peak' ? 1 : this.section === 'build' ? 0.92 : this.section === 'release' ? 0.74 : 0.84;
     const variationBias = this.variationIndex === 1 ? 0.025 : this.variationIndex === 2 ? -0.02 : 0;
 
@@ -159,6 +167,14 @@ export class AdaptiveDirector {
       fx: {
         presence: fx ? clamp01(0.15 + state.triumph * 0.55 + state.narrativeArc * 0.2) : 0,
         brightness: clamp01(0.36 + state.brightness * 0.38 + state.danger * 0.18 + variationBias),
+      },
+      brass: {
+        presence: brass ? clamp01(sectionPresence * (0.25 + state.triumph * 0.6)) : 0,
+        brightness: clamp01(0.4 + state.brightness * 0.4 + state.triumph * 0.15 + variationBias),
+      },
+      vox: {
+        presence: vox ? clamp01(sectionPresence * (0.2 + state.triumph * 0.65)) : 0,
+        brightness: clamp01(0.4 + state.brightness * 0.4 + state.triumph * 0.15 + variationBias),
       },
     };
   }

@@ -196,6 +196,57 @@ export class BaseGame {
     this.audio.explode(1.3);
     this.musicEvent(win ? 'waveComplete' : 'playerHit', win ? 0.8 : 1);
     this.input.rumble(1, 0.35);
+    try {
+      this.audio.stinger(win ? 'victory' : this.bestResult?.isNew ? 'record' : 'over');
+    } catch {
+      // La ponctuation musicale ne doit jamais faire échouer une fin de partie.
+    }
+    this.emitAchievements(win);
+  }
+
+  /** Les succès sont méta : ils ne changent jamais la simulation. */
+  protected emitAchievements(win: boolean): void {
+    const achievements = (this.eng as unknown as {
+      achievements?: {
+        emit(type: string, data?: Record<string, string | number | boolean>, amount?: number): string[];
+      };
+    }).achievements;
+    if (!achievements) return;
+    try {
+      const rank = UI.rank(this.meta.ranks, this.score);
+      const gameId = this.meta.id;
+      const score = Math.floor(this.score);
+      const isNew = this.bestResult?.isNew === true;
+      achievements.emit('game:over', { gameId, score, rank, win, time: this.time, isNewRecord: isNew });
+      achievements.emit('game:rank', { gameId, score, rank, win });
+      if (win) achievements.emit('game:win', { gameId, score, rank, time: this.time });
+      if (isNew) achievements.emit('game:record', { gameId, score, rank });
+    } catch {
+      // Un succès ne doit jamais faire échouer une fin de partie.
+    }
+  }
+
+  /** Déblocage direct pour évènements complexes (combo, near-miss, vague...). */
+  unlockAchievement(id: string): boolean {
+    try {
+      const achievements = (this.eng as unknown as { achievements?: { unlock(id: string): boolean } }).achievements;
+      return achievements?.unlock(id) ?? false;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Émission d'évènement custom, ex. emitAchievement('surv:wave', { value: 5 }). */
+  emitAchievement(type: string, data: Record<string, string | number | boolean> = {}, amount = 1): string[] {
+    try {
+      const achievements = (this.eng as unknown as {
+        achievements?: { emit(type: string, data?: Record<string, string | number | boolean>, amount?: number): string[] };
+      }).achievements;
+      if (!achievements) return [];
+      return achievements.emit(type, { gameId: this.meta.id, ...data }, amount);
+    } catch {
+      return [];
+    }
   }
 
   musicEvent(type: Parameters<GameMusicAdapter['event']>[0], strength = 1, value = 0): void {

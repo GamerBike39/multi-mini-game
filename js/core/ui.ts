@@ -478,6 +478,52 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.beginPath(); ctx.moveTo(-28, 6); ctx.lineTo(-14, 6); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(-28, 14); ctx.lineTo(-18, 14); ctx.stroke();
     ctx.globalAlpha = 1;
+  } else if (id === 'cycle') {
+    // Filament orthogonal + tête : le virage à 90° des Light Cycles.
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-22, 18); ctx.lineTo(-22, -4); ctx.lineTo(4, -4); ctx.lineTo(4, -18); ctx.stroke();
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 11;
+    ctx.beginPath(); ctx.moveTo(-22, 18); ctx.lineTo(-22, -4); ctx.lineTo(4, -4); ctx.lineTo(4, -18); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.beginPath(); ctx.arc(4, -18, 6, 0, 6.2832); ctx.fill();
+    ctx.globalAlpha = 0.7;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.moveTo(14, 14); ctx.lineTo(24, 14); ctx.lineTo(24, 4); ctx.stroke();
+    ctx.globalAlpha = 1;
+    ctx.lineCap = 'butt';
+  } else if (id === 'bloom') {
+    // Corolle + cristal : les deux écosystèmes qui se contaminent.
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i / 5) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * 9, Math.sin(a) * 9 - 4, 6.5, 4, a, 0, 6.2832);
+      ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(0, -4, 4, 0, 6.2832); ctx.fill();
+    ctx.save();
+    ctx.translate(2, 12);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeRect(-7, -7, 14, 14);
+    ctx.restore();
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(-24, -20); ctx.quadraticCurveTo(-10, -8, -14, 6); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (id === 'dig') {
+    // Casque + diamant : la descente du mineur.
+    ctx.beginPath(); ctx.arc(-4, 6, 10, 0, 6.2832); ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.arc(-4, 6, 15, Math.PI * 1.1, Math.PI * 1.9); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-4, -9); ctx.lineTo(-4, -15); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-4, -18, 3, 0, 6.2832); ctx.fill();
+    ctx.save();
+    ctx.translate(14, -8);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeRect(-6, -6, 12, 12);
+    ctx.restore();
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }

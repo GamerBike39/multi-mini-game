@@ -229,6 +229,7 @@ export class SortGame extends BaseGame {
   private mistake(item: SortItem, choice: SortDirection | 'eject' | 'timeout'): void {
     this.processed++;
     this.errors++;
+    if (this.combo >= 4) this.musicEvent('comboBreak', Math.min(1, this.combo / 16));
     this.combo = 0;
     this.audio.hurt();
     this.musicEvent('playerHit', 0.8);

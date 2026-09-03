@@ -4,6 +4,7 @@
 import { InputManager } from './input';
 import { AudioSys } from './audio';
 import { Settings } from './settings';
+import { AchievementSystem } from './achievements';
 import { StageOverlay, blobAnchor } from './stage';
 import { FixedClock, FIXED_STEP } from './clock';
 import { DevTools } from './devtools';
@@ -75,20 +76,20 @@ function loadScreenFilters(): ScreenFilters {
   try {
     const saved = JSON.parse(localStorage.getItem(SCREEN_FILTER_STORAGE_KEY) || '{}') as Record<string, unknown>;
     return {
-      crt: readFilter(saved.crt, 0.45),
-      noise: readFilter(saved.noise, 0.2),
+      crt: readFilter(saved.crt, 0.35),
+      noise: readFilter(saved.noise, 0.22),
     };
   } catch {
     return {
-      crt: { enabled: false, intensity: 0.45 },
-      noise: { enabled: false, intensity: 0.2 },
+      crt: { enabled: false, intensity: 0.35 },
+      noise: { enabled: false, intensity: 0.22 },
     };
   }
 }
 
 function loadGpuEffects(): GpuEffectsSettings {
   let enabled = false;
-  let intensity = 0.45;
+  let intensity = 0.4;
   try {
     const saved = JSON.parse(localStorage.getItem(GPU_EFFECTS_STORAGE_KEY) || '{}') as Record<string, unknown>;
     enabled = saved.enabled === true;
@@ -128,6 +129,7 @@ export class Engine implements EngineLike {
   readonly audio: AudioLike;
   readonly input: InputManager;
   readonly settings: Settings;
+  readonly achievements: AchievementSystem;
   readonly dev = new DevTools();
   readonly metrics: FrameMetrics = {
     fps: 60,
@@ -176,6 +178,8 @@ export class Engine implements EngineLike {
   private lastFrameTimestamp = 0;
   private lastReplay: ReplayTrace | null = null;
   private recording: ReplayRecorder | null = null;
+  private grainCanvas: HTMLCanvasElement | null = null;
+  private grainPhase = 0;
 
   get resolutionLabel(): string {
     return RESOLUTION_OPTIONS.find((option) => option.id === this.resolution)?.label || 'AUTO';
@@ -195,6 +199,15 @@ export class Engine implements EngineLike {
     this.renderTarget = context;
     this.audio = new AudioSys() as AudioLike;
     this.input = new InputManager(() => this.audio.unlock());
+    this.achievements = new AchievementSystem({
+      onUnlock: () => {
+        try {
+          this.audio.milestone();
+        } catch {
+          // Le toast visuel suffit si l'audio est indisponible.
+        }
+      },
+    });
     this.presenter = new WebGLPresenter(canvas, () => {
       this.gpuEffects.available = false;
       this.gpuEffects.enabled = false;
@@ -290,6 +303,13 @@ export class Engine implements EngineLike {
       this.canvas.style.cursor = 'default';
     });
     canvas.addEventListener('contextmenu', (event: MouseEvent) => event.preventDefault());
+    canvas.addEventListener('wheel', (event: WheelEvent) => {
+      const app = this.app;
+      if (!app?.onWheel || this.faulted) return;
+      event.preventDefault();
+      const delta = Number.isFinite(event.deltaY) ? event.deltaY : 0;
+      if (delta !== 0) app.onWheel(delta);
+    }, { passive: false });
     addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.code === 'F3') {
         event.preventDefault();
@@ -407,7 +427,7 @@ export class Engine implements EngineLike {
   setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void {
     this.screenFilters[filter].enabled = enabled;
     this.saveScreenFilters();
-    this.toast((enabled ? 'Filtre ' : 'Filtre ') + (filter === 'crt' ? 'CRT' : 'bruit') + (enabled ? ' activé' : ' désactivé'));
+    this.toast((enabled ? 'Filtre ' : 'Filtre ') + (filter === 'crt' ? 'CRT' : 'grain') + (enabled ? ' activé' : ' désactivé'));
   }
 
   setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void {
@@ -493,6 +513,11 @@ export class Engine implements EngineLike {
     const requestedMode = options.mode || (players.max > 1 ? 'local' : 'solo');
     if (requestedMode === 'local' && players.max > 1 && !options.skipLobby && !options.replay) {
       this.input.configureLobby(players.max);
+      try {
+        this.audio.stinger('launch');
+      } catch {
+        // La transition visuelle suffit si l'audio est indisponible.
+      }
       this.transitionTo(new LocalLobbyApp(this, game, options), {
         accent: game.meta.accent,
         title: game.meta.name + ' · JOUEURS',
@@ -543,6 +568,11 @@ export class Engine implements EngineLike {
     } catch (error) {
       this.showError(error);
       return;
+    }
+    try {
+      this.audio.stinger('launch');
+    } catch {
+      // La transition visuelle suffit si l'audio est indisponible.
     }
     this.transitionTo(app, {
       accent: game.meta.accent,
@@ -657,39 +687,80 @@ export class Engine implements EngineLike {
   }
 
   drawScreenFilters(ctx: CanvasRenderingContext2D): void {
+    // Avec le présentateur GPU, CRT et grain passent dans le shader pour
+    // éviter le double-traitement (scanlines 2D + scan GPU = bouillie).
+    if (this.presenter.active) return;
     const crt = this.screenFilters.crt;
     const noise = this.screenFilters.noise;
     if (!crt.enabled && !noise.enabled) return;
 
     ctx.save();
     if (crt.enabled) {
-      const intensity = crt.intensity;
+      const k = 0.18 + crt.intensity * 0.82;
       const now = performance.now() / 1000;
-      const scanOffset = (now * 34) % 4;
-      ctx.fillStyle = `rgba(3, 5, 10, ${0.035 + intensity * 0.13})`;
-      for (let y = scanOffset; y < 720; y += 4) ctx.fillRect(0, y, 1280, 1);
+      ctx.globalCompositeOperation = 'multiply';
+      ctx.globalAlpha = 0.16 + k * 0.22;
+      ctx.fillStyle = '#d8e4f4';
+      const pitch = 3;
+      const scanOffset = (now * 18) % pitch;
+      for (let y = scanOffset; y < 720; y += pitch) ctx.fillRect(0, y, 1280, 1);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
 
-      ctx.fillStyle = `rgba(125, 211, 252, ${0.018 * intensity})`;
-      ctx.fillRect(0, (now * 42) % 760 - 20, 1280, 20 + intensity * 24);
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.012 + k * 0.018;
+      ctx.fillStyle = '#9fd4ff';
+      ctx.fillRect(0, (now * 22) % 820 - 28, 1280, 10 + k * 8);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 1;
 
-      const gradient = ctx.createRadialGradient(640, 360, 330, 640, 360, 790);
+      const gradient = ctx.createRadialGradient(640, 360, 280, 640, 360, 820);
       gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      gradient.addColorStop(1, `rgba(0, 0, 0, ${0.3 * intensity})`);
+      gradient.addColorStop(0.72, 'rgba(0, 0, 0, 0)');
+      gradient.addColorStop(1, `rgba(0, 0, 0, ${0.16 + k * 0.18})`);
       ctx.fillStyle = gradient;
       ctx.fillRect(0, 0, 1280, 720);
     }
 
-    if (noise.enabled) {
-      const intensity = noise.intensity;
-      const count = Math.floor(180 + intensity * 700);
-      ctx.globalAlpha = 0.045 + intensity * 0.1;
-      for (let i = 0; i < count; i++) {
-        const value = 150 + Math.floor(Math.random() * 106);
-        const size = Math.random() < 0.88 ? 1 : 2;
-        ctx.fillStyle = `rgb(${value}, ${value}, ${value})`;
-        ctx.fillRect(Math.floor(Math.random() * 1280), Math.floor(Math.random() * 720), size, size);
-      }
+    if (noise.enabled) this.drawFilmGrain(ctx, 0.22 + noise.intensity * 0.78);
+    ctx.restore();
+  }
+
+  private ensureGrain(): void {
+    if (this.grainCanvas) return;
+    if (typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    const grain = canvas.getContext('2d', { alpha: true });
+    if (!grain) return;
+    const img = grain.createImageData(256, 256);
+    const data = img.data;
+    for (let i = 0; i < data.length; i += 4) {
+      const v = (Math.random() * 255) | 0;
+      data[i] = v;
+      data[i + 1] = v;
+      data[i + 2] = v;
+      data[i + 3] = 255;
     }
+    grain.putImageData(img, 0, 0);
+    this.grainCanvas = canvas;
+  }
+
+  private drawFilmGrain(ctx: CanvasRenderingContext2D, amount: number): void {
+    this.ensureGrain();
+    if (!this.grainCanvas) return;
+    const pattern = ctx.createPattern(this.grainCanvas, 'repeat');
+    if (!pattern) return;
+    this.grainPhase = (this.grainPhase + 1) % 7;
+    const ox = (this.grainPhase * 37) % 256;
+    const oy = (this.grainPhase * 53) % 256;
+    ctx.save();
+    ctx.globalCompositeOperation = 'soft-light';
+    ctx.globalAlpha = 0.18 + amount * 0.22;
+    ctx.translate(-ox, -oy);
+    ctx.fillStyle = pattern;
+    ctx.fillRect(ox, oy, 1280, 720);
     ctx.restore();
   }
 
@@ -870,6 +941,11 @@ export class Engine implements EngineLike {
     if (this.resolutionWarning) this.dev.state('resolution-warning', '> 2,5 Mpx · résolution manuelle');
     this.collectDevCounters();
     this.metrics.appId = this.appName();
+    try {
+      this.achievements.update(Math.min(0.1, Math.max(0, frameIntervalMs / 1000)));
+    } catch (error) {
+      this.showError(error);
+    }
     this.render(timestamp / 1000);
     const observedFps = 1000 / Math.max(0.1, frameIntervalMs);
     this.fpsSmoothing += (observedFps - this.fpsSmoothing) * 0.08;
@@ -905,6 +981,11 @@ export class Engine implements EngineLike {
 
         // Réglages par-dessus tout (dessinés par l'engine pour rester au sommet).
         this.settings.draw(ctx, app?.accent || '#7dd3fc');
+        try {
+          this.achievements.draw(ctx);
+        } catch (error) {
+          this.showError(error);
+        }
       }
 
       if (this.toastT > 0 && this.toastMsg) {
@@ -945,8 +1026,8 @@ export class Engine implements EngineLike {
           this.sceneCanvas,
           time,
           this.gpuEffects.intensity,
-          this.screenFilters.crt.enabled,
-          this.screenFilters.noise.enabled,
+          this.screenFilters.crt.enabled ? this.screenFilters.crt.intensity : 0,
+          this.screenFilters.noise.enabled ? this.screenFilters.noise.intensity : 0,
         );
       } catch (error) {
         this.showError(error);

@@ -16,6 +16,8 @@ export class LocalLobbyApp implements AppLike {
   readonly blobs = [
     new Blob({ x: 430, y: 330, r: 48, color: '#7dd3fc', trailOn: true }),
     new Blob({ x: 850, y: 330, r: 48, color: '#f472b6', trailOn: true }),
+    new Blob({ x: 430, y: 330, r: 48, color: '#a3e635', trailOn: true }),
+    new Blob({ x: 850, y: 330, r: 48, color: '#fbbf24', trailOn: true }),
   ];
   readonly maxPlayers: number;
   readonly joined: boolean[];
@@ -29,7 +31,7 @@ export class LocalLobbyApp implements AppLike {
     this.input = engine.input;
     this.game = game;
     this.options = options;
-    this.maxPlayers = Math.min(2, game.meta.players?.max || 2);
+    this.maxPlayers = Math.max(1, Math.min(4, game.meta.players?.max || 2));
     this.joined = Array.from({ length: this.maxPlayers }, () => false);
     this.accent = game.meta.accent;
   }
@@ -146,9 +148,15 @@ export class LocalLobbyApp implements AppLike {
       mono: true,
     });
 
+    const lobbyColors = ['#7dd3fc', '#f472b6', '#a3e635', '#fbbf24'];
+    const slotPos = (i: number, n: number): { x: number; y: number; r: number } => {
+      if (n <= 2) return { x: i === 0 ? 430 : 850, y: 315, r: 74 };
+      if (n === 3) return { x: 320 + i * 320, y: 300, r: 62 };
+      return { x: i % 2 === 0 ? 430 : 850, y: i < 2 ? 235 : 390, r: 54 };
+    };
     for (let i = 0; i < this.maxPlayers; i++) {
-      const x = i === 0 ? 430 : 850;
-      const color = i === 0 ? '#7dd3fc' : '#f472b6';
+      const pos = slotPos(i, this.maxPlayers);
+      const color = lobbyColors[i % lobbyColors.length];
       const player = this.input.player(i);
       const ready = this.joined[i];
       ctx.save();
@@ -157,18 +165,19 @@ export class LocalLobbyApp implements AppLike {
       ctx.shadowBlur = ready ? 28 : 10;
       ctx.fillStyle = color;
       ctx.beginPath();
-      ctx.arc(x, 315, 74 + Math.sin(this.t * 2.2 + i) * 4, 0, Math.PI * 2);
+      ctx.arc(pos.x, pos.y, pos.r + Math.sin(this.t * 2.2 + i) * 4, 0, Math.PI * 2);
       ctx.fill();
       ctx.shadowBlur = 0;
       ctx.restore();
-      this.blobs[i].x = x;
-      this.blobs[i].y = 315;
+      this.blobs[i].x = pos.x;
+      this.blobs[i].y = pos.y;
       this.blobs[i].color = color;
       this.blobs[i].render(ctx);
 
-      UI.txt(ctx, 'JOUEUR ' + (i + 1), x, 432, { size: 18, align: 'center', color: '#eaf6ff', weight: 900 });
-      UI.txt(ctx, ready ? 'PRÊT · ' + player.source.toUpperCase() : 'APPUIE SUR A POUR REJOINDRE', x, 462, {
-        size: 13,
+      const labelY = pos.y + pos.r + 24;
+      UI.txt(ctx, 'JOUEUR ' + (i + 1), pos.x, labelY, { size: 18, align: 'center', color: '#eaf6ff', weight: 900 });
+      UI.txt(ctx, ready ? 'PRÊT · ' + player.source.toUpperCase() : 'APPUIE SUR A POUR REJOINDRE', pos.x, labelY + 28, {
+        size: 12,
         align: 'center',
         color: ready ? '#34d399' : '#8b95a8',
         mono: true,

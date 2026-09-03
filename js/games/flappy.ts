@@ -250,6 +250,7 @@ export class FlappyGame extends BaseGame {
           this.combo += 1;
           this.audio.perfect();
           this.audio.coin(Math.min(7, this.combo));
+          if (this.combo === 5) this.emitAchievement('flap:perfect5');
           this.musicEvent('combo', Math.min(1.1, 0.4 + this.combo * 0.08));
           this.fx.ring(gx, p.gapY, { r0: 12, r1: 84, color: '#f2c94c', life: 0.35, width: 3 });
           this.fx.text(gx, p.gapY - 40, 'PARFAIT x' + this.combo, { color: '#f2c94c', size: 20, mono: true });
@@ -268,6 +269,7 @@ export class FlappyGame extends BaseGame {
         if (this.pipesPassed % 10 === 0) {
           this.audio.milestone();
           this.musicEvent('waveComplete', 0.8);
+          if (this.pipesPassed === 10) this.emitAchievement('flap:ten');
           this.fx.flash(this.accent, 0.1);
           this.fx.text(640, 240, this.pipesPassed + ' ARCHES !', { color: this.accent, size: 32 });
         }

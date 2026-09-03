@@ -8,6 +8,7 @@ interface DemoImpl {
 // vignettes scriptées qui reprennent le langage visuel de chaque jeu (blobs, accents).
 
 import { Blob } from './core/blob';
+import { bloomApplyMove, bloomEmptyGrid, bloomLegalMoves, bloomOpponent } from './games/bloom';
 
 const TAU = Math.PI * 2;
 const rand = (a: number, b: number): number => a + Math.random() * (b - a);
@@ -1558,6 +1559,316 @@ function demoFlap(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB DIGGER : le mineur creuse, un rocher guette ----------------
+function demoDig(accent: string): DemoImpl {
+  const X0 = 560, CELL = 62, TOP = 210;
+  const cx = (c: number): number => X0 + (c + 0.5) * CELL;
+  const cy = (r: number): number => TOP + (r + 0.5) * CELL;
+  const s: any = {
+    t: 0, stepT: 0, r: 0,
+    blob: new Blob({ x: cx(3), y: cy(0), r: 16, color: accent }),
+    dug: [true, false, false, false, false, false],
+    rockY: cy(1), rockFalling: false, rockT: 0,
+    gemTaken: false, gemT: 0,
+    puffs: new Puffs(),
+  };
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      s.stepT += dt;
+      // Descente scriptée : creuse une case toutes les 0.5 s, boucle en bas.
+      if (s.stepT > 0.5 && s.r < 5) {
+        s.stepT = 0;
+        s.r += 1;
+        s.dug[s.r] = true;
+        s.blob.punch(0.35);
+        s.puffs.burst(cx(3), cy(s.r), ['#8a5a33', '#c98d54', '#ffffff'], 8, [40, 200], 0.4);
+        if (s.r === 4 && !s.gemTaken) {
+          s.gemTaken = true;
+          s.gemT = 0;
+          s.puffs.burst(cx(4), cy(4), ['#22d3ee', '#ffffff'], 16, [60, 300], 0.6);
+        }
+        if (s.r === 2 && !s.rockFalling) {
+          s.rockFalling = true;
+          s.rockT = 0;
+        }
+      }
+      if (s.r >= 5) {
+        s.r = 0;
+        s.dug = [true, false, false, false, false, false];
+        s.rockFalling = false;
+        s.rockY = cy(1);
+        s.gemTaken = false;
+      }
+      // Le rocher éventré dégringole une fois le mineur passé dessous.
+      if (s.rockFalling && s.rockY < cy(4)) {
+        s.rockT += dt;
+        s.rockY = Math.min(cy(4), cy(1) + s.rockT * s.rockT * 900);
+      }
+      const ty = cy(s.r);
+      s.blob.x += (cx(3) - s.blob.x) * Math.min(1, dt * 10);
+      s.blob.y += (ty - s.blob.y) * Math.min(1, dt * 10);
+      s.blob.vx = 0;
+      s.blob.vy = 200;
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      for (let r = 0; r < 6; r++) {
+        for (let c = 1; c < 6; c++) {
+          const dug = (c === 3 && s.dug[r]) || (r === 4 && c === 4 && s.gemTaken);
+          ctx.fillStyle = dug ? '#0b0906' : '#6b4226';
+          ctx.fillRect(X0 + c * CELL, TOP + r * CELL, CELL - 2, CELL - 2);
+          if (!dug) {
+            ctx.fillStyle = 'rgba(201,141,84,0.5)';
+            ctx.beginPath();
+            ctx.arc(X0 + c * CELL + 14, TOP + r * CELL + 18, 3, 0, TAU);
+            ctx.fill();
+          }
+        }
+      }
+      // Mur indestructible à gauche.
+      ctx.fillStyle = '#232a3a';
+      ctx.fillRect(X0, TOP, 22, 6 * CELL);
+      ctx.fillStyle = '#94a3b8';
+      for (let r = 0; r < 6; r++) {
+        ctx.beginPath();
+        ctx.arc(X0 + 11, TOP + r * CELL + 20, 2.4, 0, TAU);
+        ctx.fill();
+      }
+      // Rocher + diamant.
+      ctx.fillStyle = '#6e7683';
+      ctx.beginPath();
+      ctx.arc(cx(4), s.rockFalling ? s.rockY : cy(1), 22, 0, TAU);
+      ctx.fill();
+      ctx.fillStyle = '#a8b0bd';
+      ctx.beginPath();
+      ctx.arc(cx(4) - 6, (s.rockFalling ? s.rockY : cy(1)) - 7, 6, 0, TAU);
+      ctx.fill();
+      if (!s.gemTaken) {
+        ctx.save();
+        ctx.shadowColor = '#22d3ee';
+        ctx.shadowBlur = 12;
+        ctx.fillStyle = '#67e8f9';
+        ctx.beginPath();
+        ctx.moveTo(cx(4), cy(4) - 13);
+        ctx.lineTo(cx(4) + 10, cy(4) - 2);
+        ctx.lineTo(cx(4), cy(4) + 13);
+        ctx.lineTo(cx(4) - 10, cy(4) - 2);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+      }
+      s.blob.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
+// ---------------- BLOB CYCLES : deux filaments orthogonaux qui se croisent ----------------
+function demoCycle(accent: string): DemoImpl {
+  const cols = [accent, '#f472b6'];
+  const s: any = {
+    t: 0,
+    riders: [
+      { pts: [{ x: 480, y: 300 }], dir: 0, stepT: 0, color: cols[0], blob: new Blob({ x: 480, y: 300, r: 12, color: cols[0] }) },
+      { pts: [{ x: 900, y: 500 }], dir: 1, stepT: 0, color: cols[1], blob: new Blob({ x: 900, y: 500, r: 12, color: cols[1] }) },
+    ],
+    puffs: new Puffs(),
+  };
+  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+  const SPEED = 200;
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      for (const r of s.riders) {
+        r.stepT += dt;
+        if (r.stepT > rand(0.5, 1.1)) {
+          r.stepT = 0;
+          const left = (r.dir + 3) % 4;
+          const right = (r.dir + 1) % 4;
+          r.dir = Math.random() < 0.5 ? left : right;
+          const head = r.pts[r.pts.length - 1];
+          r.pts.push({ x: head.x, y: head.y });
+          r.blob.punch(0.4);
+          s.puffs.burst(head.x, head.y, [r.color, '#ffffff'], 5, [40, 180], 0.3);
+        }
+        const head = r.pts[r.pts.length - 1];
+        head.x += DIRS[r.dir][0] * SPEED * dt;
+        head.y += DIRS[r.dir][1] * SPEED * dt;
+        // Rebond vitrine dans le cadre démo.
+        if (head.x < 450 || head.x > 940 || head.y < 170 || head.y > 600) {
+          r.dir = (r.dir + 2) % 4;
+          head.x = Math.max(450, Math.min(940, head.x));
+          head.y = Math.max(170, Math.min(600, head.y));
+          r.pts.push({ x: head.x, y: head.y });
+          r.pts.splice(0, Math.max(0, r.pts.length - 14));
+        }
+        if (r.pts.length > 26) r.pts.splice(0, r.pts.length - 26);
+        r.blob.x = head.x;
+        r.blob.y = head.y;
+        r.blob.vx = DIRS[r.dir][0] * SPEED;
+        r.blob.vy = DIRS[r.dir][1] * SPEED;
+        r.blob.update(dt);
+      }
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.strokeStyle = '#ffffff22';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(450, 170, 490, 430);
+      for (const r of s.riders) {
+        ctx.save();
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.25;
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(r.pts[0].x, r.pts[0].y);
+        for (let i = 1; i < r.pts.length; i++) ctx.lineTo(r.pts[i].x, r.pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.shadowColor = r.color;
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(r.pts[0].x, r.pts[0].y);
+        for (let i = 1; i < r.pts.length; i++) ctx.lineTo(r.pts[i].x, r.pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+        r.blob.render(ctx);
+      }
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
+// ---------------- BLOB BLOOM : contamination Othello en boucle ----------------
+function demoBloom(accent: string): DemoImpl {
+  const CELL = 34, OX = 554, OY = 226;
+  const cx = (c: number): number => OX + (c + 0.5) * CELL;
+  const cy = (r: number): number => OY + (r + 0.5) * CELL;
+  const cols = [accent, '#38bdf8'];
+  let s: any;
+  const setup = () => {
+    const grid = bloomEmptyGrid();
+    grid[3][3] = 2; grid[4][4] = 2; grid[3][4] = 1; grid[4][3] = 1;
+    s = {
+      grid, turn: 1, waitT: 0.8, overT: 0,
+      waves: [] as any[],
+      conv: new Map<number, number>(),
+      blobs: [
+        new Blob({ x: 490, y: 360, r: 22, color: cols[0] }),
+        new Blob({ x: 900, y: 360, r: 22, color: cols[1] }),
+      ],
+      puffs: new Puffs(),
+    };
+  };
+  setup();
+  return {
+    update(dt: number): void {
+      if (s.overT > 0) {
+        s.overT -= dt;
+        if (s.overT <= 0) setup();
+      } else {
+        s.waitT -= dt;
+        if (s.waitT <= 0) {
+          const moves = bloomLegalMoves(s.grid, s.turn);
+          if (moves.length === 0) {
+            const foe = bloomLegalMoves(s.grid, bloomOpponent(s.turn));
+            if (foe.length === 0) { s.overT = 2.2; }
+            else { s.turn = bloomOpponent(s.turn); s.waitT = 0.4; }
+          } else {
+            const m = moves[(Math.random() * moves.length) | 0];
+            const res = bloomApplyMove(s.grid, s.turn, m.x, m.y);
+            if (res) {
+              s.grid = res.grid;
+              s.waves.push({ x: cx(m.x), y: cy(m.y), r: 10, color: cols[s.turn - 1], life: 0.6 });
+              for (const f of res.flips) {
+                s.conv.set(f.y * 8 + f.x, 0.3);
+                if (Math.random() < 0.5) s.puffs.burst(cx(f.x), cy(f.y), [cols[s.turn - 1], '#ffffff'], 4, [30, 140], 0.35);
+              }
+              s.blobs[s.turn - 1].punch(0.35);
+              s.turn = bloomOpponent(s.turn);
+            }
+            s.waitT = 0.85;
+          }
+        }
+      }
+      for (let i = s.waves.length - 1; i >= 0; i--) {
+        const w = s.waves[i];
+        w.life -= dt;
+        w.r += dt * 320;
+        if (w.life <= 0) s.waves.splice(i, 1);
+      }
+      for (const [k, t] of s.conv) {
+        if (t <= dt) s.conv.delete(k);
+        else s.conv.set(k, t - dt);
+      }
+      for (const b of s.blobs) b.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      const g = ctx.createRadialGradient(640, 360, 40, 640, 360, 420);
+      g.addColorStop(0, 'rgba(74,222,128,0.10)');
+      g.addColorStop(0.5, 'rgba(56,189,248,0.06)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(480, 180, 320, 360);
+      ctx.strokeStyle = '#ffffff18';
+      ctx.lineWidth = 2;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(OX - 6, OY - 6, CELL * 8 + 12, CELL * 8 + 12, 16);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(OX, OY, CELL * 8, CELL * 8);
+      }
+      for (const w of s.waves) {
+        ctx.globalAlpha = Math.max(0, w.life / 0.6) * 0.8;
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const v = s.grid[y][x];
+        if (!v) continue;
+        const pop = s.conv.get(y * 8 + x);
+        const r = pop !== undefined ? 8 + (0.3 - pop) * 28 : 13;
+        ctx.fillStyle = cols[v - 1];
+        ctx.shadowColor = cols[v - 1];
+        ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(cx(x), cy(y), r, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+        if (v === 1) {
+          ctx.fillStyle = '#f9a8d4';
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * TAU + s.blobs[0].t;
+            ctx.beginPath(); ctx.arc(cx(x) + Math.cos(a) * r * 0.62, cy(y) + Math.sin(a) * r * 0.62, 3.4, 0, TAU); ctx.fill();
+          }
+        } else {
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.lineWidth = 1.5;
+          const d = r * 0.7;
+          ctx.beginPath();
+          ctx.moveTo(cx(x), cy(y) - d); ctx.lineTo(cx(x) + d * 0.7, cy(y));
+          ctx.lineTo(cx(x), cy(y) + d); ctx.lineTo(cx(x) - d * 0.7, cy(y));
+          ctx.closePath(); ctx.stroke();
+        }
+      }
+      for (const b of s.blobs) b.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1575,6 +1886,9 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   path: demoPath,
   frog: demoFrog,
   flap: demoFlap,
+  dig: demoDig,
+  cycle: demoCycle,
+  bloom: demoBloom,
 };
 
 export class Demo {
