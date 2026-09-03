@@ -16,6 +16,18 @@ interface BurstOptions {
   shape?: string;
 }
 
+interface ImplodeOptions {
+  n?: number;
+  radius?: number;
+  speed?: [number, number];
+  size?: [number, number];
+  life?: number;
+  colors?: string[];
+  drag?: number;
+  grav?: number;
+  shape?: string;
+}
+
 interface RingOptions {
   r0?: number;
   r1?: number;
@@ -119,6 +131,42 @@ export class Fx {
         y,
         vx: Math.cos(angle) * velocity,
         vy: Math.sin(angle) * velocity,
+        life: particleLife,
+        maxLife: particleLife,
+        size: rand(size[0], size[1]),
+        color: colors[(Math.random() * colors.length) | 0],
+        drag: options.drag ?? 0.9,
+        grav: options.grav ?? 0,
+        shape: options.shape ?? 'dot',
+        rot: Math.random() * 6.28,
+        vr: (Math.random() - 0.5) * 10,
+      });
+    }
+    if (this.parts.length > 700) this.parts.splice(0, this.parts.length - 700);
+  }
+
+  // Nuage de particules attiré vers un centre. Utile pour les implosions et
+  // les charges d'énergie sans introduire de sprite ou de second système FX.
+  implode(x: number, y: number, options: ImplodeOptions = {}): void {
+    const n = options.n ?? 16;
+    const radius = options.radius ?? 60;
+    const speed = options.speed ?? [70, 240];
+    const size = options.size ?? [1.5, 4];
+    const life = options.life ?? 0.35;
+    const colors = options.colors ?? ['#ffffff'];
+
+    for (let i = 0; i < n; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const distance = rand(radius * 0.68, radius);
+      const velocity = rand(speed[0], speed[1]);
+      const tangent = (Math.random() - 0.5) * velocity * 0.24;
+      const particleLife = rand(life * 0.55, life);
+      const nx = Math.cos(angle), ny = Math.sin(angle);
+      this.parts.push({
+        x: x + nx * distance,
+        y: y + ny * distance,
+        vx: -nx * velocity - ny * tangent,
+        vy: -ny * velocity + nx * tangent,
         life: particleLife,
         maxLife: particleLife,
         size: rand(size[0], size[1]),

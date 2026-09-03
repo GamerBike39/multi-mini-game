@@ -180,7 +180,7 @@ export class BaseGame {
   restart(): void {
     this.audio.uiOk();
     const Game = this.constructor as unknown as new (engine: EngineLike) => BaseGame;
-    this.eng.setApp(new Game(this.eng));
+    this.eng.setApp(new Game(this.eng), false);
   }
 
   quit(): void {
