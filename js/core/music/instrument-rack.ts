@@ -4,6 +4,8 @@
 // événements horodatés et les rend sur le sous-bus correspondant. Les sources
 // courtes sont suivies jusqu'à leur fin afin de pouvoir être nettoyées.
 
+import type { VoxVowel } from './mood-utils';
+
 export type MusicDrumKind =
   | 'kick'
   | 'snare'
@@ -16,7 +18,7 @@ export type MusicDrumKind =
   | 'rim'
   | 'tom'
   | 'shaker';
-export type InstrumentName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx';
+export type InstrumentName = 'drums' | 'bass' | 'harmony' | 'arp' | 'lead' | 'fx' | 'brass' | 'vox';
 
 export interface InstrumentRackBuses {
   drums: AudioNode;
@@ -25,6 +27,8 @@ export interface InstrumentRackBuses {
   arp: AudioNode;
   lead: AudioNode;
   fx: AudioNode;
+  brass: AudioNode;
+  vox: AudioNode;
 }
 
 export interface MusicInstrument {
@@ -53,6 +57,31 @@ interface NoiseOptions {
   type: BiquadFilterType;
   q?: number;
 }
+
+interface BrassOptions {
+  f: number;
+  time: number;
+  duration: number;
+  volume: number;
+}
+
+interface VoxOptions {
+  f: number;
+  vowel: VoxVowel;
+  time: number;
+  duration: number;
+  volume: number;
+}
+
+/** Formants mesurés : [fréquence, Q, niveau] — mêmes tables que le SFX vocalize. */
+const VOX_FORMANTS: Record<VoxVowel, ReadonlyArray<readonly [number, number, number]>> = {
+  hey: [[550, 7, 1], [1900, 9, 0.5], [2500, 12, 0.15]],
+  oh: [[500, 7, 1], [880, 9, 0.58], [2450, 12, 0.14]],
+  ah: [[780, 7, 1], [1180, 9, 0.52], [2700, 12, 0.16]],
+};
+
+/** Encodage voyelle ↔ index pour les notes vox `[midi, code]`. */
+const VOX_ORDER: readonly VoxVowel[] = ['hey', 'oh', 'ah'];
 
 type VoiceRenderer = (
   voice: RackVoice,
@@ -146,6 +175,103 @@ class RackVoice implements MusicInstrument {
     source.stop(time + safeDuration + 0.05);
   }
 
+  /** Cuivre de poche : deux scies désaccordées dans un lowpass + vibrato retardé. */
+  scheduleBrass({ f, time, duration, volume }: BrassOptions): void {
+    const safeDuration = Math.max(0.12, duration);
+    const filter = this.context.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.setValueAtTime(1200 + 2600 * this.brightness, time);
+    filter.Q.value = 0.8;
+    const gain = this.context.createGain();
+    const attack = Math.min(0.04, safeDuration * 0.25);
+    const holdUntil = time + Math.max(attack, safeDuration * 0.6);
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(Math.max(0, volume), time + attack);
+    gain.gain.setValueAtTime(Math.max(0, volume), holdUntil);
+    gain.gain.exponentialRampToValueAtTime(0.0001, time + safeDuration);
+    filter.connect(gain);
+    gain.connect(this.destination);
+    const lfo = this.context.createOscillator();
+    const lfoDepth = this.context.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.value = 5.5;
+    lfoDepth.gain.setValueAtTime(0, time);
+    lfoDepth.gain.linearRampToValueAtTime(6, time + Math.min(0.14, safeDuration * 0.5));
+    lfo.connect(lfoDepth);
+    const stopAt = time + safeDuration + 0.05;
+    for (const detune of [-5, 4]) {
+      const osc = this.context.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(Math.max(20, f), time);
+      osc.detune.value = detune;
+      lfoDepth.connect(osc.detune);
+      osc.connect(filter);
+      this.register(osc, []);
+      osc.start(time);
+      osc.stop(stopAt);
+    }
+    this.register(lfo, [filter, gain, lfoDepth]);
+    lfo.start(time);
+    lfo.stop(stopAt);
+  }
+
+  /** Cri de fête : scie filtrée par trois formants, attaque franche, chute courte. */
+  scheduleVox({ f, vowel, time, duration, volume }: VoxOptions): void {
+    const safeDuration = Math.max(0.1, duration);
+    const end = time + safeDuration;
+    const carrier = this.context.createOscillator();
+    carrier.type = 'sawtooth';
+    carrier.frequency.setValueAtTime(Math.max(40, f * 0.96), time);
+    carrier.frequency.exponentialRampToValueAtTime(Math.max(40, f), time + Math.min(0.06, safeDuration * 0.3));
+    const body = this.context.createOscillator();
+    body.type = 'triangle';
+    body.frequency.setValueAtTime(Math.max(40, f * 0.5), time);
+    const vibrato = this.context.createOscillator();
+    const vibratoDepth = this.context.createGain();
+    vibrato.type = 'sine';
+    vibrato.frequency.value = 6;
+    vibratoDepth.gain.setValueAtTime(0, time);
+    vibratoDepth.gain.linearRampToValueAtTime(8, time + Math.min(0.08, safeDuration * 0.4));
+    vibrato.connect(vibratoDepth);
+    vibratoDepth.connect(carrier.detune);
+    const sourceGain = this.context.createGain();
+    sourceGain.gain.value = 0.55;
+    const bodyGain = this.context.createGain();
+    bodyGain.gain.value = 0.14;
+    const envelope = this.context.createGain();
+    envelope.gain.setValueAtTime(0.0001, time);
+    envelope.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), time + Math.min(0.02, safeDuration * 0.15));
+    envelope.gain.setValueAtTime(Math.max(0.0002, volume * 0.8), Math.max(time + 0.021, end - Math.min(0.08, safeDuration * 0.4)));
+    envelope.gain.exponentialRampToValueAtTime(0.0001, end);
+    carrier.connect(sourceGain);
+    body.connect(bodyGain);
+    bodyGain.connect(envelope);
+    const nodes: AudioNode[] = [sourceGain, bodyGain, envelope, vibrato, vibratoDepth];
+    for (const [frequency, q, level] of VOX_FORMANTS[vowel]) {
+      const filter = this.context.createBiquadFilter();
+      const formantGain = this.context.createGain();
+      filter.type = 'bandpass';
+      filter.frequency.value = frequency;
+      filter.Q.value = q;
+      formantGain.gain.value = level;
+      sourceGain.connect(filter);
+      filter.connect(formantGain);
+      formantGain.connect(envelope);
+      nodes.push(filter, formantGain);
+    }
+    envelope.connect(this.destination);
+    const stopAt = end + 0.04;
+    this.register(carrier, []);
+    this.register(body, []);
+    this.register(vibrato, nodes);
+    carrier.start(time);
+    body.start(time);
+    vibrato.start(time);
+    carrier.stop(stopAt);
+    body.stop(stopAt);
+    vibrato.stop(stopAt);
+  }
+
   private register(source: AudioScheduledSourceNode, nodes: AudioNode[]): void {
     this.activeSources.add(source);
     source.onended = () => {
@@ -176,6 +302,8 @@ export class InstrumentRack {
   readonly arp: MusicInstrument;
   readonly lead: MusicInstrument;
   readonly fx: MusicInstrument;
+  readonly brass: MusicInstrument;
+  readonly vox: MusicInstrument;
 
   constructor({ context, noiseBuffer, buses }: InstrumentRackOptions) {
     this.drums = new RackVoice(context, buses.drums, noiseBuffer, (voice, note, time, duration, velocity) => {
@@ -240,6 +368,17 @@ export class InstrumentRack {
       const midi = typeof note === 'number' ? note : Number(note);
       if (Number.isFinite(midi)) voice.scheduleTone({ f: midiHz(midi), type: 'sine', time, duration, volume: 0.1 * velocity });
     });
+
+    this.brass = new RackVoice(context, buses.brass, noiseBuffer, (voice, note, time, duration, velocity) => {
+      const midi = typeof note === 'number' ? note : Number(note);
+      if (Number.isFinite(midi)) voice.scheduleBrass({ f: midiHz(midi), time, duration, volume: 0.09 * velocity });
+    });
+
+    this.vox = new RackVoice(context, buses.vox, noiseBuffer, (voice, note, time, duration, velocity) => {
+      const midi = Array.isArray(note) ? Number(note[0]) : Number(note);
+      const vowel = Array.isArray(note) ? VOX_ORDER[Number(note[1])] ?? 'hey' : 'hey';
+      if (Number.isFinite(midi)) voice.scheduleVox({ f: midiHz(midi), vowel, time, duration, volume: 0.24 * velocity });
+    });
   }
 
   triggerDrum(kind: MusicDrumKind, time: number, velocity = 1): void {
@@ -252,6 +391,18 @@ export class InstrumentRack {
 
   triggerBass(time: number, midi: number, duration = 0.2, velocity = 1): void {
     this.bass.trigger(midi, time, duration, velocity);
+  }
+
+  triggerBrass(time: number, midi: number, duration = 0.2, velocity = 0.8): void {
+    this.brass.trigger(midi, time, duration, velocity);
+  }
+
+  triggerVox(time: number, midi: number, vowel: VoxVowel = 'hey', duration = 0.2, velocity = 0.9): void {
+    this.vox.trigger([midi, VOX_ORDER.indexOf(vowel)], time, duration, velocity);
+  }
+
+  triggerArp(time: number, midi: number, duration = 0.22, velocity = 0.55): void {
+    this.arp.trigger(midi, time, duration, velocity);
   }
 
   triggerPad(time: number, root: number, duration: number, velocity = 1): void {
@@ -271,7 +422,7 @@ export class InstrumentRack {
   }
 
   resetLayers(time?: number): void {
-    for (const layer of ['drums', 'bass', 'harmony', 'arp', 'lead', 'fx'] as const) {
+    for (const layer of ['drums', 'bass', 'harmony', 'arp', 'lead', 'fx', 'brass', 'vox'] as const) {
       this[layer].setPresence(1, time);
       this[layer].setBrightness(0.5, time);
     }
@@ -284,5 +435,7 @@ export class InstrumentRack {
     this.arp.dispose();
     this.lead.dispose();
     this.fx.dispose();
+    this.brass.dispose();
+    this.vox.dispose();
   }
 }

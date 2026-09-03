@@ -4,6 +4,7 @@
 import { InputManager } from './input';
 import { AudioSys } from './audio';
 import { Settings } from './settings';
+import { AchievementSystem } from './achievements';
 import { StageOverlay, blobAnchor } from './stage';
 import { FixedClock, FIXED_STEP } from './clock';
 import { DevTools } from './devtools';
@@ -128,6 +129,7 @@ export class Engine implements EngineLike {
   readonly audio: AudioLike;
   readonly input: InputManager;
   readonly settings: Settings;
+  readonly achievements: AchievementSystem;
   readonly dev = new DevTools();
   readonly metrics: FrameMetrics = {
     fps: 60,
@@ -195,6 +197,15 @@ export class Engine implements EngineLike {
     this.renderTarget = context;
     this.audio = new AudioSys() as AudioLike;
     this.input = new InputManager(() => this.audio.unlock());
+    this.achievements = new AchievementSystem({
+      onUnlock: () => {
+        try {
+          this.audio.milestone();
+        } catch {
+          // Le toast visuel suffit si l'audio est indisponible.
+        }
+      },
+    });
     this.presenter = new WebGLPresenter(canvas, () => {
       this.gpuEffects.available = false;
       this.gpuEffects.enabled = false;
@@ -290,6 +301,13 @@ export class Engine implements EngineLike {
       this.canvas.style.cursor = 'default';
     });
     canvas.addEventListener('contextmenu', (event: MouseEvent) => event.preventDefault());
+    canvas.addEventListener('wheel', (event: WheelEvent) => {
+      const app = this.app;
+      if (!app?.onWheel || this.faulted) return;
+      event.preventDefault();
+      const delta = Number.isFinite(event.deltaY) ? event.deltaY : 0;
+      if (delta !== 0) app.onWheel(delta);
+    }, { passive: false });
     addEventListener('keydown', (event: KeyboardEvent) => {
       if (event.code === 'F3') {
         event.preventDefault();
@@ -493,6 +511,11 @@ export class Engine implements EngineLike {
     const requestedMode = options.mode || (players.max > 1 ? 'local' : 'solo');
     if (requestedMode === 'local' && players.max > 1 && !options.skipLobby && !options.replay) {
       this.input.configureLobby(players.max);
+      try {
+        this.audio.stinger('launch');
+      } catch {
+        // La transition visuelle suffit si l'audio est indisponible.
+      }
       this.transitionTo(new LocalLobbyApp(this, game, options), {
         accent: game.meta.accent,
         title: game.meta.name + ' · JOUEURS',
@@ -543,6 +566,11 @@ export class Engine implements EngineLike {
     } catch (error) {
       this.showError(error);
       return;
+    }
+    try {
+      this.audio.stinger('launch');
+    } catch {
+      // La transition visuelle suffit si l'audio est indisponible.
     }
     this.transitionTo(app, {
       accent: game.meta.accent,
@@ -870,6 +898,11 @@ export class Engine implements EngineLike {
     if (this.resolutionWarning) this.dev.state('resolution-warning', '> 2,5 Mpx · résolution manuelle');
     this.collectDevCounters();
     this.metrics.appId = this.appName();
+    try {
+      this.achievements.update(Math.min(0.1, Math.max(0, frameIntervalMs / 1000)));
+    } catch (error) {
+      this.showError(error);
+    }
     this.render(timestamp / 1000);
     const observedFps = 1000 / Math.max(0.1, frameIntervalMs);
     this.fpsSmoothing += (observedFps - this.fpsSmoothing) * 0.08;
@@ -905,6 +938,11 @@ export class Engine implements EngineLike {
 
         // Réglages par-dessus tout (dessinés par l'engine pour rester au sommet).
         this.settings.draw(ctx, app?.accent || '#7dd3fc');
+        try {
+          this.achievements.draw(ctx);
+        } catch (error) {
+          this.showError(error);
+        }
       }
 
       if (this.toastT > 0 && this.toastMsg) {

@@ -33,6 +33,7 @@ export class PongGame extends BaseGame {
   readonly playerScores = [0, 0];
   serveT = 0.8;
   hitT = 0;
+  rally = 0;
   winner = -1;
   private readonly unsubscribeCollision: () => void;
 
@@ -144,6 +145,8 @@ export class PongGame extends BaseGame {
     this.ballBody.vy += offset * 165;
     if (this.hitT <= 0) {
       this.hitT = 0.045;
+      this.rally += 1;
+      this.musicEvent('combo', Math.min(1.2, 0.3 + this.rally * 0.06));
       this.fx.shake(0.035);
       this.fx.ring(this.ballBody.x, this.ballBody.y, { r0: 10, r1: 46, color: paddleIndex === 0 ? '#7dd3fc' : '#f472b6', life: 0.22, width: 3 });
       this.audio.hitEnemy();
@@ -157,6 +160,7 @@ export class PongGame extends BaseGame {
     this.ballBody.vx = direction * 340;
     this.ballBody.vy = this.rng.float(-170, 170);
     this.serveT = 0.72;
+    this.rally = 0;
     this.ballBlob.punch(0.2);
   }
 
@@ -172,6 +176,7 @@ export class PongGame extends BaseGame {
       life: 0.5,
     });
     this.audio.coin(this.playerScores[playerIndex]);
+    this.musicEvent('waveComplete', 0.5);
     this.input.player(playerIndex).rumble(0.28, 0.09);
     if (this.playerScores[playerIndex] >= WIN_SCORE) {
       this.winner = playerIndex;

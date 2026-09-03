@@ -22,6 +22,8 @@ const LAYER_LABELS: Record<MusicLayerName, string> = {
   arp: 'ARP / PLUCK',
   lead: 'LEAD',
   fx: 'FX / BELL',
+  brass: 'BRASS',
+  vox: 'VOX / HEY',
 };
 const STATE_LABELS: Record<MusicStateKey, string> = {
   intensity: 'INTENSITÉ',
@@ -59,6 +61,8 @@ export class MusicTestApp implements AppLike {
     arp: true,
     lead: true,
     fx: true,
+    brass: true,
+    vox: true,
   };
 
   constructor(engine: EngineLike) {

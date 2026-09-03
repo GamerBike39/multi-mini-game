@@ -2,6 +2,7 @@ import { Engine } from './core/engine';
 import { Menu } from './menu';
 import { IntroApp } from './core/stage';
 import { analyzeBuffer } from './core/analyzer';
+import { buildAchievementCatalog } from './core/achievements';
 import { RhythmGame } from './games/rhythm';
 import { SurvivalGame } from './games/survival';
 import { ShooterGame } from './games/shooter';
@@ -20,6 +21,7 @@ import { PathGame } from './games/path';
 import { FrogGame } from './games/frog';
 import { FlappyGame } from './games/flappy';
 import { DigGame } from './games/dig';
+import { CycleGame } from './games/cycle';
 import { MusicTestApp } from './music-test';
 import type { AppLike, GameConstructor } from './core/types';
 
@@ -53,6 +55,7 @@ const GAMES: GameConstructor[] = [
   FrogGame,
   FlappyGame,
   DigGame,
+  CycleGame,
 ];
 
 function element<T extends HTMLElement>(id: string): T {
@@ -62,6 +65,18 @@ function element<T extends HTMLElement>(id: string): T {
 }
 
 const engine = new Engine(element<HTMLCanvasElement>('game'));
+engine.achievements.registerMany(buildAchievementCatalog(GAMES.map((game) => game.meta)));
+// Vitrines "contrôle total" : évènements custom émis par les jeux eux-mêmes
+// (voir SurvivalGame.finishWave et FlappyGame). Modèle à copier pour
+// near-miss, combos, speedruns, secrets... dans n'importe quel jeu.
+engine.achievements.registerMany([
+  { id: 'surv.wave5', gameId: 'surv', name: 'SURVIBLOB — VAGUE 5', desc: 'Termine la vague 5', icon: '🌊', points: 15, event: 'surv:wave', when: (e) => (e.value ?? 0) >= 5 },
+  { id: 'surv.wave10', gameId: 'surv', name: 'SURVIBLOB — VAGUE 10', desc: 'Termine la vague 10', icon: '🌪️', points: 25, event: 'surv:wave', when: (e) => (e.value ?? 0) >= 10 },
+  { id: 'flap.ten', gameId: 'flap', name: 'FLAPPY BLOB — DIX ARCHES', desc: 'Passe 10 arches en une partie', icon: '🪶', points: 15, event: 'flap:ten' },
+  { id: 'flap.perfect5', gameId: 'flap', name: 'FLAPPY BLOB — PLUME D’OR', desc: 'Enchaîne 5 passages PARFAITS', icon: '✨', points: 25, event: 'flap:perfect5' },
+  { id: 'cycle.near-5', gameId: 'cycle', name: 'CYCLES — FRISSON ×5', desc: '5 near-miss en une partie', icon: '⚡', points: 15, event: 'cycle:near' },
+  { id: 'cycle.near-12', gameId: 'cycle', name: 'CYCLES — DANSEUSE', desc: '12 near-miss en une partie', icon: '🌩️', points: 25, event: 'cycle:near' },
+]);
 engine.menuFactory = () => new Menu(engine, GAMES) as AppLike;
 const musicTestRoute = location.pathname === '/music-test' || new URLSearchParams(location.search).has('music-test');
 engine.setApp(musicTestRoute ? new MusicTestApp(engine) : new IntroApp(engine), false);

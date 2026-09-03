@@ -8,6 +8,35 @@ import { SeededRng } from '../js/core/rng';
 import { SpatialHash } from '../js/core/spatial-hash';
 import { GridSystem, PhaseMachine, Scroller } from '../js/core/systems';
 import { DevTools } from '../js/core/devtools';
+import { AchievementSystem, buildAchievementCatalog } from '../js/core/achievements';
+import { arpOffsetAt, brassOffsetAt, dottedEighth, fillDrumsAt, isBreakBar, leadOffsetAt, progressionRoot, swingOffsetAt, voxStepAt } from '../js/core/music/mood-utils';
+import { MOODS } from '../js/core/audio';
+import { RhythmGame } from '../js/games/rhythm';
+import { SurvivalGame } from '../js/games/survival';
+import { ShooterGame } from '../js/games/shooter';
+import { RunnerGame } from '../js/games/runner';
+import { CaveGame } from '../js/games/cave';
+import { SimonGame } from '../js/games/simon';
+import { SnakeGame } from '../js/games/snake';
+import { BreakerGame } from '../js/games/breaker';
+import { GolfGame } from '../js/games/golf';
+import { FishingGame } from '../js/games/fish';
+import { PongGame } from '../js/games/pong';
+import { ColumnsGame } from '../js/games/columns';
+import { BubbleGame } from '../js/games/bubble';
+import { SortGame } from '../js/games/sort';
+import { PathGame } from '../js/games/path';
+import { DigGame } from '../js/games/dig';
+import {
+  CYCLE_ENERGY_COST,
+  CYCLE_H,
+  CYCLE_W,
+  CycleGame,
+  cycleCanTurn,
+  cycleDirVec,
+  cycleWantDir,
+  pointSegDist,
+} from '../js/games/cycle';
 import { ACTIONS, type AudioLike, type EngineLike, type InputLike, type ReplayPlayerFrame } from '../js/core/types';
 import { simonPadPressed } from '../js/games/simon';
 import { sortChoiceCorrect, sortDifficulty, sortDirectionPressed } from '../js/games/sort';
@@ -1419,6 +1448,222 @@ function testFrogInput(): void {
   equal(stick.buffered, null, 'Frogger : le stick ne double pas le hop');
 }
 
+function memoryStorage(): { getItem(key: string): string | null; setItem(key: string, value: string): void; data: Map<string, string> } {
+  const data = new Map<string, string>();
+  return {
+    data,
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, value),
+  };
+}
+
+function testAchievements(): void {
+  // Compteur simple : 3 évènements requis.
+  const storage = memoryStorage();
+  const system = new AchievementSystem({ storage });
+  system.register({ id: 'test.trio', name: 'Trio', desc: 'Trois fois', icon: '★', points: 5, event: 'custom:ping', count: 3 });
+  equal(system.isUnlocked('test.trio'), false, 'Succès verrouillé au départ');
+  system.emit('custom:ping');
+  system.emit('custom:ping');
+  equal(system.isUnlocked('test.trio'), false, 'Deux occurrences ne suffisent pas pour un compteur à 3');
+  equal(system.progressOf('test.trio'), 2, 'La progression est comptée');
+  const done = system.emit('custom:ping');
+  equal(done.join(','), 'test.trio', 'La troisième occurrence débloque');
+  assert(system.isUnlocked('test.trio'), 'Le succès est débloqué');
+  system.emit('custom:ping');
+  equal(system.progressOf('test.trio'), 3, 'La progression ne dépasse plus après déblocage');
+
+  // Déblocage direct pour logiques complexes.
+  system.register({ id: 'test.direct', name: 'Direct', desc: 'Manuel', icon: '◆', points: 10, event: 'never:fires' });
+  assert(system.unlock('test.direct'), 'unlock() direct fonctionne');
+  assert(!system.unlock('test.direct'), 'unlock() répété ne re-notifie pas');
+
+  // Prédicat : seul le rang S compte.
+  system.register({
+    id: 'test.ranks', name: 'Rang S', desc: 'Seul S', icon: '★', points: 5,
+    event: 'game:rank', when: (e) => e.rank === 'S',
+  });
+  system.emit('game:rank', { gameId: 'cave', rank: 'A' });
+  assert(!system.isUnlocked('test.ranks'), 'Le rang A ne valide pas un succès rang S');
+  system.emit('game:rank', { gameId: 'cave', rank: 'S' });
+  assert(system.isUnlocked('test.ranks'), 'Le rang S valide');
+
+  // Filtre jeu : un succès par jeu ignore les autres jeux.
+  system.register({ id: 'cave.first', gameId: 'cave', name: 'Cave', desc: 'Une partie', icon: '▶', points: 5, event: 'game:over' });
+  system.emit('game:over', { gameId: 'golf' });
+  assert(!system.isUnlocked('cave.first'), 'Un évènement golf ne valide pas cave.first');
+  system.emit('game:over', { gameId: 'cave' });
+  assert(system.isUnlocked('cave.first'), 'Un évènement cave valide cave.first');
+
+  // Distinct : 2 jeux différents requis, rejouer le même ne compte pas double.
+  system.register({
+    id: 'g.explorer', name: 'Explorateur', desc: '2 jeux', icon: '🧭', points: 10,
+    event: 'game:over', count: 2, distinctBy: 'gameId',
+  });
+  system.emit('game:over', { gameId: 'cave' });
+  system.emit('game:over', { gameId: 'cave' });
+  assert(!system.isUnlocked('g.explorer'), 'Rejouer le même jeu ne compte qu’une fois');
+  system.emit('game:over', { gameId: 'golf' });
+  assert(system.isUnlocked('g.explorer'), 'Deux jeux distincts valident');
+
+  // Persistance : rechargé depuis le même stockage.
+  system.saveNow();
+  const reloaded = new AchievementSystem({ storage });
+  reloaded.register({ id: 'test.trio', name: 'Trio', desc: 'Trois fois', icon: '★', points: 5, event: 'custom:ping', count: 3 });
+  reloaded.register({
+    id: 'g.explorer', name: 'Explorateur', desc: '2 jeux', icon: '🧭', points: 10,
+    event: 'game:over', count: 2, distinctBy: 'gameId',
+  });
+  assert(reloaded.isUnlocked('test.trio'), 'Le déblocage survit au rechargement');
+  equal(reloaded.progressOf('g.explorer'), 2, 'La progression distincte survit au rechargement');
+
+  // Catalogue : génériques par jeu + globaux, et câblage BaseGame.
+  const catalog = buildAchievementCatalog([
+    { id: 'cave', name: 'CAVE RACER', ranks: [6000, 4000, 2200, 1000, 0] },
+    { id: 'golf', name: 'BLOB GOLF', ranks: [100, 60, 30, 10, 0] },
+  ]);
+  assert(catalog.some((d) => d.id === 'cave.rank-s'), 'Le catalogue contient cave.rank-s');
+  assert(catalog.some((d) => d.id === 'g.complete'), 'Le catalogue contient le tour complet');
+  const game2 = new AchievementSystem({ storage: memoryStorage() });
+  game2.registerMany(catalog);
+  equal(game2.size, catalog.length, 'Tout le catalogue est enregistré');
+  game2.emit('game:over', { gameId: 'cave', score: 6500, rank: 'S', win: false });
+  game2.emit('game:rank', { gameId: 'cave', score: 6500, rank: 'S' });
+  assert(game2.isUnlocked('cave.first'), 'game:over valide la découverte du jeu');
+  assert(game2.isUnlocked('cave.rank-b'), 'Le rang S valide aussi le palier B');
+  assert(game2.isUnlocked('cave.rank-a'), 'Le rang S valide aussi le palier A');
+  assert(game2.isUnlocked('cave.rank-s'), 'Le rang S valide le palier S');
+  assert(game2.isUnlocked('g.first-play'), 'Le premier game:over valide PREMIERS PAS');
+  assert(game2.isUnlocked('g.rank-s'), 'Le rang S valide ÉTOILE');
+  const completion = game2.completionForGame('cave');
+  equal(completion.unlocked, 4, 'La complétion par jeu compte les 4 succès cave');
+  const statistics = game2.stats();
+  equal(statistics.unlocked, 6, 'Un game:over + game:rank S valident 6 succès (découverte, B/A/S, PREMIERS PAS, ÉTOILE)');
+  equal(statistics.total, catalog.length, 'Le total couvre tout le catalogue');
+  assert(game2.forGame('golf').length === 4, 'forGame() isole un jeu');
+  assert(game2.globals().length === catalog.length - 8, 'globals() isole les succès arcade');
+}
+
+function testMoodUtils(): void {
+  equal(progressionRoot({ root: 45 }, 0), 45, 'Sans progression : tonique fixe');
+  equal(progressionRoot({ root: 45 }, 137), 45, 'Sans progression : tonique fixe plus tard');
+  const loop = { root: 45, progression: [0, -3, -7, -5] };
+  equal(progressionRoot(loop, 0), 45, 'Mesure 1 : La (I)');
+  equal(progressionRoot(loop, 15), 45, 'Fin de mesure 1 : toujours La');
+  equal(progressionRoot(loop, 16), 42, 'Mesure 2 : Fa# (VI)');
+  equal(progressionRoot(loop, 32), 38, 'Mesure 3 : Ré (IV)');
+  equal(progressionRoot(loop, 48), 40, 'Mesure 4 : Mi (V)');
+  equal(progressionRoot(loop, 64), 45, 'Mesure 5 : boucle sur La');
+  equal(progressionRoot({ root: 45, progression: [] }, 32), 45, 'Progression vide : tonique fixe');
+
+  equal(arpOffsetAt({ root: 45 }, 4), null, 'Sans arp : silence');
+  const arp = { root: 45, arp: [12, null, 16, null] };
+  equal(arpOffsetAt(arp, 0), 12, 'Pas 0 : première note');
+  equal(arpOffsetAt(arp, 1), null, 'Pas 1 : silence');
+  equal(arpOffsetAt(arp, 2), 16, 'Pas 2 : deuxième note');
+  equal(arpOffsetAt(arp, 4), 12, 'Le motif boucle sur sa propre longueur');
+  equal(arpOffsetAt({ root: 45, arp: [] }, 0), null, 'Arp vide : silence');
+
+  const brass = { root: 45, brass: [null, null, 0, null] };
+  equal(brassOffsetAt(brass, 1), null, 'Cuivre : silence hors stab');
+  equal(brassOffsetAt(brass, 2), 0, 'Cuivre : stab sur le pas marqué');
+  equal(brassOffsetAt(brass, 6), 0, 'Cuivre : le motif boucle');
+  equal(brassOffsetAt({ root: 45 }, 2), null, 'Sans cuivre : silence');
+
+  const vox = { root: 45, vox: [null, null, null, null, null, null, null, null, 7, null, null, null, null, null, null, null] };
+  const hey = voxStepAt(vox, 8);
+  assert(hey && hey.offset === 7 && hey.vowel === 'hey', 'Mesure 1 : "hey!" sur le pas 8');
+  equal(voxStepAt(vox, 9), null, 'Mesure 1 : silence autour du cri');
+  equal(voxStepAt(vox, 24), null, 'Mesure 2 (impaire) : silence complet');
+  const oh = voxStepAt(vox, 40);
+  assert(oh && oh.offset === 7 && oh.vowel === 'oh', 'Mesure 3 : la voyelle alterne');
+  equal(voxStepAt({ root: 45 }, 8), null, 'Sans vox : silence');
+
+  equal(leadOffsetAt({ root: 43, lead: [12, null] }, 0), 12, 'Leitmotiv : note sur le pas marqué');
+  equal(leadOffsetAt({ root: 43, lead: [12, null] }, 1), null, 'Leitmotiv : silence ailleurs');
+  equal(leadOffsetAt({ root: 43 }, 0), null, 'Sans leitmotiv : silence');
+
+  close(dottedEighth(120), 0.375, 'Croche pointée à 120 BPM : 0,375 s');
+  close(dottedEighth(112), (60 / 112) * 0.75, 'Croche pointée suit le tempo');
+
+  equal(swingOffsetAt(0, 0.08, 112), 0, 'Swing : temps forts intacts');
+  equal(swingOffsetAt(4, 0.08, 112), 0, 'Swing : temps pairs intacts');
+  close(swingOffsetAt(2, 0.08, 112), 0.08 * (60 / 112 / 2), 'Swing : contretemps décalé');
+  equal(swingOffsetAt(2, 0, 112), 0, 'Swing nul : droit');
+
+  equal(fillDrumsAt('off', 63).length, 0, 'Fill off : rien');
+  equal(fillDrumsAt(undefined, 63).length, 0, 'Fill absent : rien');
+  equal(fillDrumsAt('light', 59).length, 0, 'Fill : rien avant le dernier temps');
+  equal(fillDrumsAt('light', 61).length, 0, 'Fill léger : silence au premier contretemps');
+  equal(fillDrumsAt('light', 62).join(','), 'snare', 'Fill léger : deux coups');
+  equal(fillDrumsAt('light', 63).join(','), 'snare', 'Fill léger : deux coups (fin)');
+  equal(fillDrumsAt('full', 60).join(','), 'kick,snare', 'Fill appuyé : attaque franche');
+  equal(fillDrumsAt('full', 63).join(','), 'snare', 'Fill appuyé : roulement');
+
+  equal(isBreakBar(undefined, 112), false, 'Sans respiration : jamais de break');
+  equal(isBreakBar(8, 0), false, 'Break : pas sur la première mesure');
+  equal(isBreakBar(8, 7 * 16), true, 'Break : huitième mesure en retrait');
+  equal(isBreakBar(8, 8 * 16), false, 'Break : reprise après la respiration');
+  equal(isBreakBar(8, 15 * 16), true, 'Break : le cycle se répète');
+}
+
+function testCycle(): void {
+  // Directions cardinales.
+  equal(cycleDirVec(0).y, -1, 'Cycles : le haut pointe vers le haut');
+  equal(cycleDirVec(1).x, 1, 'Cycles : la droite pointe vers la droite');
+  equal(cycleDirVec(2).y, 1, 'Cycles : le bas pointe vers le bas');
+  equal(cycleDirVec(3).x, -1, 'Cycles : la gauche pointe vers la gauche');
+  // Virages : 90° oui, sur-place et demi-tour non.
+  assert(cycleCanTurn(0, 1), 'Cycles : virage à 90° autorisé');
+  assert(cycleCanTurn(1, 0), 'Cycles : virage à 90° autorisé (retour)');
+  equal(cycleCanTurn(0, 0), false, 'Cycles : le sur-place est refusé');
+  equal(cycleCanTurn(0, 2), false, 'Cycles : le demi-tour est refusé (suicide)');
+  equal(cycleCanTurn(1, 3), false, 'Cycles : le demi-tour horizontal est refusé');
+  // Lecture du stick : axe dominant + deadzone.
+  equal(cycleWantDir(0.8, 0.1), 1, 'Cycles : stick à droite = droite');
+  equal(cycleWantDir(-0.1, -0.9), 0, 'Cycles : stick en haut = haut');
+  equal(cycleWantDir(0.1, 0.1), null, 'Cycles : la deadzone reste neutre');
+  // Distance point-segment : le cœur des collisions de filaments.
+  close(pointSegDist(5, 3, 0, 0, 10, 0), 3, 'Cycles : distance perpendiculaire exacte');
+  close(pointSegDist(15, 0, 0, 0, 10, 0), 5, 'Cycles : au-delà du bout, distance au cap');
+  close(pointSegDist(0, 0, 0, 0, 10, 0), 0, 'Cycles : sur le segment = zéro');
+  // Constantes d'équilibrage verrouillées (quick-win énergie).
+  close(CYCLE_ENERGY_COST, 0.35, 'Cycles : traverser sa ligne coûte 35 % d’énergie');
+  assert(CYCLE_W >= 1280 * 3 && CYCLE_H >= 720 * 3, 'Cycles : la map fait au moins 3× la scène');
+  // Méta : 1 à 4 joueurs, lobby requis au-delà du solo.
+  equal(CycleGame.meta.players?.min, 1, 'Cycles : solo autorisé (mode rapide)');
+  equal(CycleGame.meta.players?.max, 4, 'Cycles : jusqu’à 4 manettes');
+  assert(CycleGame.meta.genre === 'action', 'Cycles : genre action pour le filtre du hub');
+}
+
+function testMusicWiring(): void {
+  const metas = [
+    RhythmGame.meta, SurvivalGame.meta, ShooterGame.meta, RunnerGame.meta,
+    CaveGame.meta, SimonGame.meta, SnakeGame.meta, BreakerGame.meta,
+    GolfGame.meta, FishingGame.meta, PongGame.meta, ColumnsGame.meta,
+    BubbleGame.meta, SortGame.meta, PathGame.meta, FrogGame.meta,
+    FlappyGame.meta, DigGame.meta, CycleGame.meta,
+  ];
+  equal(metas.length, 19, 'Tous les jeux passent l’audit musical');
+  for (const meta of metas) {
+    assert(MOODS[meta.mood], `Musique : ${meta.id} pointe vers la mood "${meta.mood}" qui n'existe pas (jeu silencieux !)`);
+  }
+  for (const [name, mood] of Object.entries(MOODS)) {
+    assert(mood.bpm >= 60 && mood.bpm <= 180, `Mood ${name} : tempo plausible`);
+    assert(mood.root >= 20 && mood.root <= 72, `Mood ${name} : tonique audible`);
+    for (const step of [...mood.kick, ...mood.snare]) {
+      assert(Number.isInteger(step) && step >= 0 && step < 16, `Mood ${name} : pas de batterie dans 0..15`);
+    }
+    const patterns = [mood.bass, mood.progression, mood.arp, mood.brass, mood.vox, mood.lead];
+    for (const pattern of patterns) {
+      if (!pattern) continue;
+      for (const value of pattern) {
+        assert(value === null || Number.isFinite(value), `Mood ${name} : motif invalide`);
+      }
+    }
+  }
+}
+
 const tests: readonly [string, Test][] = [
   ['FixedClock', testClock],
   ['SeededRng', testRng],
@@ -1441,9 +1686,13 @@ const tests: readonly [string, Test][] = [
   ['Flappy Blob', testFlappy],
   ['Flappy Blob : un appui = un vol', testFlappyInput],
   ['Saut variable partagé', testJump],
+  ['Mélodie des moods', testMoodUtils],
+  ['Câblage musical', testMusicWiring],
+  ['Succès arcade', testAchievements],
   ['Blob Digger', testDig],
   ['Blob Digger : chutes', testDigGravity],
   ['Blob Digger : génération', testDigGen],
+  ['Blob Cycles', testCycle],
 ];
 
 for (const [name, test] of tests) {

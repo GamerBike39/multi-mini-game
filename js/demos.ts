@@ -1664,6 +1664,90 @@ function demoDig(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB CYCLES : deux filaments orthogonaux qui se croisent ----------------
+function demoCycle(accent: string): DemoImpl {
+  const cols = [accent, '#f472b6'];
+  const s: any = {
+    t: 0,
+    riders: [
+      { pts: [{ x: 480, y: 300 }], dir: 0, stepT: 0, color: cols[0], blob: new Blob({ x: 480, y: 300, r: 12, color: cols[0] }) },
+      { pts: [{ x: 900, y: 500 }], dir: 1, stepT: 0, color: cols[1], blob: new Blob({ x: 900, y: 500, r: 12, color: cols[1] }) },
+    ],
+    puffs: new Puffs(),
+  };
+  const DIRS = [[1, 0], [0, 1], [-1, 0], [0, -1]];
+  const SPEED = 200;
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      for (const r of s.riders) {
+        r.stepT += dt;
+        if (r.stepT > rand(0.5, 1.1)) {
+          r.stepT = 0;
+          const left = (r.dir + 3) % 4;
+          const right = (r.dir + 1) % 4;
+          r.dir = Math.random() < 0.5 ? left : right;
+          const head = r.pts[r.pts.length - 1];
+          r.pts.push({ x: head.x, y: head.y });
+          r.blob.punch(0.4);
+          s.puffs.burst(head.x, head.y, [r.color, '#ffffff'], 5, [40, 180], 0.3);
+        }
+        const head = r.pts[r.pts.length - 1];
+        head.x += DIRS[r.dir][0] * SPEED * dt;
+        head.y += DIRS[r.dir][1] * SPEED * dt;
+        // Rebond vitrine dans le cadre démo.
+        if (head.x < 450 || head.x > 940 || head.y < 170 || head.y > 600) {
+          r.dir = (r.dir + 2) % 4;
+          head.x = Math.max(450, Math.min(940, head.x));
+          head.y = Math.max(170, Math.min(600, head.y));
+          r.pts.push({ x: head.x, y: head.y });
+          r.pts.splice(0, Math.max(0, r.pts.length - 14));
+        }
+        if (r.pts.length > 26) r.pts.splice(0, r.pts.length - 26);
+        r.blob.x = head.x;
+        r.blob.y = head.y;
+        r.blob.vx = DIRS[r.dir][0] * SPEED;
+        r.blob.vy = DIRS[r.dir][1] * SPEED;
+        r.blob.update(dt);
+      }
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.strokeStyle = '#ffffff22';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(450, 170, 490, 430);
+      for (const r of s.riders) {
+        ctx.save();
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = 0.25;
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 12;
+        ctx.beginPath();
+        ctx.moveTo(r.pts[0].x, r.pts[0].y);
+        for (let i = 1; i < r.pts.length; i++) ctx.lineTo(r.pts[i].x, r.pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+        ctx.save();
+        ctx.strokeStyle = r.color;
+        ctx.lineWidth = 3;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        ctx.shadowColor = r.color;
+        ctx.shadowBlur = 12;
+        ctx.beginPath();
+        ctx.moveTo(r.pts[0].x, r.pts[0].y);
+        for (let i = 1; i < r.pts.length; i++) ctx.lineTo(r.pts[i].x, r.pts[i].y);
+        ctx.stroke();
+        ctx.restore();
+        r.blob.render(ctx);
+      }
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1682,6 +1766,7 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   frog: demoFrog,
   flap: demoFlap,
   dig: demoDig,
+  cycle: demoCycle,
 };
 
 export class Demo {

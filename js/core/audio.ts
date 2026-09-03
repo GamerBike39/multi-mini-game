@@ -3,16 +3,17 @@
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, MusicLayerName, SampleLikeOptions, VoiceLikeOptions, VolumeKey } from './types';
+import type { AudioLike, MusicLayerName, SampleLikeOptions, StingerKind, VoiceLikeOptions, VolumeKey } from './types';
 import { AdaptiveDirector } from './music/adaptive-director';
 import { InstrumentRack } from './music/instrument-rack';
+import { arpOffsetAt, brassOffsetAt, dottedEighth, fillDrumsAt, isBreakBar, leadOffsetAt, progressionRoot, swingOffsetAt, voxStepAt, type FillKind, type VoxVowel } from './music/mood-utils';
 import { ReferencePlayer } from './music/reference-player';
 import { MusicStateController } from './music/state';
 import { MusicTransport } from './music/transport';
 import type { GameMusicEventName, MusicalSection, MusicState, ReferenceMusic } from './music/types';
 
 type HatMode = 'off' | '8ths' | '16ths';
-type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music';
+type DrumKind = 'kick' | 'snare' | 'tick' | 'hat' | 'music' | 'tom';
 
 interface Mood {
   bpm: number;
@@ -23,6 +24,24 @@ interface Mood {
   bass: readonly (number | null)[] | null;
   bassDiv?: number;
   pad: boolean;
+  /** Pad en tierce majeure plutôt que mineure (joie vs mélancolie). */
+  padMajor?: boolean;
+  /** Offsets de tonique cyclés par mesure de 16 pas (progression d'accords). */
+  progression?: readonly number[] | null;
+  /** Music-box : offsets depuis tonique + 12, `null` = silence (16 pas). */
+  arp?: readonly (number | null)[] | null;
+  /** Stabs de cuivre : offsets depuis la tonique de la mesure (16 pas). */
+  brass?: readonly (number | null)[] | null;
+  /** Cris de fête : offsets depuis tonique + 12, voyelle au fil des mesures. */
+  vox?: readonly (number | null)[] | null;
+  /** Leitmotiv : offsets depuis tonique + 12 (la porte lead décide). */
+  lead?: readonly (number | null)[] | null;
+  /** Fill de fin de phrase de 4 mesures : discret, appuyé ou absent. */
+  fill?: FillKind | null;
+  /** Respiration : une mesure de batterie en retrait tous les N bars. */
+  breaks?: number | null;
+  /** Balançoire des contretemps (0 = droit), comme le swing des références. */
+  swing?: number | null;
 }
 
 export interface ChartEvent {
@@ -71,14 +90,96 @@ interface AudioWindow extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
-const MOODS: Record<string, Mood> = {
-  menu: { bpm: 100, root: 57, kick: [0, 8], snare: [], hat: 'off', bass: [0, null, 7, null, 3, null, 7, null], bassDiv: 2, pad: true },
+/** Table des motifs génératifs, exportée pour le test de câblage (aucun jeu silencieux). */
+export const MOODS: Record<string, Mood> = {
+  // Menu "blob joyeux et profond" : tonique grave (A2), groove chaloupé avec
+  // backbeat léger, basse rebondissante majeure, pads majeurs et progression
+  // I–VI–IV–V (A F# D E) + music-box pentatonique. Cf. legacy/AudioSys.current.md
+  // qui fige l'ancienne boucle mineure volontairement remplacée ici.
+  menu: {
+    bpm: 112, root: 45, kick: [0, 8], snare: [4, 12], hat: '8ths',
+    bass: [0, null, 7, 9, null, 7, 5, 4], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, -3, -7, -5],
+    arp: [12, null, 16, null, 19, null, 16, null, 14, null, 12, null, 9, null, 7, null],
+    brass: [null, null, 0, null, null, null, 7, null, null, null, 5, null, null, null, 9, 7],
+    vox: [null, null, null, null, null, null, null, null, 7, null, null, null, null, null, null, null],
+    fill: 'light', breaks: 8, swing: 0.08,
+  },
   rhythm: { bpm: 128, root: 45, kick: [], snare: [], hat: '8ths', bass: [0, 0, 7, 0], bassDiv: 2, pad: false },
-  survival: { bpm: 122, root: 40, kick: [0, 7, 8], snare: [4, 12], hat: '8ths', bass: [0, 0, 3, 5, 0, 0, 3, 2], bassDiv: 2, pad: false },
-  shooter: { bpm: 132, root: 45, kick: [0, 4, 8, 12], snare: [4, 12], hat: '16ths', bass: [0, 0, 7, 0, 0, 0, 10, 7], bassDiv: 2, pad: false },
-  runner: { bpm: 138, root: 43, kick: [0, 8, 11], snare: [4, 12], hat: '8ths', bass: [0, 7, 0, 10], bassDiv: 2, pad: false },
-  cave: { bpm: 96, root: 50, kick: [0, 8], snare: [], hat: 'off', bass: [0, null, 5, null, 7, null, 3, null], bassDiv: 2, pad: true },
+  survival: { bpm: 122, root: 40, kick: [0, 7, 8], snare: [4, 12], hat: '8ths', bass: [0, 0, 3, 5, 0, 0, 3, 2], bassDiv: 2, pad: false, fill: 'full' },
+  shooter: { bpm: 132, root: 45, kick: [0, 4, 8, 12], snare: [4, 12], hat: '16ths', bass: [0, 0, 7, 0, 0, 0, 10, 7], bassDiv: 2, pad: false, fill: 'full' },
+  runner: { bpm: 138, root: 43, kick: [0, 8, 11], snare: [4, 12], hat: '8ths', bass: [0, 7, 0, 10], bassDiv: 2, pad: false, fill: 'full' },
+  cave: {
+    bpm: 96, root: 50, kick: [0, 8], snare: [], hat: 'off',
+    bass: [0, null, 5, null, 7, null, 3, null], bassDiv: 2, pad: true, fill: 'light',
+    lead: [7, null, null, null, 5, null, 3, null, 2, null, null, null, 0, null, null, null],
+  },
   simon: { bpm: 84, root: 45, kick: [], snare: [], hat: 'off', bass: null, pad: true },
+  // Couleurs par jeu : chaque jeu génératif a sa tonique, son groove et sa
+  // progression. Les familles gardent leur branche d'état (runner/cave/simon).
+  pong: { bpm: 124, root: 40, kick: [0, 8], snare: [4, 12], hat: '8ths', bass: [0, null, 0, 7, null, 5, 3, 2], bassDiv: 2, pad: true, fill: 'light' },
+  breaker: {
+    bpm: 140, root: 43, kick: [0, 4, 8, 12], snare: [4, 12], hat: '16ths',
+    bass: [0, 0, 12, 0, 10, 0, 7, 5], bassDiv: 2, pad: true, progression: [0, -4, -2, -5], fill: 'full',
+    brass: [0, null, null, null, null, null, null, null, 7, null, null, null, 5, null, 4, 2],
+    lead: [12, null, null, null, 15, null, 17, null, 19, null, null, null, 22, null, null, null],
+  },
+  flap: {
+    bpm: 132, root: 48, kick: [0, 8], snare: [12], hat: '8ths',
+    bass: [0, null, 7, null, 9, null, 7, 5], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, -5, -3, -5], fill: 'full', swing: 0.05,
+    arp: [12, null, null, null, 16, null, null, null, 19, null, null, null, 16, null, 14, null],
+  },
+  frog: {
+    bpm: 120, root: 43, kick: [0, 8], snare: [12], hat: '8ths',
+    bass: [0, null, 0, null, 7, null, 5, null], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, 5, 7, 5], fill: 'light', swing: 0.06,
+  },
+  snake: {
+    bpm: 116, root: 41, kick: [0, 8], snare: [], hat: '8ths',
+    bass: [0, null, 3, null, 2, null, 0, null], bassDiv: 2, pad: true,
+    progression: [0, -2, -3, -5],
+  },
+  columns: {
+    bpm: 100, root: 48, kick: [0, 8], snare: [], hat: 'off',
+    bass: [0, null, null, null, 7, null, 5, null], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, -3, -5, -3],
+    arp: [12, null, 16, null, 19, null, 16, null, 12, null, 16, null, 19, null, 24, null],
+  },
+  golf: {
+    bpm: 96, root: 50, kick: [0], snare: [], hat: 'off',
+    bass: [0, null, null, 7, null, null, 5, null], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, 2, -3, 0],
+    arp: [12, null, null, null, null, null, 16, null, null, null, 19, null, null, null, null, null],
+  },
+  dig: {
+    bpm: 92, root: 38, kick: [0, 8], snare: [], hat: 'off',
+    bass: [0, null, null, null, 0, null, -2, null], bassDiv: 2, pad: true,
+    progression: [0, -2, -3, -5],
+  },
+  bubble: {
+    bpm: 126, root: 53, kick: [0, 8], snare: [4, 12], hat: '8ths',
+    bass: [0, 7, 0, 7, 5, 7, 3, 2], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, -5, -3, 2], fill: 'light',
+    arp: [12, null, 16, null, 19, null, 24, null, 19, null, 16, null, 12, null, 9, null],
+  },
+  sort: {
+    bpm: 104, root: 47, kick: [0, 8], snare: [], hat: '8ths',
+    bass: [0, null, 7, null, 0, null, 5, null], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, 5, 3, 2],
+  },
+  path: {
+    bpm: 96, root: 45, kick: [0], snare: [], hat: 'off',
+    bass: [0, null, null, null, 5, null, 3, null], bassDiv: 2, pad: true,
+    progression: [0, -3, -5, -7],
+    arp: [12, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null],
+  },
+  cycle: {
+    bpm: 134, root: 43, kick: [0, 4, 8, 12], snare: [4, 12], hat: '16ths',
+    bass: [0, 0, 7, 0, 5, 0, 3, 2], bassDiv: 2, pad: true,
+    progression: [0, -2, -5, -3], fill: 'full',
+    arp: [12, null, 15, null, 19, null, 15, null, 12, null, 10, null, 7, null, 10, null],
+  },
 };
 
 export class AudioSys implements AudioLike {
@@ -108,6 +209,10 @@ export class AudioSys implements AudioLike {
   arpBus!: GainNode;
   leadBus!: GainNode;
   musicFxBus!: GainNode;
+  brassBus!: GainNode;
+  voxBus!: GainNode;
+  spaceDelay!: DelayNode;
+  spaceReverb!: ConvolverNode;
   sfxBus!: GainNode;
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
@@ -170,9 +275,37 @@ export class AudioSys implements AudioLike {
     this.arpBus = context.createGain();
     this.leadBus = context.createGain();
     this.musicFxBus = context.createGain();
-    for (const bus of [this.drumBus, this.bassBus, this.harmonyBus, this.arpBus, this.leadBus, this.musicFxBus]) {
+    this.brassBus = context.createGain();
+    this.voxBus = context.createGain();
+    for (const bus of [this.drumBus, this.bassBus, this.harmonyBus, this.arpBus, this.leadBus, this.musicFxBus, this.brassBus, this.voxBus]) {
       bus.gain.value = 1;
       bus.connect(this.musicBus);
+    }
+    // Espace : delay pointé synchronisé + réverb à impulsion générée.
+    // Seules les couches mélodiques y envoient ; batterie et basse restent sèches.
+    this.spaceDelay = context.createDelay(1.0);
+    this.spaceDelay.delayTime.value = dottedEighth(112);
+    const spaceFeedback = context.createGain();
+    spaceFeedback.gain.value = 0.34;
+    const spaceFilter = context.createBiquadFilter();
+    spaceFilter.type = 'lowpass';
+    spaceFilter.frequency.value = 2400;
+    const spaceDelayWet = context.createGain();
+    spaceDelayWet.gain.value = 0.15;
+    this.spaceDelay.connect(spaceFilter);
+    spaceFilter.connect(spaceFeedback);
+    spaceFeedback.connect(this.spaceDelay);
+    this.spaceDelay.connect(spaceDelayWet);
+    spaceDelayWet.connect(this.musicBus);
+    this.spaceReverb = context.createConvolver();
+    this.spaceReverb.buffer = this.makeImpulse(1.9, 2.7);
+    const spaceReverbWet = context.createGain();
+    spaceReverbWet.gain.value = 0.18;
+    this.spaceReverb.connect(spaceReverbWet);
+    spaceReverbWet.connect(this.musicBus);
+    for (const bus of [this.arpBus, this.leadBus, this.brassBus, this.voxBus, this.harmonyBus]) {
+      bus.connect(this.spaceDelay);
+      bus.connect(this.spaceReverb);
     }
     this.sfxBus = context.createGain();
     this.sfxBus.gain.value = 1;
@@ -197,11 +330,25 @@ export class AudioSys implements AudioLike {
         arp: this.arpBus,
         lead: this.leadBus,
         fx: this.musicFxBus,
+        brass: this.brassBus,
+        vox: this.voxBus,
       },
     });
     this.referencePlayer = new ReferencePlayer(this.transport, this.instrumentRack);
     this.adaptiveDirector = new AdaptiveDirector(this.transport, this.instrumentRack, { state: this.musicState, seed: 0x424c4f42 });
     return true;
+  }
+
+  /** Réponse impulsionnelle : bruit qui décroît exponentiellement (stéréo). */
+  private makeImpulse(seconds: number, decay: number): AudioBuffer {
+    const context = this.ctx as AudioContext;
+    const length = Math.max(1, Math.floor(context.sampleRate * seconds));
+    const buffer = context.createBuffer(2, length, context.sampleRate);
+    for (let channel = 0; channel < 2; channel++) {
+      const data = buffer.getChannelData(channel);
+      for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+    }
+    return buffer;
   }
 
   unlock(): void {
@@ -578,6 +725,7 @@ export class AudioSys implements AudioLike {
     this.musicStart = context.currentTime + 0.12;
     this.step = 0;
     this.transport.start(mood.bpm, this.musicStart);
+    this.syncSpace(mood.bpm);
     this.chart = options.chart || null;
     this.chartPtr = 0;
     this.musicOn = true;
@@ -602,6 +750,7 @@ export class AudioSys implements AudioLike {
     this.musicStart = context.currentTime + 0.12;
     this.step = 0;
     this.transport.start(composition.bpm, this.musicStart, { loopBars: composition.bars });
+    this.syncSpace(composition.bpm);
     this.chart = null;
     this.chartPtr = 0;
     this.musicOn = true;
@@ -622,6 +771,15 @@ export class AudioSys implements AudioLike {
     this.chart = null;
     this.trackMode = false;
     this.stopTrack();
+  }
+
+  /** Cale le delay pointé sur le tempo courant (croche pointée). */
+  private syncSpace(bpm: number): void {
+    try {
+      this.spaceDelay?.delayTime.setTargetAtTime(dottedEighth(bpm), this.ctx?.currentTime ?? 0, 0.1);
+    } catch {
+      // Le delay reste sur sa valeur précédente.
+    }
   }
 
   // ---------- piste audio originale (playlist BLOB BEAT) ----------
@@ -698,6 +856,70 @@ export class AudioSys implements AudioLike {
     this.instrumentRack?.triggerPad(t, root, dur);
   }
 
+  chordAt(t: number, notes: readonly number[], dur: number): void {
+    this.instrumentRack?.triggerChord(t, notes, dur, 0.8);
+  }
+
+  arpAt(t: number, midi: number): void {
+    this.instrumentRack?.triggerArp(t, midi, 0.22, 0.55);
+  }
+
+  brassAt(t: number, midi: number): void {
+    this.instrumentRack?.triggerBrass(t, midi, 0.2, 0.8);
+  }
+
+  voxAt(t: number, midi: number, vowel: VoxVowel = 'hey'): void {
+    this.instrumentRack?.triggerVox(t, midi, vowel, 0.2, 0.9);
+  }
+
+  leadAt(t: number, midi: number): void {
+    this.instrumentRack?.lead.trigger(midi, t, 0.32, 0.8);
+  }
+
+  /**
+   * Ponctuation musicale des transitions (lancement, fin, victoire, record).
+   * Jouée dans la tonique courante, présence forcée puis re-quantifiée par le
+   * directeur à la mesure suivante — toujours audible, jamais bloquée.
+   */
+  stinger(kind: StingerKind): void {
+    const context = this.ctx;
+    const rack = this.instrumentRack;
+    if (!context || !rack) return;
+    const home = this.mood && this.mood.root > 0 ? this.mood.root : 45;
+    const eighth = 60 / 132;
+    const base = context.currentTime + (kind === 'victory' || kind === 'record' ? 0.3 : 0.02);
+    const presence = (layer: MusicLayerName, value: number): void => {
+      try {
+        rack.setLayerPresence(layer, value, base);
+      } catch {
+        // La ponctuation reste audible sur les couches déjà ouvertes.
+      }
+    };
+    if (kind === 'launch') {
+      presence('arp', 1);
+      presence('brass', 1);
+      presence('vox', 1);
+      [0, 4, 7, 12].forEach((iv, i) => rack.triggerArp(base + i * eighth * 0.5, home + 12 + iv, 0.18, 0.6));
+      rack.triggerBrass(base + 4 * eighth * 0.5, home + 12, 0.25, 0.8);
+      rack.triggerVox(base + 4 * eighth * 0.5, home + 19, 'hey', 0.22, 0.9);
+    } else if (kind === 'over') {
+      presence('arp', 1);
+      [7, 3, 0, -5].forEach((iv, i) => rack.triggerArp(base + i * eighth * 0.75, home + 12 + iv, 0.3, 0.55));
+    } else if (kind === 'victory') {
+      presence('brass', 1);
+      presence('vox', 1);
+      presence('arp', 1);
+      [0, 4, 7, 12].forEach((iv, i) => rack.triggerBrass(base + i * eighth * 0.5, home + iv, 0.22, 0.85));
+      rack.triggerVox(base + 4 * eighth * 0.5, home + 19, 'hey', 0.25, 1);
+      [12, 16, 19, 24].forEach((iv, i) => rack.triggerArp(base + i * eighth * 0.5, home + 12 + iv, 0.15, 0.5));
+    } else {
+      presence('arp', 1);
+      presence('vox', 1);
+      [12, 16, 19, 24, 28].forEach((iv, i) => rack.triggerArp(base + i * eighth * 0.4, home + 12 + iv, 0.14, 0.55));
+      rack.triggerVox(base + 5 * eighth * 0.4, home + 24, 'hey', 0.2, 0.9);
+    }
+  }
+
   scheduleAhead(): void {
     if (!this.ctx || !this.musicOn || !this.mood) return;
     const context = this.ctx;
@@ -722,15 +944,34 @@ export class AudioSys implements AudioLike {
 
     this.transport.scheduleAhead(context.currentTime, horizon - context.currentTime, ({ time, absoluteStep }) => {
       const step = absoluteStep % 16;
-      if (mood.kick.includes(step)) this.drum('kick', time);
-      if (mood.snare.includes(step)) this.drum('snare', time);
-      if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(time, step % 4 === 2 ? 0.05 : 0.09);
-      else if (mood.hat === '16ths') this.hatAt(time, step % 4 === 0 ? 0.09 : 0.045);
+      const root = progressionRoot(mood, absoluteStep);
+      // Le swing décale tout ce qui est programmé sur le pas (groove uni).
+      const at = time + swingOffsetAt(step, mood.swing ?? 0, mood.bpm);
+      const inBreak = isBreakBar(mood.breaks, absoluteStep);
+      if (!inBreak && mood.kick.includes(step)) this.drum('kick', at);
+      if (!inBreak && mood.snare.includes(step)) this.drum('snare', at);
+      if (mood.hat === '8ths' && step % 2 === 0) this.hatAt(at, step % 4 === 2 ? 0.05 : 0.09);
+      else if (mood.hat === '16ths') this.hatAt(at, step % 4 === 0 ? 0.09 : 0.045);
+      if (!inBreak) {
+        for (const extra of fillDrumsAt(mood.fill, absoluteStep)) this.drum(extra, at);
+      }
       if (mood.bass && step % (mood.bassDiv ?? 2) === 0) {
         const note = mood.bass[(step / (mood.bassDiv ?? 2)) % mood.bass.length];
-        if (note !== null && note !== undefined) this.bassAt(time, mood.root + note);
+        if (note !== null && note !== undefined) this.bassAt(at, root + note);
       }
-      if (mood.pad && step === 0) this.padAt(time, mood.root, (60 / mood.bpm) * 4);
+      if (mood.pad && step === 0) {
+        const dur = (60 / mood.bpm) * 4;
+        if (mood.padMajor) this.chordAt(at, [root, root + 4, root + 7, root + 12], dur);
+        else this.padAt(at, root, dur);
+      }
+      const arp = arpOffsetAt(mood, absoluteStep);
+      if (arp !== null) this.arpAt(at, root + 12 + arp);
+      const brass = brassOffsetAt(mood, absoluteStep);
+      if (brass !== null) this.brassAt(at, root + brass);
+      const vox = voxStepAt(mood, absoluteStep);
+      if (vox !== null) this.voxAt(at, root + 12 + vox.offset, vox.vowel);
+      const lead = leadOffsetAt(mood, absoluteStep);
+      if (lead !== null) this.leadAt(at, root + 12 + lead);
     });
     this.step = this.transport.absoluteStep;
   }

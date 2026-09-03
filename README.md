@@ -62,10 +62,35 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **BLOB PÊCHE** | Lance l'hameçon, ferrade, remorge sous tension | A + Stick G | Espace + ZQSD |
 | **BLOB TRI** | Range les couleurs dans leur garage, éjecte les intrus, résiste aux leurres | D-pad / Stick + A | Flèches / ZQSD + Espace |
 | **BLOB TRACE** | Mémorise un chemin orthogonal, en trace fine ou cases illuminées, puis rejoins l’arrivée | D-pad / Stick + A, X affichage | Flèches / ZQSD + Espace, L affichage |
+| **PONG** | Duel de raquettes, effets et vitesse progressive | Stick / D-pad + A | Flèches / ZQSD + Espace |
+| **DR BLOB** | Trios qui tombent, groupes de 4+ qui éclatent, chaînes | Stick / D-pad + A | Flèches / ZQSD + Espace |
+| **BLOB POP** | Vise, tire, éclate les grappes hexagonales | Stick viser + A | Souris/Flèches + Espace |
+| **FROG** | Traverse routes et rivières, remplis les alcôves | D-pad / Stick | Flèches / ZQSD |
+| **FLAPPY BLOB** | Bat des ailes, passe au centre des arches | A / Espace / Clic | Espace / J / Clic |
+| **DIG** | Creuse, gère l’oxygène, remonte les veines | Stick / D-pad + A | Flèches / ZQSD + Espace |
+| **BLOB CYCLES** | Tron-like 1-4J, traînées mortelles, dernier survivant (solo rapide vs 3 IA) | D-pad / Stick virer à 90° | Flèches / ZQSD (P1) |
 
-Menu : `← → ↑ ↓` choisir, `A` lancer (raccourcis `1`–`9`, `0`), `V` alterner entre
-fiche et vue d'ensemble, `Échap` ou l'icône ⚙ ouvrir les options. À la manette,
-`LT/RT` changent de vue ; `Sélect` ouvre également les options.
+Chaque jeu appartient à un genre (`ACTION`, `PILOTAGE`, `PUZZLE`, `FLOW`) affiché
+sur sa fiche et utilisable comme filtre dans la grille.
+
+Menu : trois vues — `FICHE`, `GRILLE`, `SUCCÈS`. `← → ↑ ↓` choisir, `A` lancer
+(raccourcis `1`–`9`, `0`), `V` ou `LB/RB` changer de vue, `Échap` ou l'icône ⚙
+ouvrir les options. À la manette, `LT/RT` changent de vue ; `Sélect` ouvre
+également les options.
+
+- **Grille** : scrollable, prévue pour un catalogue grandissant — filtres par
+  genre (`C` ou barre de filtres via `↑` depuis la première ligne), favoris
+  (`Y` manette / `E` clavier, filtre `☆ FAVORIS`), recherche (`/` puis frappe,
+  `Entrée` valider, `Échap` annuler), tris (`X` manette / `T` clavier :
+  A→Z, +joués, records, succès, récents), molette souris supportée. Les favoris,
+  récents et préférences (vue, genre, tri) sont persistés.
+- **Fiche** : inchangée dans l'esprit — démo simulée, contrôles, astuce,
+  statistiques, rangs — plus tag de genre, étoile de favori, ligne de succès du
+  jeu (cliquable, `X`/`T` : ouvre la galerie sur ce jeu) et bandeau de vignettes
+  en fenêtre scrollable.
+- **Succès** : galerie (`TOUS` / `OBTENUS` / `À FAIRE`, portée tous les jeux ou
+  jeu sélectionné via `C`), barres de progression, scroll molette + `PgUp/PgDn`.
+  La progression globale (`🏆 x/y`) est rappelée dans la barre du haut.
 
 La **fiche jeu** (vue par défaut) affiche chaque jeu en plein écran : une mini-démo
 simulée tourne en fond, avec les contrôles, l'astuce, les statistiques (parties, temps
@@ -96,7 +121,22 @@ Pendant le gameplay, Start, Sélect ou Échap ouvrent la pause et la mettent en 
 reprennent ; l'item « Quitter » permet de revenir au hub.
 
 Souris : active uniquement dans les interfaces (hub, pause, réglages) — survol et clic
-sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effet.
+sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effet
+(molette : scroll des listes du hub).
+
+## Succès
+
+Système moteur (`js/core/achievements.ts`, ~90 succès de base) : chaque jeu
+débloque 4 succès via ses rangs (`DÉCOUVERTE`, `RANG B/A/S`) + 11 succès arcade
+globaux (exploration multi-jeux, marathons, records, rangs S, victoire) + succès
+custom émis par les jeux eux-mêmes (ex. vagues Survibblob, arches Flappy).
+
+- Côté jeu : `this.unlockAchievement('cave.near-miss-10')` (direct) ou
+  `this.emitAchievement('surv:wave', { value: this.wave })` (évènement), puis
+  déclarer le succès via `engine.achievements.register(...)` (voir `js/main.ts`).
+- Côté moteur : `BaseGame.over()` émet `game:over`, `game:rank`, `game:win`,
+  `game:record`. Les toasts s'affichent en jeu comme au menu, avec son et
+  persistance `localStorage`. Les succès ne touchent jamais à la simulation.
 
 ## Game feel (la partie importante)
 
@@ -106,7 +146,12 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 - **Accélération visible** : steering exponentiel, recul au tir, dust au saut/atterrissage
 - **SFX synthétisés** : chaque action a son son ; pitch des pièces qui monte en chaîne
 - **Musique générative** (kick/snare/hat/basse) synchronisée sur l'horloge audio —
-  le jeu de rythme génère sa chart **depuis** le pattern de batterie
+  le jeu de rythme génère sa chart **depuis** le pattern de batterie ; chaque jeu
+  a sa couleur harmonique (tonique, groove, progression, arpèges) ; le menu
+  ajoute pads majeurs, music-box, stabs de cuivre et cris de fête (`hey!`)
+  via les couches `brass`/`vox` du rack ; delay pointé + réverb générative,
+  fills de fin de phrase, swing, leitmotivs sur les peaks et stingers de
+  transition (lancement, fin, victoire, record)
 - **Vibrations manette** dosées par intensité (parfait < dash < mort)
 - Coyote time + input buffer sur le saut du runner, avec saut court au tap, saut haut au maintien et double saut
 - Génération procédurale seedée : motifs rythmés, contraintes lisibles et réutilisables avec `?runnerSeed=12345`
@@ -115,10 +160,10 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 ## Structure
 
 ```
-js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
+js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages, succès (TypeScript)
 js/core/music/ transport, références, état manuel, direction adaptative et adaptateurs de jeu (TypeScript)
-js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm, pong, columns, bubble, sort, path (TypeScript)
-js/main.ts  point d'entrée navigateur
-js/menu.ts  hub (fiche plein écran + grille globale)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm, pong, columns, bubble, sort, path, frog, flappy, dig, cycle (TypeScript)
+js/main.ts  point d'entrée navigateur (+ catalogue des succès)
+js/menu.ts  hub (fiche plein écran + grille filtrable/scrollable + galerie succès)
 js/demos.ts démos simulées (attract mode) de la fiche
 ```

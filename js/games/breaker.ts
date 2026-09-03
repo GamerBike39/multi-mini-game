@@ -20,10 +20,20 @@ const BUMPER_CHAOS_MIN = 0.045;
 const BUMPER_CHAOS_MAX = 0.105;
 const GRAVITY_DETACH_TIME = 0.14;
 const GRENADE_SAMPLE_KEY = 'breaker.grenade-explosion';
-const GRENADE_SAMPLE_URL = new URL(
+// Résolution d'asset tolérante : sous un hôte inhabituel (ex. tests importés
+// en data: URL), `new URL(..., import.meta.url)` lève à l'évaluation du
+// module. Le repli relatif n'est jamais déréférencé hors navigateur car les
+// loaders (images/samples) ont leurs propres gardes.
+function assetHref(relative: string): string {
+  try {
+    return new URL(relative, import.meta.url).href;
+  } catch {
+    return relative;
+  }
+}
+const GRENADE_SAMPLE_URL = assetHref(
   '../../assets/breaker/sound/grenade-explosion-sfx-medium-sized-meaty-realistic-trimmed.mp3',
-  import.meta.url,
-).href;
+);
 
 const BREAKER_SFX_KEYS = {
   brickNormal: 'breaker.brick.normal',
@@ -373,25 +383,25 @@ const DGLYPH: Record<DropKind, string> = {
 // Canvas : cela garde un fallback procédural pendant le premier chargement et
 // permet au jeu de rester autonome si un asset est absent ou encore lent.
 const BREAKER_BONUS_URL: Record<DropKind, string> = {
-  MULTI: new URL('../../assets/breaker/bonus/multi-ball.png', import.meta.url).href,
-  LARGE: new URL('../../assets/breaker/bonus/large.png', import.meta.url).href,
-  SLOW: new URL('../../assets/breaker/bonus/slow.png', import.meta.url).href,
-  LASER: new URL('../../assets/breaker/bonus/laser.png', import.meta.url).href,
-  GLUE: new URL('../../assets/breaker/bonus/glue.png', import.meta.url).href,
-  FLAME: new URL('../../assets/breaker/bonus/fire.png', import.meta.url).href,
-  GIANT: new URL('../../assets/breaker/bonus/giant.png', import.meta.url).href,
-  SMALL: new URL('../../assets/breaker/bonus/small.png', import.meta.url).href,
+  MULTI: assetHref('../../assets/breaker/bonus/multi-ball.png'),
+  LARGE: assetHref('../../assets/breaker/bonus/large.png'),
+  SLOW: assetHref('../../assets/breaker/bonus/slow.png'),
+  LASER: assetHref('../../assets/breaker/bonus/laser.png'),
+  GLUE: assetHref('../../assets/breaker/bonus/glue.png'),
+  FLAME: assetHref('../../assets/breaker/bonus/fire.png'),
+  GIANT: assetHref('../../assets/breaker/bonus/giant.png'),
+  SMALL: assetHref('../../assets/breaker/bonus/small.png'),
 };
 
 const BREAKER_HUD_URL: Record<string, string> = {
-  LIFE: new URL('../../assets/breaker/HUD/hud_life.png', import.meta.url).href,
-  MULTI: new URL('../../assets/breaker/HUD/hud_multiball.png', import.meta.url).href,
-  LASER: new URL('../../assets/breaker/HUD/hud_laser.png', import.meta.url).href,
-  GLUE: new URL('../../assets/breaker/HUD/hud_glue.png', import.meta.url).href,
-  FLAMME: new URL('../../assets/breaker/HUD/hud_flame.png', import.meta.url).href,
-  GÉANTE: new URL('../../assets/breaker/HUD/hud_giant.png', import.meta.url).href,
-  SLOW: new URL('../../assets/breaker/HUD/hud_slow.png', import.meta.url).href,
-  FREEZE: new URL('../../assets/breaker/HUD/hud_freeze.png', import.meta.url).href,
+  LIFE: assetHref('../../assets/breaker/HUD/hud_life.png'),
+  MULTI: assetHref('../../assets/breaker/HUD/hud_multiball.png'),
+  LASER: assetHref('../../assets/breaker/HUD/hud_laser.png'),
+  GLUE: assetHref('../../assets/breaker/HUD/hud_glue.png'),
+  FLAMME: assetHref('../../assets/breaker/HUD/hud_flame.png'),
+  GÉANTE: assetHref('../../assets/breaker/HUD/hud_giant.png'),
+  SLOW: assetHref('../../assets/breaker/HUD/hud_slow.png'),
+  FREEZE: assetHref('../../assets/breaker/HUD/hud_freeze.png'),
 };
 
 // LARGE et SMALL n'ont pas encore de PNG HUD dédié : leur icône de drop est
@@ -403,15 +413,15 @@ const BREAKER_POWER_ICON_URL: Record<string, string> = {
 };
 
 const BREAKER_GAMEPLAY_URL = {
-  basic: new URL('../../assets/breaker/briques/basic.webp', import.meta.url).href,
-  paddle: new URL('../../assets/breaker/briques/basic-border.webp', import.meta.url).href,
-  basic2: new URL('../../assets/breaker/briques/basic2.webp', import.meta.url).href,
-  wall: new URL('../../assets/breaker/briques/wall.webp', import.meta.url).href,
-  bumperOuter: new URL('../../assets/breaker/briques/bumper_out.webp', import.meta.url).href,
-  bumperInner: new URL('../../assets/breaker/briques/bumperèin.webp', import.meta.url).href,
-  reinforced: new URL('../../assets/breaker/briques/renforcer.webp', import.meta.url).href,
-  gravity: new URL('../../assets/breaker/briques/gravity_arrow.webp', import.meta.url).href,
-  explosive: new URL('../../assets/breaker/briques/explode.webp', import.meta.url).href,
+  basic: assetHref('../../assets/breaker/briques/basic.webp'),
+  paddle: assetHref('../../assets/breaker/briques/basic-border.webp'),
+  basic2: assetHref('../../assets/breaker/briques/basic2.webp'),
+  wall: assetHref('../../assets/breaker/briques/wall.webp'),
+  bumperOuter: assetHref('../../assets/breaker/briques/bumper_out.webp'),
+  bumperInner: assetHref('../../assets/breaker/briques/bumperèin.webp'),
+  reinforced: assetHref('../../assets/breaker/briques/renforcer.webp'),
+  gravity: assetHref('../../assets/breaker/briques/gravity_arrow.webp'),
+  explosive: assetHref('../../assets/breaker/briques/explode.webp'),
 } as const;
 
 const breakerImageCache = new Map<string, HTMLImageElement>();
@@ -1563,7 +1573,10 @@ export class BreakerGame extends BaseGame {
     this.laserT = Math.max(0, this.laserT - rdt);
     this.glueT = Math.max(0, this.glueT - rdt);
     this.comboT = Math.max(0, this.comboT - rdt);
-    if (this.comboT <= 0) this.comboStep = 0;
+    if (this.comboT <= 0 && this.comboStep > 0) {
+      if (this.comboStep >= 4) this.musicEvent('comboBreak', Math.min(1, this.comboStep / 10));
+      this.comboStep = 0;
+    }
     if (this.slowT > 0) { this.slowT -= rdt; this.fx.timeScale = 0.6; }
     else if (this.fx.timeScale < 1) this.fx.timeScale = Math.min(1, this.fx.timeScale + rdt * 0.5);
 

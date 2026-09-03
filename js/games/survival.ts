@@ -454,6 +454,7 @@ export class SurvivalGame extends BaseGame {
     this.lastBonus = 'VAGUE NETTE  +' + reward;
     this.audio.milestone();
     this.musicEvent('waveComplete', Math.min(1, 0.55 + completedWave * 0.035));
+    this.emitAchievement('surv:wave', { value: completedWave });
     this.input.rumble(0.38, 0.12);
     this.fx.flash(this.wavePlan.color, 0.12);
     this.fx.ring(640, 360, { r0: 30, r1: 330, color: this.wavePlan.color, life: 0.6, width: 4 });
@@ -637,6 +638,7 @@ export class SurvivalGame extends BaseGame {
     if (this.wavePlan.boss && !this.bossQueued && this.waveElapsed >= 0.45) {
       this.queueEnemy('boss');
       this.bossQueued = true;
+      this.musicEvent('bossStart', 1);
     }
 
     const canSpawnEnemy = this.wavePlan.enemies && (!this.wavePlan.boss || this.waveElapsed >= 2.8);
