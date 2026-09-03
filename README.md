@@ -69,6 +69,7 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **FLAPPY BLOB** | Bat des ailes, passe au centre des arches | A / Espace / Clic | Espace / J / Clic |
 | **DIG** | Creuse, gère l’oxygène, remonte les veines | Stick / D-pad + A | Flèches / ZQSD + Espace |
 | **BLOB CYCLES** | Tron-like 1-4J, traînées mortelles, dernier survivant (solo rapide vs 3 IA) | D-pad / Stick virer à 90° | Flèches / ZQSD (P1) |
+| **BLOB BLOOM** | Othello organique 1-2J, contamination en vagues, FLORA vs CRISTAL (solo vs IA) | D-pad / Stick curseur + A poser + X règles | Flèches / ZQSD + Espace + H règles (P1) |
 
 Chaque jeu appartient à un genre (`ACTION`, `PILOTAGE`, `PUZZLE`, `FLOW`) affiché
 sur sa fiche et utilisable comme filtre dans la grille.
@@ -162,7 +163,7 @@ custom émis par les jeux eux-mêmes (ex. vagues Survibblob, arches Flappy).
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages, succès (TypeScript)
 js/core/music/ transport, références, état manuel, direction adaptative et adaptateurs de jeu (TypeScript)
-js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm, pong, columns, bubble, sort, path, frog, flappy, dig, cycle (TypeScript)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm, pong, columns, bubble, sort, path, frog, flappy, dig, cycle, bloom (TypeScript)
 js/main.ts  point d'entrée navigateur (+ catalogue des succès)
 js/menu.ts  hub (fiche plein écran + grille filtrable/scrollable + galerie succès)
 js/demos.ts démos simulées (attract mode) de la fiche

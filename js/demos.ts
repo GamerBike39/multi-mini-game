@@ -8,6 +8,7 @@ interface DemoImpl {
 // vignettes scriptées qui reprennent le langage visuel de chaque jeu (blobs, accents).
 
 import { Blob } from './core/blob';
+import { bloomApplyMove, bloomEmptyGrid, bloomLegalMoves, bloomOpponent } from './games/bloom';
 
 const TAU = Math.PI * 2;
 const rand = (a: number, b: number): number => a + Math.random() * (b - a);
@@ -1748,6 +1749,114 @@ function demoCycle(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB BLOOM : contamination Othello en boucle ----------------
+function demoBloom(accent: string): DemoImpl {
+  const CELL = 34, OX = 554, OY = 226;
+  const cx = (c: number): number => OX + (c + 0.5) * CELL;
+  const cy = (r: number): number => OY + (r + 0.5) * CELL;
+  const cols = [accent, '#38bdf8'];
+  let s: any;
+  const setup = () => {
+    const grid = bloomEmptyGrid();
+    grid[3][3] = 2; grid[4][4] = 2; grid[3][4] = 1; grid[4][3] = 1;
+    s = {
+      grid, turn: 1, waitT: 0.8, overT: 0,
+      waves: [] as any[],
+      conv: new Map<number, number>(),
+      blobs: [
+        new Blob({ x: 490, y: 360, r: 22, color: cols[0] }),
+        new Blob({ x: 900, y: 360, r: 22, color: cols[1] }),
+      ],
+      puffs: new Puffs(),
+    };
+  };
+  setup();
+  return {
+    update(dt: number): void {
+      if (s.overT > 0) {
+        s.overT -= dt;
+        if (s.overT <= 0) setup();
+      } else {
+        s.waitT -= dt;
+        if (s.waitT <= 0) {
+          const moves = bloomLegalMoves(s.grid, s.turn);
+          if (moves.length === 0) {
+            const foe = bloomLegalMoves(s.grid, bloomOpponent(s.turn));
+            if (foe.length === 0) { s.overT = 2.2; }
+            else { s.turn = bloomOpponent(s.turn); s.waitT = 0.4; }
+          } else {
+            const m = moves[(Math.random() * moves.length) | 0];
+            const res = bloomApplyMove(s.grid, s.turn, m.x, m.y);
+            if (res) {
+              s.grid = res.grid;
+              s.waves.push({ x: cx(m.x), y: cy(m.y), r: 10, color: cols[s.turn - 1], life: 0.6 });
+              for (const f of res.flips) {
+                s.conv.set(f.y * 8 + f.x, 0.3);
+                if (Math.random() < 0.5) s.puffs.burst(cx(f.x), cy(f.y), [cols[s.turn - 1], '#ffffff'], 4, [30, 140], 0.35);
+              }
+              s.blobs[s.turn - 1].punch(0.35);
+              s.turn = bloomOpponent(s.turn);
+            }
+            s.waitT = 0.85;
+          }
+        }
+      }
+      for (let i = s.waves.length - 1; i >= 0; i--) {
+        const w = s.waves[i];
+        w.life -= dt;
+        w.r += dt * 320;
+        if (w.life <= 0) s.waves.splice(i, 1);
+      }
+      for (const [k, t] of s.conv) {
+        if (t <= dt) s.conv.delete(k);
+        else s.conv.set(k, t - dt);
+      }
+      for (const b of s.blobs) b.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.strokeStyle = '#ffffff14';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(OX, OY, CELL * 8, CELL * 8);
+      for (const w of s.waves) {
+        ctx.globalAlpha = Math.max(0, w.life / 0.6) * 0.8;
+        ctx.strokeStyle = w.color;
+        ctx.lineWidth = 3;
+        ctx.beginPath(); ctx.arc(w.x, w.y, w.r, 0, TAU); ctx.stroke();
+      }
+      ctx.globalAlpha = 1;
+      for (let y = 0; y < 8; y++) for (let x = 0; x < 8; x++) {
+        const v = s.grid[y][x];
+        if (!v) continue;
+        const pop = s.conv.get(y * 8 + x);
+        const r = pop !== undefined ? 8 + (0.3 - pop) * 28 : 13;
+        ctx.fillStyle = cols[v - 1];
+        ctx.shadowColor = cols[v - 1];
+        ctx.shadowBlur = 10;
+        ctx.beginPath(); ctx.arc(cx(x), cy(y), r, 0, TAU); ctx.fill();
+        ctx.shadowBlur = 0;
+        if (v === 1) {
+          ctx.fillStyle = '#f9a8d4';
+          for (let i = 0; i < 5; i++) {
+            const a = (i / 5) * TAU + s.blobs[0].t;
+            ctx.beginPath(); ctx.arc(cx(x) + Math.cos(a) * r * 0.62, cy(y) + Math.sin(a) * r * 0.62, 3.4, 0, TAU); ctx.fill();
+          }
+        } else {
+          ctx.strokeStyle = '#e0f2fe';
+          ctx.lineWidth = 1.5;
+          const d = r * 0.7;
+          ctx.beginPath();
+          ctx.moveTo(cx(x), cy(y) - d); ctx.lineTo(cx(x) + d * 0.7, cy(y));
+          ctx.lineTo(cx(x), cy(y) + d); ctx.lineTo(cx(x) - d * 0.7, cy(y));
+          ctx.closePath(); ctx.stroke();
+        }
+      }
+      for (const b of s.blobs) b.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1767,6 +1876,7 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   flap: demoFlap,
   dig: demoDig,
   cycle: demoCycle,
+  bloom: demoBloom,
 };
 
 export class Demo {

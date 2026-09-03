@@ -22,6 +22,7 @@ import { FrogGame } from './games/frog';
 import { FlappyGame } from './games/flappy';
 import { DigGame } from './games/dig';
 import { CycleGame } from './games/cycle';
+import { BloomGame } from './games/bloom';
 import { MusicTestApp } from './music-test';
 import type { AppLike, GameConstructor } from './core/types';
 
@@ -56,6 +57,7 @@ const GAMES: GameConstructor[] = [
   FlappyGame,
   DigGame,
   CycleGame,
+  BloomGame,
 ];
 
 function element<T extends HTMLElement>(id: string): T {

@@ -35,7 +35,7 @@ const profile = (
 // famille (vitesse, proximité, manches...) tout en sonnant différemment.
 const RUNNER_MOODS: readonly string[] = ['runner', 'flap', 'frog', 'snake', 'columns'];
 const CAVE_MOODS: readonly string[] = ['cave', 'golf', 'dig', 'bubble', 'cycle'];
-const SIMON_MOODS: readonly string[] = ['simon', 'sort', 'path'];
+const SIMON_MOODS: readonly string[] = ['simon', 'sort', 'path', 'bloom'];
 
 const PROFILES: Record<string, GameMusicProfile> = {
   surv: profile('survival', {
@@ -109,6 +109,10 @@ const PROFILES: Record<string, GameMusicProfile> = {
   cycle: profile('cycle', {
     intensity: 0.46, tension: 0.42, danger: 0.22, momentum: 0.52, complexity: 0.42,
     brightness: 0.58, triumph: 0, calm: 0.2, narrativeArc: 0.1,
+  }),
+  bloom: profile('bloom', {
+    intensity: 0.2, tension: 0.22, danger: 0.03, momentum: 0.22, complexity: 0.5,
+    brightness: 0.62, triumph: 0, calm: 0.62, narrativeArc: 0.14,
   }),
 };
 

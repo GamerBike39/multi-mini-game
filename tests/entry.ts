@@ -37,6 +37,22 @@ import {
   cycleWantDir,
   pointSegDist,
 } from '../js/games/cycle';
+import {
+  BLOOM_BIG_FLIP,
+  BLOOM_SIZE,
+  BloomGame,
+  bloomApplyMove,
+  bloomChooseMove,
+  bloomCounts,
+  bloomEmptyGrid,
+  bloomFlipsFor,
+  bloomLegalMoves,
+  bloomMergeDir,
+  bloomOpponent,
+  bloomRaysFor,
+  bloomStickStep,
+  bloomWinnerOf,
+} from '../js/games/bloom';
 import { ACTIONS, type AudioLike, type EngineLike, type InputLike, type ReplayPlayerFrame } from '../js/core/types';
 import { simonPadPressed } from '../js/games/simon';
 import { sortChoiceCorrect, sortDifficulty, sortDirectionPressed } from '../js/games/sort';
@@ -1636,15 +1652,122 @@ function testCycle(): void {
   assert(CycleGame.meta.genre === 'action', 'Cycles : genre action pour le filtre du hub');
 }
 
+function testBloom(): void {
+  const opening = (): (0 | 1 | 2)[][] => {
+    const grid = bloomEmptyGrid();
+    grid[3][3] = 2;
+    grid[4][4] = 2;
+    grid[3][4] = 1;
+    grid[4][3] = 1;
+    return grid;
+  };
+
+  // Ouverture standard : 4 coups pour FLORA.
+  const moves = bloomLegalMoves(opening(), 1);
+  equal(moves.length, 4, 'Bloom : 4 coups à l’ouverture');
+  const spots = moves.map((m) => m.x + ',' + m.y).sort().join('|');
+  equal(spots, '2,3|3,2|4,5|5,4', 'Bloom : les 4 coups d’ouverture sont exacts');
+
+  // Ligne horizontale : ● posé en bout retourne toute la ligne.
+  const line = bloomEmptyGrid();
+  line[3][1] = 1;
+  line[3][2] = 2;
+  line[3][3] = 2;
+  equal(bloomFlipsFor(line, 1, 4, 3).length, 2, 'Bloom : la ligne entière est contaminée');
+  const applied = bloomApplyMove(line, 1, 4, 3);
+  assert(applied, 'Bloom : le coup d’encadrement est légal');
+  equal(applied.grid[3][2], 1, 'Bloom : le pion retourné change de camp');
+  equal(applied.grid[3][4], 1, 'Bloom : le pion posé appartient au joueur');
+  equal(line[3][2], 2, 'Bloom : la grille d’origine n’est pas mutée');
+
+  // Double direction : vertical + horizontal encadrés ensemble.
+  const cross = bloomEmptyGrid();
+  cross[1][3] = 1;
+  cross[2][3] = 2;
+  cross[3][1] = 1;
+  cross[3][2] = 2;
+  const rays = bloomRaysFor(cross, 1, 3, 3);
+  equal(rays.length, 2, 'Bloom : deux rayons encadrés en croix');
+  equal(bloomFlipsFor(cross, 1, 3, 3).length, 2, 'Bloom : les deux lignes basculent');
+
+  // Sans encadrement : illégal.
+  equal(bloomFlipsFor(bloomEmptyGrid(), 1, 0, 0).length, 0, 'Bloom : case isolée = aucun retournement');
+  equal(bloomApplyMove(bloomEmptyGrid(), 1, 0, 0), null, 'Bloom : coup illégal refusé');
+  const lone = bloomEmptyGrid();
+  lone[3][3] = 2;
+  equal(bloomFlipsFor(lone, 1, 3, 4).length, 0, 'Bloom : pion adverse sans appui ami = illégal');
+
+  // Distances croissantes le long du rayon (l'onde voyage).
+  const long = bloomEmptyGrid();
+  long[3][0] = 1;
+  long[3][1] = 2;
+  long[3][2] = 2;
+  long[3][3] = 2;
+  const ray = bloomRaysFor(long, 1, 4, 3)[0];
+  equal(ray.cells.map((c) => c.d).join(','), '1,2,3', 'Bloom : les distances croissent en s’éloignant du pion posé');
+
+  // Comptes et vainqueur.
+  const counts = bloomCounts(opening());
+  equal(counts.p1 + counts.p2 + counts.empty, BLOOM_SIZE * BLOOM_SIZE, 'Bloom : les comptes partitionnent le plateau');
+  equal(bloomWinnerOf(opening()), 0, 'Bloom : égalité à l’ouverture');
+  const full = bloomEmptyGrid().map((row) => row.map(() => 1 as 0 | 1 | 2));
+  full[0][0] = 2;
+  equal(bloomWinnerOf(full), 1, 'Bloom : la majorité l’emporte');
+  equal(bloomLegalMoves(full, 2).length, 0, 'Bloom : plateau plein = aucun coup');
+
+  // Passe : un camp bloqué.
+  const stuck = bloomEmptyGrid().map((row) => row.map(() => 1 as 0 | 1 | 2));
+  stuck[7][7] = 0;
+  equal(bloomLegalMoves(stuck, 2).length, 0, 'Bloom : le camp sans encadrement passe');
+
+  // IA : le coin disponible est toujours pris, coup sinon.
+  const corner = bloomEmptyGrid();
+  corner[0][1] = 2;
+  corner[1][0] = 2;
+  corner[1][1] = 2;
+  corner[0][2] = 1;
+  corner[2][0] = 1;
+  corner[2][2] = 1;
+  const sequence = [0.5, 0.5, 0.5, 0.5, 0.5, 0.5];
+  let tap = 0;
+  const rng = { float: (a: number, b: number) => a + (b - a) * (sequence[tap++ % sequence.length] ?? 0.5) };
+  const pick = bloomChooseMove(corner, 1, rng);
+  assert(pick, 'Bloom : l’IA trouve un coup');
+  equal(pick.x + ',' + pick.y, '0,0', 'Bloom : l’IA prend le coin en or');
+  equal(bloomChooseMove(stuck, 2, rng), null, 'Bloom : l’IA rend null quand il faut passer');
+
+  // Un appui = une case (régression du bug Froggy : la croix ET le stick
+  // tiraient chacun un pas car le moteur synthétise moveX/moveY depuis les
+  // touches directionnelles).
+  equal(bloomMergeDir({ x: -1, y: 0 }, { x: -1, y: 0 })?.x, -1, 'Bloom : la croix absorbe le stick redondant');
+  equal(bloomMergeDir(null, { x: 1, y: 0 })?.x, 1, 'Bloom : stick seul = un pas');
+  equal(bloomMergeDir(null, null), null, 'Bloom : sans entrée, pas de pas');
+  const first = bloomStickStep({ x: 1, y: 0 }, null);
+  equal(first.step?.x, 1, 'Bloom : le stick frappe au changement de direction');
+  const held = bloomStickStep({ x: 1, y: 0 }, first.next);
+  equal(held.step, null, 'Bloom : le stick tenu ne répète pas');
+  const swing = bloomStickStep({ x: 0, y: 1 }, first.next);
+  equal(swing.step?.y, 1, 'Bloom : changer d’axe stick refrappe une fois');
+  equal(bloomStickStep(null, first.next).step, null, 'Bloom : relâcher ne bouge pas');
+  equal(bloomStickStep(null, first.next).next, null, 'Bloom : relâcher réarme le stick');
+
+  equal(bloomOpponent(1), 2, 'Bloom : l’adversaire de FLORA est CRISTAL');
+  equal(bloomOpponent(2), 1, 'Bloom : l’adversaire de CRISTAL est FLORA');
+  assert(BLOOM_BIG_FLIP >= 6, 'Bloom : le seuil WHOOOM reste spectaculaire');
+  equal(BloomGame.meta.players?.min, 1, 'Bloom : solo contre l’IA autorisé');
+  equal(BloomGame.meta.players?.max, 2, 'Bloom : duel local à deux');
+  assert(BloomGame.meta.genre === 'puzzle', 'Bloom : jeu cérébral du hub');
+}
+
 function testMusicWiring(): void {
   const metas = [
     RhythmGame.meta, SurvivalGame.meta, ShooterGame.meta, RunnerGame.meta,
     CaveGame.meta, SimonGame.meta, SnakeGame.meta, BreakerGame.meta,
     GolfGame.meta, FishingGame.meta, PongGame.meta, ColumnsGame.meta,
     BubbleGame.meta, SortGame.meta, PathGame.meta, FrogGame.meta,
-    FlappyGame.meta, DigGame.meta, CycleGame.meta,
+    FlappyGame.meta, DigGame.meta, CycleGame.meta, BloomGame.meta,
   ];
-  equal(metas.length, 19, 'Tous les jeux passent l’audit musical');
+  equal(metas.length, 20, 'Tous les jeux passent l’audit musical');
   for (const meta of metas) {
     assert(MOODS[meta.mood], `Musique : ${meta.id} pointe vers la mood "${meta.mood}" qui n'existe pas (jeu silencieux !)`);
   }
@@ -1693,6 +1816,7 @@ const tests: readonly [string, Test][] = [
   ['Blob Digger : chutes', testDigGravity],
   ['Blob Digger : génération', testDigGen],
   ['Blob Cycles', testCycle],
+  ['Blob Bloom', testBloom],
 ];
 
 for (const [name, test] of tests) {

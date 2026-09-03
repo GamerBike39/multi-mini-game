@@ -493,6 +493,24 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.beginPath(); ctx.moveTo(14, 14); ctx.lineTo(24, 14); ctx.lineTo(24, 4); ctx.stroke();
     ctx.globalAlpha = 1;
     ctx.lineCap = 'butt';
+  } else if (id === 'bloom') {
+    // Corolle + cristal : les deux écosystèmes qui se contaminent.
+    ctx.lineWidth = 2.5;
+    for (let i = 0; i < 5; i++) {
+      const a = -Math.PI / 2 + (i / 5) * Math.PI * 2;
+      ctx.beginPath();
+      ctx.ellipse(Math.cos(a) * 9, Math.sin(a) * 9 - 4, 6.5, 4, a, 0, 6.2832);
+      ctx.stroke();
+    }
+    ctx.beginPath(); ctx.arc(0, -4, 4, 0, 6.2832); ctx.fill();
+    ctx.save();
+    ctx.translate(2, 12);
+    ctx.rotate(Math.PI / 4);
+    ctx.strokeRect(-7, -7, 14, 14);
+    ctx.restore();
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(-24, -20); ctx.quadraticCurveTo(-10, -8, -14, 6); ctx.stroke();
+    ctx.globalAlpha = 1;
   } else if (id === 'dig') {
     // Casque + diamant : la descente du mineur.
     ctx.beginPath(); ctx.arc(-4, 6, 10, 0, 6.2832); ctx.fill();

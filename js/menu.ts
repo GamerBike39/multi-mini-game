@@ -31,7 +31,7 @@ const GENRE_BY_ID: Record<string, GameGenre> = {
   beat: 'flow', surv: 'action', shoot: 'action', runner: 'pilotage', cave: 'pilotage',
   simon: 'puzzle', snake: 'action', breaker: 'action', golf: 'flow', fish: 'flow',
   pong: 'action', columns: 'puzzle', bubble: 'puzzle', sort: 'puzzle', path: 'puzzle',
-  frog: 'pilotage', flap: 'pilotage', dig: 'pilotage', cycle: 'action',
+  frog: 'pilotage', flap: 'pilotage', dig: 'pilotage', cycle: 'action', bloom: 'puzzle',
 };
 const GENRE_PILLS: Array<'all' | GameGenre> = ['all', 'action', 'pilotage', 'puzzle', 'flow'];
 

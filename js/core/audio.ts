@@ -180,6 +180,12 @@ export const MOODS: Record<string, Mood> = {
     progression: [0, -2, -5, -3], fill: 'full',
     arp: [12, null, 15, null, 19, null, 15, null, 12, null, 10, null, 7, null, 10, null],
   },
+  bloom: {
+    bpm: 88, root: 48, kick: [0], snare: [], hat: 'off',
+    bass: [0, null, null, null, 7, null, 5, null], bassDiv: 2, pad: true, padMajor: true,
+    progression: [0, 4, 5, 4],
+    arp: [12, null, null, 16, null, null, 19, null, null, null, 16, null, null, 14, null, null],
+  },
 };
 
 export class AudioSys implements AudioLike {
