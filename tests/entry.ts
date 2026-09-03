@@ -8,11 +8,38 @@ import { SeededRng } from '../js/core/rng';
 import { SpatialHash } from '../js/core/spatial-hash';
 import { GridSystem, PhaseMachine, Scroller } from '../js/core/systems';
 import { DevTools } from '../js/core/devtools';
-import { ACTIONS, type ReplayPlayerFrame } from '../js/core/types';
+import { ACTIONS, type AudioLike, type EngineLike, type InputLike, type ReplayPlayerFrame } from '../js/core/types';
 import { simonPadPressed } from '../js/games/simon';
 import { sortChoiceCorrect, sortDifficulty, sortDirectionPressed } from '../js/games/sort';
 import { createMemoryPath, isOrthogonalPath, nextPathVisualMode, pathDirectionPressed } from '../js/games/path';
 import { golfAngleDelta, golfShotSpeed, resolveGolfWall } from '../js/games/golf';
+import {
+  FROG_CELL,
+  FROG_COLS,
+  FROG_HOME_COLS,
+  FrogGame,
+  frogCellCenterX,
+  frogCellCenterY,
+  frogHomeIndex,
+  frogIsHomeCol,
+  frogLevelMult,
+  frogLevelTime,
+  frogOverlaps,
+} from '../js/games/frog';
+import {
+  FLAPPY_FLAP_VY,
+  FLAPPY_GAP_0,
+  FLAPPY_GAP_MIN,
+  FLAPPY_PIPE_W,
+  FLAPPY_R,
+  FLAPPY_SPEED_0,
+  FLAPPY_SPEED_MAX,
+  FlappyGame,
+  flappyCentered,
+  flappyGapFor,
+  flappyHitsPipe,
+  flappySpeedFor,
+} from '../js/games/flappy';
 import {
   ColumnBoard,
   ReleaseLatch,
@@ -966,6 +993,157 @@ function testLatchAndGaze(): void {
   close(cycleSlide(1, 0, 0.5), 0.5, 'Mi-course : quart du trajet restant', 1e-9);
 }
 
+function testFrog(): void {
+  equal(FROG_COLS, 15, 'Frogger : 15 colonnes');
+  equal(FROG_HOME_COLS.length, 5, 'Frogger : 5 alcôves');
+  assert(frogIsHomeCol(1), 'Frogger : la colonne 1 est une alcôve');
+  assert(frogIsHomeCol(13), 'Frogger : la colonne 13 est une alcôve');
+  assert(!frogIsHomeCol(0), 'Frogger : la colonne 0 est de l’eau');
+  assert(!frogIsHomeCol(2), 'Frogger : la colonne 2 est de l’eau');
+  equal(frogHomeIndex(7), 2, 'Frogger : la colonne 7 est l’alcôve centrale');
+  equal(frogHomeIndex(3), -1, 'Frogger : la colonne 3 n’est pas une alcôve');
+
+  equal(frogLevelMult(1), 1, 'Frogger : niveau 1 sans accélération');
+  assert(frogLevelMult(2) > 1, 'Frogger : le niveau 2 accélère');
+  assert(frogLevelMult(5) > frogLevelMult(2), 'Frogger : la vitesse croît avec le niveau');
+  assert(frogLevelMult(99) <= 2.2, 'Frogger : la vitesse est plafonnée');
+
+  equal(frogLevelTime(1), 60, 'Frogger : 60 s au niveau 1');
+  assert(frogLevelTime(3) < 60, 'Frogger : le timer se resserre');
+  assert(frogLevelTime(99) >= 30, 'Frogger : le timer garde un plancher');
+
+  assert(frogOverlaps(0, 2, 1, 2), 'Frogger : chevauchement détecté');
+  assert(!frogOverlaps(0, 1, 1, 1), 'Frogger : contact bord à bord ignoré');
+  assert(!frogOverlaps(0, 1, 5, 1), 'Frogger : les plateformes éloignées sont écartées');
+
+  // Non-régression : un saut = exactement une case (grille régulière).
+  equal(frogCellCenterX(6) - frogCellCenterX(5), FROG_CELL, 'Frogger : pas horizontal = 1 case');
+  equal(frogCellCenterY(7) - frogCellCenterY(6), FROG_CELL, 'Frogger : pas vertical = 1 case');
+}
+
+function testFlappy(): void {
+  equal(flappyGapFor(0), FLAPPY_GAP_0, 'Flappy : ouverture de départ');
+  assert(flappyGapFor(10) < FLAPPY_GAP_0, 'Flappy : l’ouverture se resserre');
+  equal(flappyGapFor(1000), FLAPPY_GAP_MIN, 'Flappy : l’ouverture garde un plancher');
+
+  equal(flappySpeedFor(0), FLAPPY_SPEED_0, 'Flappy : vitesse de départ');
+  assert(flappySpeedFor(10) > FLAPPY_SPEED_0, 'Flappy : la vitesse augmente');
+  equal(flappySpeedFor(1000), FLAPPY_SPEED_MAX, 'Flappy : la vitesse est plafonnée');
+
+  assert(flappyCentered(360, 360, 200), 'Flappy : le centre = passe parfaite');
+  assert(flappyCentered(360 + 200 / 6, 360, 200), 'Flappy : le bord du tiers médian compte');
+  assert(!flappyCentered(360 + 200 / 6 + 1, 360, 200), 'Flappy : hors tiers médian = passe simple');
+
+  // Arche en x=400 (largeur 96), ouverture 260..460.
+  const pipe = { x: 400, gapY: 360, gapH: 200, passed: false };
+  assert(!flappyHitsPipe(448, 360, FLAPPY_R, pipe), 'Flappy : dans l’ouverture, pas de contact');
+  assert(!flappyHitsPipe(100, 100, FLAPPY_R, pipe), 'Flappy : loin de l’arche, pas de contact');
+  assert(flappyHitsPipe(448, 250, FLAPPY_R, pipe), 'Flappy : la mâchoire haute tue');
+  assert(flappyHitsPipe(448, 470, FLAPPY_R, pipe), 'Flappy : la mâchoire basse tue');
+  assert(!flappyHitsPipe(400 - FLAPPY_PIPE_W, 100, FLAPPY_R, pipe), 'Flappy : le bord gauche exact pardonne');
+}
+
+function testFlappyInput(): void {
+  // Un appui = un battement : flap() écrase la vitesse (pas d’accumulation),
+  // donc même un double front ne ferait pas monter deux fois plus haut.
+  const noop = (): void => undefined;
+  const audio = new Proxy({}, { get: () => noop }) as unknown as AudioLike;
+  const hub = {
+    moveX: 0, moveY: 0, aimX: 0, aimY: 0,
+    padConnected: false, vibration: false, taps: [],
+    gesture: noop, setBlocked: noop, clearEdges: noop, absorb: noop, rumble: noop,
+    down: (): boolean => false,
+    pressed: (): boolean => false,
+    released: (): boolean => false,
+    key: (): boolean => false, keyPressed: (): boolean => false,
+    player: () => hub,
+  } as unknown as InputLike;
+  const engine = {
+    input: hub, audio,
+    settings: { active: false },
+    session: {
+      id: 'test', gameId: 'flap', mode: 'solo', playerCount: 1,
+      seed: 4321, buildVersion: 'test', replayMode: 'live',
+    },
+  } as unknown as EngineLike;
+
+  const game = new FlappyGame(engine);
+  assert(!game.started, 'Flappy : en attente avant le premier battement');
+  game.flap();
+  assert(game.started, 'Flappy : le premier battement démarre la partie');
+  equal(game.vy, FLAPPY_FLAP_VY, 'Flappy : le battement fixe l’impulsion');
+  game.vy = 500;
+  game.flap();
+  equal(game.vy, FLAPPY_FLAP_VY, 'Flappy : un second battement écrase, il n’additionne pas');
+}
+
+function testFrogInput(): void {
+  // Le moteur miroite les directions clavier/croix dans moveX/moveY
+  // (composeRawStates) : un appui = front pressed() + stick la même frame.
+  // Le jeu ne doit en tirer qu'un seul hop, pas deux cases.
+  const noop = (): void => undefined;
+  const audio = new Proxy({}, { get: () => noop }) as unknown as AudioLike;
+  const pressedSet = new Set<string>();
+  const downSet = new Set<string>();
+  const hub = {
+    moveX: 0, moveY: 0, aimX: 0, aimY: 0,
+    padConnected: false, vibration: false, taps: [],
+    gesture: noop, setBlocked: noop, clearEdges: noop, absorb: noop, rumble: noop,
+    down: (a: string): boolean => downSet.has(a),
+    pressed: (a: string): boolean => pressedSet.has(a),
+    released: (): boolean => false,
+    key: (): boolean => false, keyPressed: (): boolean => false,
+    player: () => hub,
+  } as unknown as InputLike;
+  const engine = {
+    input: hub, audio,
+    settings: { active: false },
+    session: {
+      id: 'test', gameId: 'frog', mode: 'solo', playerCount: 1,
+      seed: 1234, buildVersion: 'test', replayMode: 'live',
+    },
+  } as unknown as EngineLike;
+
+  // Flèche haut : front + miroir moveY, comme en vrai.
+  const up = new FrogGame(engine);
+  pressedSet.add('up');
+  downSet.add('up');
+  (hub as { moveY: number }).moveY = -1;
+  up.readInput(hub);
+  assert(up.hop, 'Frogger : un appui démarre un hop');
+  equal(up.buffered, null, 'Frogger : un appui ne met aucun hop en buffer (1 case, pas 2)');
+  equal(up.hop?.tc, 7, 'Frogger : le hop va tout droit');
+  equal(up.hop?.tr, 10, 'Frogger : le hop avance d’une seule rangée');
+
+  // Frame suivante, touche maintenue sans nouveau front : toujours pas de double.
+  pressedSet.clear();
+  up.readInput(hub);
+  equal(up.buffered, null, 'Frogger : le maintien n’empile pas de second hop immédiat');
+
+  // Flèche gauche : même règle sur l’axe X.
+  const left = new FrogGame(engine);
+  pressedSet.add('left');
+  downSet.clear();
+  downSet.add('left');
+  (hub as { moveX: number; moveY: number }).moveX = -1;
+  (hub as { moveY: number }).moveY = 0;
+  left.readInput(hub);
+  assert(left.hop, 'Frogger : un appui horizontal démarre un hop');
+  equal(left.buffered, null, 'Frogger : un appui horizontal = une seule colonne');
+  equal(left.hop?.tc, 6, 'Frogger : le hop va d’une seule colonne');
+  equal(left.hop?.tr, 11, 'Frogger : le hop horizontal ne change pas de rangée');
+
+  // Stick analogique pur (pas de front) : un seul hop aussi.
+  const stick = new FrogGame(engine);
+  pressedSet.clear();
+  downSet.clear();
+  (hub as { moveX: number; moveY: number }).moveX = 0;
+  (hub as { moveY: number }).moveY = -1;
+  stick.readInput(hub);
+  assert(stick.hop, 'Frogger : le stick démarre un hop');
+  equal(stick.buffered, null, 'Frogger : le stick ne double pas le hop');
+}
+
 const tests: readonly [string, Test][] = [
   ['FixedClock', testClock],
   ['SeededRng', testRng],
@@ -983,6 +1161,10 @@ const tests: readonly [string, Test][] = [
   ['Dr Blob : situations', testColumnsScenarios],
   ['Dr Blob : verrous & regards', testLatchAndGaze],
   ['Blob Pop (Bubble)', testBubble],
+  ['Blob Frogger', testFrog],
+  ['Blob Frogger : un appui = une case', testFrogInput],
+  ['Flappy Blob', testFlappy],
+  ['Flappy Blob : un appui = un vol', testFlappyInput],
 ];
 
 for (const [name, test] of tests) {

@@ -458,6 +458,26 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.strokeRect(17, -22, 10, 10);
     ctx.globalAlpha = 1;
     ctx.lineCap = 'butt';
+  } else if (id === 'frog') {
+    // Nénuphar + vaguelettes : le surf de la rivière.
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(0, 8, 16, 9, 0, 0.4, Math.PI * 2 - 0.4); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 8); ctx.lineTo(14, 2); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-2, -12, 7, 0, 6.2832); ctx.fill();
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(-24, 18); ctx.quadraticCurveTo(-12, 22, 0, 18); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, 22); ctx.quadraticCurveTo(12, 26, 24, 22); ctx.stroke();
+    ctx.globalAlpha = 1;
+  } else if (id === 'flap') {
+    // Blob + aile + filets de vitesse : le battement d'ailes.
+    ctx.beginPath(); ctx.arc(-6, 4, 10, 0, 6.2832); ctx.fill();
+    ctx.lineWidth = 2.5;
+    ctx.beginPath(); ctx.ellipse(8, -8, 11, 5.5, -0.5, 0, 6.2832); ctx.stroke();
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.moveTo(-28, -2); ctx.lineTo(-16, -2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-28, 6); ctx.lineTo(-14, 6); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(-28, 14); ctx.lineTo(-18, 14); ctx.stroke();
+    ctx.globalAlpha = 1;
   }
   ctx.restore();
 }
