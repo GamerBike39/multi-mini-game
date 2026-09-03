@@ -1815,9 +1815,21 @@ function demoBloom(accent: string): DemoImpl {
       s.puffs.update(dt);
     },
     draw(ctx: CanvasRenderingContext2D): void {
-      ctx.strokeStyle = '#ffffff14';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(OX, OY, CELL * 8, CELL * 8);
+      const g = ctx.createRadialGradient(640, 360, 40, 640, 360, 420);
+      g.addColorStop(0, 'rgba(74,222,128,0.10)');
+      g.addColorStop(0.5, 'rgba(56,189,248,0.06)');
+      g.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = g;
+      ctx.fillRect(480, 180, 320, 360);
+      ctx.strokeStyle = '#ffffff18';
+      ctx.lineWidth = 2;
+      if (ctx.roundRect) {
+        ctx.beginPath();
+        ctx.roundRect(OX - 6, OY - 6, CELL * 8 + 12, CELL * 8 + 12, 16);
+        ctx.stroke();
+      } else {
+        ctx.strokeRect(OX, OY, CELL * 8, CELL * 8);
+      }
       for (const w of s.waves) {
         ctx.globalAlpha = Math.max(0, w.life / 0.6) * 0.8;
         ctx.strokeStyle = w.color;

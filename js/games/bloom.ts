@@ -225,8 +225,32 @@ interface Floater {
   s: number;
 }
 
+interface BloomRipple {
+  x: number;
+  y: number;
+  t: number;
+  life: number;
+  color: string;
+  amp: number;
+}
+
+interface BloomDrop {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  r: number;
+  life: number;
+  max: number;
+  color: string;
+}
+
 const clamp = (v: number, a: number, b: number): number => Math.max(a, Math.min(b, v));
 const TAU = Math.PI * 2;
+const SKY_W = 160;
+const SKY_H = 90;
+const MAX_RIPPLES = 18;
+const MAX_DROPS = 28;
 
 function hash01(x: number, y: number): number {
   const h = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
@@ -247,6 +271,49 @@ function mixCss(a: string, b: string, k: number): string {
   const cb = parseRgb(b);
   const t = clamp(k, 0, 1);
   return `rgb(${Math.round(lerp(ca[0], cb[0], t))},${Math.round(lerp(ca[1], cb[1], t))},${Math.round(lerp(ca[2], cb[2], t))})`;
+}
+
+function reducedMotion(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
+/** Contour de goutte : le plateau et les pions restent ronds, jamais polygonaux. */
+function organicBlobPath(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  r: number,
+  t: number,
+  phase = 0,
+  lobes = 1,
+): void {
+  const n = 18;
+  ctx.beginPath();
+  for (let i = 0; i <= n; i++) {
+    const a = (i / n) * TAU;
+    const wob =
+      0.045 * Math.sin(t * 1.6 + a * 2 + phase)
+      + 0.028 * Math.sin(t * 2.4 - a * 3 - phase)
+      + 0.018 * lobes * Math.sin(t * 3.1 + a * 5 + phase);
+    const rr = r * (1 + wob);
+    const px = x + Math.cos(a) * rr;
+    const py = y + Math.sin(a) * rr;
+    if (i === 0) ctx.moveTo(px, py);
+    else ctx.lineTo(px, py);
+  }
+  ctx.closePath();
+}
+
+function rgba(hex: string, a: number): string {
+  const [r, g, b] = parseRgb(hex);
+  return `rgba(${r},${g},${b},${clamp(a, 0, 1)})`;
+}
+
+function mixRgba(a: string, b: string, k: number, alpha: number): string {
+  const ca = parseRgb(a);
+  const cb = parseRgb(b);
+  const t = clamp(k, 0, 1);
+  return `rgba(${Math.round(lerp(ca[0], cb[0], t))},${Math.round(lerp(ca[1], cb[1], t))},${Math.round(lerp(ca[2], cb[2], t))},${clamp(alpha, 0, 1)})`;
 }
 
 export class BloomGame extends BaseGame {
@@ -297,7 +364,24 @@ export class BloomGame extends BaseGame {
   // Ambiance : deux mondes flottants dont la densité suit le score.
   readonly petals: Floater[] = [];
   readonly spores: Floater[] = [];
+  readonly motes: Floater[] = [];
+  readonly ripples: BloomRipple[] = [];
+  readonly drops: BloomDrop[] = [];
   round = 1;
+  // Caméra théâtre : punch WHOOOM, jamais assez fort pour cacher une case.
+  camKick = 0;
+  camZoom = 1;
+  shockT = 0;
+  shockX = 640;
+  shockY = 360;
+  shockColor = BLOOM_P1;
+  vignetteBias = 0.5;
+  private skyCanvas: HTMLCanvasElement | null = null;
+  private skyCtx: CanvasRenderingContext2D | null = null;
+  private skyDirty = true;
+  private skyStamp = -1;
+  private readonly softFx: boolean;
+  private readonly visualRng: { float(min: number, max: number): number };
 
   constructor(engine: EngineLike) {
     super(engine);
@@ -312,10 +396,16 @@ export class BloomGame extends BaseGame {
       new Blob({ x: 0, y: 0, r: 34, color: BLOOM_P2 }),
     ];
     this.mascots[0].setEmotion('happy', 1.2);
+    this.softFx = reducedMotion();
     const vrng = this.rng.fork(0xb100);
-    for (let i = 0; i < 42; i++) {
+    this.visualRng = vrng;
+    const nFloat = this.softFx ? 18 : 48;
+    for (let i = 0; i < nFloat; i++) {
       this.petals.push({ x: vrng.float(0, 1280), y: vrng.float(0, 720), z: vrng.float(0.25, 1), s: vrng.float(0, TAU) });
       this.spores.push({ x: vrng.float(0, 1280), y: vrng.float(0, 720), z: vrng.float(0.25, 1), s: vrng.float(0, TAU) });
+    }
+    for (let i = 0; i < (this.softFx ? 10 : 22); i++) {
+      this.motes.push({ x: vrng.float(0, 1280), y: vrng.float(0, 720), z: vrng.float(0.2, 0.9), s: vrng.float(0, TAU) });
     }
     this.blob.hideTrail = true;
     this.refreshLegal(true);
@@ -336,6 +426,95 @@ export class BloomGame extends BaseGame {
 
   private sideColor(player: BloomPlayer): string {
     return player === 1 ? BLOOM_P1 : BLOOM_P2;
+  }
+
+  private share(): { share1: number; share2: number } {
+    const total = Math.max(1, this.counts.p1 + this.counts.p2);
+    return { share1: this.counts.p1 / total, share2: this.counts.p2 / total };
+  }
+
+  private spawnRipple(x: number, y: number, color: string, amp = 1, life = 0.7): void {
+    this.ripples.push({ x, y, t: 0, life, color, amp });
+    if (this.ripples.length > MAX_RIPPLES) this.ripples.splice(0, this.ripples.length - MAX_RIPPLES);
+  }
+
+  private spawnDrops(x: number, y: number, player: BloomPlayer, n: number): void {
+    if (this.softFx) n = Math.max(2, Math.round(n * 0.45));
+    const color = this.sideColor(player);
+    for (let i = 0; i < n; i++) {
+      const a = this.visualRng.float(0, TAU);
+      const v = this.visualRng.float(40, 220);
+      this.drops.push({
+        x, y,
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v - 30,
+        r: this.visualRng.float(2.2, 5.5),
+        life: this.visualRng.float(0.35, 0.7),
+        max: 0.7,
+        color: i % 3 === 0 ? (player === 1 ? BLOOM_PETAL : BLOOM_FACET) : color,
+      });
+    }
+    if (this.drops.length > MAX_DROPS) this.drops.splice(0, this.drops.length - MAX_DROPS);
+  }
+
+  private ensureSky(): void {
+    if (this.skyCanvas && this.skyCtx) return;
+    if (typeof document === 'undefined') return;
+    const canvas = document.createElement('canvas');
+    canvas.width = SKY_W;
+    canvas.height = SKY_H;
+    const ctx = canvas.getContext('2d', { alpha: false });
+    if (!ctx) return;
+    this.skyCanvas = canvas;
+    this.skyCtx = ctx;
+    this.skyDirty = true;
+  }
+
+  /** Ciel procédural basse-résolution (shader canvas) : FLORA vs CRISTAL se disputent la nuit. */
+  private bakeSky(): void {
+    const ctx = this.skyCtx;
+    if (!ctx) return;
+    const { share1, share2 } = this.share();
+    const t = this.time;
+    const img = ctx.createImageData(SKY_W, SKY_H);
+    const data = img.data;
+    const shock = this.shockT > 0 ? clamp(this.shockT / 0.7, 0, 1) : 0;
+    const sx = this.shockX / 1280;
+    const sy = this.shockY / 720;
+    for (let y = 0; y < SKY_H; y++) {
+      const v = y / (SKY_H - 1);
+      for (let x = 0; x < SKY_W; x++) {
+        const u = x / (SKY_W - 1);
+        const nx = (u - 0.5) * 2;
+        const ny = (v - 0.5) * 2;
+        const dist = nx * nx + ny * ny;
+        // Deux champs organiques, lentement déformés — assez pour un ciel, pas un plasma.
+        const flora = 0.55 + 0.45 * Math.sin((u * 4.2 + t * 0.11) + Math.sin(v * 3.1 + t * 0.07) * 1.4);
+        const cristal = 0.55 + 0.45 * Math.sin((u * -3.6 + t * 0.09) + Math.cos(v * 4.4 - t * 0.08) * 1.2);
+        const mix = clamp(share1 * flora - share2 * cristal + 0.5, 0, 1);
+        const night = 4 + dist * 10;
+        let r = night + mix * 42 * share1 + (1 - mix) * 8;
+        let g = night + 6 + mix * 78 * share1 + (1 - mix) * 28 * share2;
+        let b = night + 14 + (1 - mix) * 92 * share2 + mix * 18;
+        if (shock > 0.02) {
+          const dx = u - sx;
+          const dy = v - sy;
+          const ring = Math.abs(Math.sqrt(dx * dx + dy * dy) - (1 - shock) * 0.85);
+          const band = Math.max(0, 1 - ring * 14) * shock;
+          r += band * 90;
+          g += band * 70;
+          b += band * 80;
+        }
+        const i = (y * SKY_W + x) * 4;
+        data[i] = r < 0 ? 0 : r > 255 ? 255 : r | 0;
+        data[i + 1] = g < 0 ? 0 : g > 255 ? 255 : g | 0;
+        data[i + 2] = b < 0 ? 0 : b > 255 ? 255 : b | 0;
+        data[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+    this.skyDirty = false;
+    this.skyStamp = t;
   }
 
   /** Recalcule les coups ; replace le curseur sur une case jouable. */
@@ -416,6 +595,17 @@ export class BloomGame extends BaseGame {
   private updateAmbience(dt: number): void {
     this.centerMsgT = Math.max(0, this.centerMsgT - dt);
     this.curShakeT = Math.max(0, this.curShakeT - dt);
+    this.shockT = Math.max(0, this.shockT - dt);
+    this.camKick = Math.max(0, this.camKick - dt * 2.4);
+    const zoomGoal = this.anim?.big ? 1.018 : 1;
+    this.camZoom += (zoomGoal - this.camZoom) * Math.min(1, dt * 6);
+    if (Math.abs(this.camZoom - 1) < 0.001 && zoomGoal === 1) this.camZoom = 1;
+    this.fx.zoom = this.camZoom;
+    this.fx.userSwayX = this.camKick > 0.01 ? Math.sin(this.time * 38) * this.camKick * 5 : 0;
+    const { share1 } = this.share();
+    this.vignetteBias += (share1 - this.vignetteBias) * Math.min(1, dt * 1.6);
+    if (Math.abs(this.counts.p1 - this.counts.p2) > 1) this.skyDirty = true;
+    if (this.time - this.skyStamp > (this.softFx ? 0.12 : 0.055)) this.skyDirty = true;
     for (const [k, t] of this.pops) {
       if (t <= dt) this.pops.delete(k);
       else this.pops.set(k, t - dt);
@@ -436,8 +626,41 @@ export class BloomGame extends BaseGame {
       f.y += Math.cos(this.time * 0.5 + f.s) * 6 * dt;
       if (f.x > 1286) { f.x = -6; f.y = (f.y + 360) % 720; }
     }
+    for (const f of this.motes) {
+      f.x += Math.sin(this.time * 0.35 + f.s) * 8 * dt;
+      f.y -= (10 + f.z * 16) * dt;
+      if (f.y < -8) { f.y = 728; f.x = (f.x + 640) % 1280; }
+    }
 
-    for (const mascot of this.mascots) mascot.update(dt);
+    let rw = 0;
+    for (let i = 0; i < this.ripples.length; i++) {
+      const r = this.ripples[i];
+      r.t += dt;
+      if (r.t < r.life) this.ripples[rw++] = r;
+    }
+    this.ripples.length = rw;
+
+    let dw = 0;
+    for (let i = 0; i < this.drops.length; i++) {
+      const d = this.drops[i];
+      d.life -= dt;
+      if (d.life <= 0) continue;
+      d.vx *= Math.pow(0.92, dt * 60);
+      d.vy *= Math.pow(0.92, dt * 60);
+      d.vy += 38 * dt;
+      d.x += d.vx * dt;
+      d.y += d.vy * dt;
+      this.drops[dw++] = d;
+    }
+    this.drops.length = dw;
+
+    for (let i = 0; i < this.mascots.length; i++) {
+      const mascot = this.mascots[i];
+      const active = this.current === ((i + 1) as BloomPlayer) && this.state === 'play' && this.phase === 'play';
+      if (active) mascot.setPose(1.06, 0.94, 0.08, -2);
+      else mascot.setPose(1, 1, 0, 0);
+      mascot.update(dt);
+    }
   }
 
   // ---------- curseur humain (bords + répétition tenue, un appui = une case) ----------
@@ -547,14 +770,19 @@ export class BloomGame extends BaseGame {
     this.audio.coin(Math.min(12, 2 + flips.length));
     const c = this.cellCenter(x, y);
     this.fx.ring(c.x, c.y, { r0: 10, r1: 60 + flips.length * 4, color: this.sideColor(player), life: 0.35 });
+    this.spawnRipple(c.x, c.y, this.sideColor(player), 0.7 + flips.length * 0.05, 0.55);
+    this.spawnDrops(c.x, c.y, player, 4 + Math.min(8, flips.length));
+    this.skyDirty = true;
     if (flips.length >= 5) {
       this.audio.perfect();
       this.musicEvent('waveComplete', Math.min(1.2, 0.3 + flips.length * 0.06));
+      this.mascots[player - 1].setEmotion('wow', 0.55);
     }
     if (big) {
       // Silence : le monde se fige un bref instant avant le WHOOOM.
       this.fx.stop(0.22);
       this.fx.timeScale = 0.45;
+      this.camKick = 0.55;
     }
     this.round++;
     if (!this.aiTurn) this.input.player(player - 1)?.rumble(0.2, 0.07);
@@ -575,12 +803,14 @@ export class BloomGame extends BaseGame {
         const color = this.sideColor(anim.player);
         this.fx.ring(c.x, c.y, { r0: 6, r1: 44, color: '#ffffff', life: 0.28, width: 2 });
         this.fx.burst(c.x, c.y, {
-          n: 4,
+          n: this.softFx ? 3 : 6,
           speed: [40, 180],
           colors: anim.player === 1 ? [BLOOM_P1, BLOOM_PETAL, '#ffffff'] : [BLOOM_P2, BLOOM_FACET, '#ffffff'],
           size: [1.5, 3.5],
           life: 0.4,
         });
+        this.spawnRipple(c.x, c.y, color, 0.45, 0.4);
+        this.spawnDrops(c.x, c.y, anim.player, 3);
         this.pops.set(cell.y * BLOOM_SIZE + cell.x, 0.3);
       }
     }
@@ -591,12 +821,22 @@ export class BloomGame extends BaseGame {
       this.fx.ring(c.x, c.y, { r0: 20, r1: 760, color, life: 0.7, width: 5 });
       this.fx.ring(c.x, c.y, { r0: 12, r1: 420, color: '#ffffff', life: 0.5, width: 3 });
       this.fx.flash(color, 0.12);
-      this.fx.shake(0.55);
+      this.fx.shake(this.softFx ? 0.28 : 0.48);
       this.audio.explode(0.8);
       this.audio.milestone();
       this.fx.text(c.x, c.y - 70, `RETOURNEMENT ×${anim.cells.length}`, { color: '#ffd166', size: 26 });
       this.musicEvent('waveComplete', 1.2);
       this.input.rumble(0.5, 0.2);
+      this.shockT = 0.7;
+      this.shockX = c.x;
+      this.shockY = c.y;
+      this.shockColor = color;
+      this.camKick = 0.85;
+      this.skyDirty = true;
+      this.spawnRipple(c.x, c.y, color, 1.6, 0.9);
+      this.spawnDrops(c.x, c.y, anim.player, 14);
+      this.mascots[anim.player - 1].punch(0.6);
+      this.mascots[anim.player - 1].setEmotion('wow', 0.8);
     }
     if (anim.t >= anim.dur) {
       this.anim = null;
@@ -641,18 +881,21 @@ export class BloomGame extends BaseGame {
 
   // ---------- rendu ----------
   render(ctx: CanvasRenderingContext2D): void {
-    ctx.fillStyle = '#04050a';
-    ctx.fillRect(0, 0, 1280, 720);
+    this.renderSky(ctx);
     this.fx.world(ctx);
 
     this.renderAmbience(ctx);
     this.renderBoard(ctx);
     this.renderTokens(ctx);
     this.renderWavefronts(ctx);
+    this.renderRipples(ctx);
+    this.renderDrops(ctx);
     this.renderCursor(ctx);
     this.fx.drawWorld(ctx);
+    this.renderShockwave(ctx);
     this.fx.endWorld(ctx);
 
+    this.renderVignette(ctx);
     this.renderPanels(ctx);
     this.renderTopBar(ctx);
     if (this.centerMsgT > 0) {
@@ -669,6 +912,46 @@ export class BloomGame extends BaseGame {
     }
     if (this.showRules) this.renderRulesModal(ctx);
     this.drawCommon(ctx);
+  }
+
+  /** Nuit arcade teintée par le score : shader canvas basse-résolution, agrandi flou. */
+  private renderSky(ctx: CanvasRenderingContext2D): void {
+    this.ensureSky();
+    if (this.skyDirty) this.bakeSky();
+    ctx.fillStyle = '#04050a';
+    ctx.fillRect(0, 0, 1280, 720);
+    if (this.skyCanvas) {
+      ctx.save();
+      ctx.imageSmoothingEnabled = true;
+      ctx.globalAlpha = 0.92;
+      ctx.drawImage(this.skyCanvas, 0, 0, 1280, 720);
+      ctx.restore();
+    }
+    const { share1, share2 } = this.share();
+    const g = ctx.createRadialGradient(640 - (share2 - share1) * 180, 360, 40, 640, 380, 780);
+    g.addColorStop(0, mixRgba(BLOOM_P1, BLOOM_P2, share2, 0.10));
+    g.addColorStop(0.45, 'rgba(4,5,10,0)');
+    g.addColorStop(1, 'rgba(2,3,8,0.55)');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 1280, 720);
+  }
+
+  private renderVignette(ctx: CanvasRenderingContext2D): void {
+    const share1 = this.vignetteBias;
+    const share2 = 1 - share1;
+    ctx.save();
+    const left = ctx.createLinearGradient(0, 0, 280, 0);
+    left.addColorStop(0, rgba(BLOOM_P1, 0.10 + share1 * 0.16));
+    left.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = left;
+    ctx.fillRect(0, 0, 280, 720);
+    const right = ctx.createLinearGradient(1280, 0, 1000, 0);
+    right.addColorStop(0, rgba(BLOOM_P2, 0.10 + share2 * 0.16));
+    right.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = right;
+    ctx.fillRect(1000, 0, 280, 720);
+    UI.vignette(ctx);
+    ctx.restore();
   }
 
   /** Panneau de règles modal : le complexe devient lisible en six lignes. */
@@ -740,37 +1023,49 @@ export class BloomGame extends BaseGame {
 
   /** Le monde vivant reflète l'équilibre : pétales vs spores, halos latéraux. */
   private renderAmbience(ctx: CanvasRenderingContext2D): void {
-    const total = Math.max(1, this.counts.p1 + this.counts.p2);
-    const share1 = this.counts.p1 / total;
-    const share2 = this.counts.p2 / total;
-    // Halos latéraux respirants.
+    const { share1, share2 } = this.share();
     const breathe = 0.5 + 0.5 * Math.sin(this.time * 1.4);
     ctx.save();
-    ctx.globalAlpha = 0.05 + share1 * 0.12 * (0.6 + 0.4 * breathe);
-    ctx.fillStyle = BLOOM_P1;
-    ctx.fillRect(0, 0, 120, 720);
-    ctx.globalAlpha = 0.05 + share2 * 0.12 * (0.6 + 0.4 * (1 - breathe));
-    ctx.fillStyle = BLOOM_P2;
-    ctx.fillRect(1160, 0, 120, 720);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.07 + share1 * 0.16 * (0.55 + 0.45 * breathe);
+    const floraHalo = ctx.createRadialGradient(80, 360, 20, 80, 360, 340);
+    floraHalo.addColorStop(0, BLOOM_P1);
+    floraHalo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = floraHalo;
+    ctx.fillRect(0, 0, 420, 720);
+    ctx.globalAlpha = 0.07 + share2 * 0.16 * (0.55 + 0.45 * (1 - breathe));
+    const cristalHalo = ctx.createRadialGradient(1200, 360, 20, 1200, 360, 340);
+    cristalHalo.addColorStop(0, BLOOM_P2);
+    cristalHalo.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = cristalHalo;
+    ctx.fillRect(860, 0, 420, 720);
     ctx.restore();
-    // Pétales FLORA (dérive gauche) et spores CRISTAL (dérive droite).
+
     ctx.save();
-    const nP = Math.round(this.petals.length * (0.15 + 0.85 * share1));
+    ctx.globalCompositeOperation = 'lighter';
+    const nP = Math.round(this.petals.length * (0.18 + 0.82 * share1));
     for (let i = 0; i < nP; i++) {
       const f = this.petals[i];
-      ctx.globalAlpha = 0.10 + f.z * 0.12;
+      ctx.globalAlpha = 0.10 + f.z * 0.16;
       ctx.fillStyle = i % 3 === 0 ? BLOOM_PETAL : BLOOM_P1;
       ctx.beginPath();
-      ctx.ellipse(f.x, f.y, 3.5 * f.z + 1, 2.2 * f.z + 0.6, Math.sin(this.time + f.s) * 0.8, 0, TAU);
+      ctx.ellipse(f.x, f.y, 4.2 * f.z + 1.2, 2.4 * f.z + 0.7, Math.sin(this.time + f.s) * 0.8, 0, TAU);
       ctx.fill();
     }
-    const nS = Math.round(this.spores.length * (0.15 + 0.85 * share2));
+    const nS = Math.round(this.spores.length * (0.18 + 0.82 * share2));
     for (let i = 0; i < nS; i++) {
       const f = this.spores[i];
-      ctx.globalAlpha = 0.10 + f.z * 0.12;
-      ctx.fillStyle = BLOOM_FACET;
+      ctx.globalAlpha = 0.12 + f.z * 0.16;
+      ctx.fillStyle = i % 2 === 0 ? BLOOM_FACET : BLOOM_P2;
       ctx.beginPath();
-      ctx.arc(f.x, f.y, 1.6 * f.z + 0.5, 0, TAU);
+      ctx.arc(f.x, f.y, 1.8 * f.z + 0.6, 0, TAU);
+      ctx.fill();
+    }
+    for (const f of this.motes) {
+      ctx.globalAlpha = 0.06 + f.z * 0.08;
+      ctx.fillStyle = '#eaf6ff';
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, 1.1 + f.z, 0, TAU);
       ctx.fill();
     }
     ctx.restore();
@@ -778,25 +1073,66 @@ export class BloomGame extends BaseGame {
   }
 
   private renderBoard(ctx: CanvasRenderingContext2D): void {
+    const { share1, share2 } = this.share();
+    const pulse = 0.5 + 0.5 * Math.sin(this.time * 1.6);
     ctx.save();
-    UI.panel(ctx, BX0 - 14, BY0 - 14, BOARD_PX + 28, BOARD_PX + 28, {
-      radius: 18, fill: 'rgba(9,12,19,0.92)', stroke: this.meta.accent + '44', lineWidth: 2,
+    ctx.shadowColor = mixCss(BLOOM_P1, BLOOM_P2, share2);
+    ctx.shadowBlur = 22 + pulse * 10;
+    UI.panel(ctx, BX0 - 18, BY0 - 18, BOARD_PX + 36, BOARD_PX + 36, {
+      radius: 28, fill: 'rgba(7,10,16,0.78)', stroke: 'rgba(234,246,255,0.08)', lineWidth: 1.5,
     });
-    ctx.strokeStyle = 'rgba(255,255,255,0.07)';
+    ctx.shadowBlur = 0;
+
+    // Marge de gelée : deux lobes d'écosystème encadrent le plateau, pas un cadre dur.
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.18 + share1 * 0.12;
+    ctx.fillStyle = BLOOM_P1;
+    organicBlobPath(ctx, BX0 - 8, BY0 + BOARD_PX * 0.28, 36 + pulse * 6, this.time, 0.2, 1.2);
+    ctx.fill();
+    organicBlobPath(ctx, BX0 - 4, BY0 + BOARD_PX * 0.72, 28, this.time, 1.1, 1);
+    ctx.fill();
+    ctx.globalAlpha = 0.18 + share2 * 0.12;
+    ctx.fillStyle = BLOOM_P2;
+    organicBlobPath(ctx, BX0 + BOARD_PX + 8, BY0 + BOARD_PX * 0.32, 34 + pulse * 5, this.time, 2.4, 1.1);
+    ctx.fill();
+    organicBlobPath(ctx, BX0 + BOARD_PX + 2, BY0 + BOARD_PX * 0.78, 26, this.time, 3.1, 0.9);
+    ctx.fill();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.globalAlpha = 1;
+
+    UI.roundRect(ctx, BX0 - 2, BY0 - 2, BOARD_PX + 4, BOARD_PX + 4, 16);
+    ctx.fillStyle = 'rgba(5,7,12,0.55)';
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,255,255,0.055)';
     ctx.lineWidth = 1;
     ctx.beginPath();
     for (let i = 1; i < BLOOM_SIZE; i++) {
-      ctx.moveTo(BX0 + i * CELL, BY0 + 4);
-      ctx.lineTo(BX0 + i * CELL, BY0 + BOARD_PX - 4);
-      ctx.moveTo(BX0 + 4, BY0 + i * CELL);
-      ctx.lineTo(BX0 + BOARD_PX - 4, BY0 + i * CELL);
+      ctx.moveTo(BX0 + i * CELL, BY0 + 6);
+      ctx.lineTo(BX0 + i * CELL, BY0 + BOARD_PX - 6);
+      ctx.moveTo(BX0 + 6, BY0 + i * CELL);
+      ctx.lineTo(BX0 + BOARD_PX - 6, BY0 + i * CELL);
     }
     ctx.stroke();
-    // Points étoiles façon Othello.
-    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+
+    // Cases : alvéoles molles, légèrement teintées par le voisinage.
+    for (let y = 0; y < BLOOM_SIZE; y++) {
+      for (let x = 0; x < BLOOM_SIZE; x++) {
+        const cx = BX0 + x * CELL + 5;
+        const cy = BY0 + y * CELL + 5;
+        const owner = this.grid[y][x];
+        UI.roundRect(ctx, cx, cy, CELL - 10, CELL - 10, 14);
+        if (owner === 1) ctx.fillStyle = 'rgba(74,222,128,0.07)';
+        else if (owner === 2) ctx.fillStyle = 'rgba(56,189,248,0.07)';
+        else ctx.fillStyle = ((x + y) & 1) ? 'rgba(255,255,255,0.028)' : 'rgba(255,255,255,0.016)';
+        ctx.fill();
+      }
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
     for (const [sx, sy] of [[2, 2], [2, 5], [5, 2], [5, 5]] as const) {
       ctx.beginPath();
-      ctx.arc(BX0 + (sx + 0.5) * CELL, BY0 + (sy + 0.5) * CELL, 3, 0, TAU);
+      ctx.arc(BX0 + (sx + 0.5) * CELL, BY0 + (sy + 0.5) * CELL, 3.2, 0, TAU);
       ctx.fill();
     }
     ctx.restore();
@@ -862,101 +1198,97 @@ export class BloomGame extends BaseGame {
     ctx.translate(x, y);
     ctx.scale(scale, scale);
     const r = 23;
+    const breath = 1 + 0.035 * Math.sin(t * 1.7 + phase);
 
     const bodyA = owner === 1 ? BLOOM_P1 : BLOOM_P2;
     const bodyB = owner === 1 ? BLOOM_P1_DEEP : BLOOM_P2_DEEP;
     const drawBody = (colA: string, colB: string): void => {
       ctx.shadowColor = colA;
-      ctx.shadowBlur = 12;
-      const g = ctx.createRadialGradient(-r * 0.3, -r * 0.35, r * 0.1, 0, 0, r);
+      ctx.shadowBlur = 14;
+      const g = ctx.createRadialGradient(-r * 0.32, -r * 0.38, r * 0.08, 0, r * 0.12, r);
       g.addColorStop(0, '#ffffff');
-      g.addColorStop(0.3, colA);
+      g.addColorStop(0.28, colA);
       g.addColorStop(1, colB);
       ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, TAU);
+      organicBlobPath(ctx, 0, 0, r * breath, t, phase, owner === 1 ? 1.15 : 0.7);
       ctx.fill();
       ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.38)';
+      ctx.beginPath();
+      ctx.ellipse(-r * 0.28, -r * 0.38, r * 0.28, r * 0.16, -0.5, 0, TAU);
+      ctx.fill();
     };
 
     if (morphFrom !== undefined && morphFrom !== owner) {
-      // Pendant la bascule on fond les deux matières (contamination visible).
       drawBody(mixCss(morphFrom === 1 ? BLOOM_P1 : BLOOM_P2, bodyA, alpha), bodyB);
     } else {
       drawBody(bodyA, bodyB);
     }
 
     if (owner === 1) {
-      // FLORA : corolle de pétales + filaments.
       const rot = t * 0.5 + phase;
       for (let i = 0; i < 5; i++) {
         const a = rot + (i / 5) * TAU;
-        const px = Math.cos(a) * r * 0.62;
-        const py = Math.sin(a) * r * 0.62;
+        const px = Math.cos(a) * r * 0.58;
+        const py = Math.sin(a) * r * 0.58;
         ctx.save();
         ctx.translate(px, py);
         ctx.rotate(a + Math.sin(t * 2 + phase + i) * 0.25);
         ctx.globalAlpha = alpha * 0.9;
         ctx.fillStyle = i % 2 === 0 ? BLOOM_PETAL : '#ffffff';
         ctx.beginPath();
-        ctx.ellipse(0, 0, 7.5, 4.5, 0, 0, TAU);
+        ctx.ellipse(0, 0, 7.8, 4.6, 0, 0, TAU);
         ctx.fill();
         ctx.restore();
       }
       ctx.globalAlpha = alpha * 0.75;
       ctx.strokeStyle = '#d9f99d';
       ctx.lineWidth = 1.6;
+      ctx.lineCap = 'round';
       for (const s of [-1, 1]) {
         ctx.beginPath();
         ctx.arc(s * r * 0.3, r * 0.25, r * 0.45, Math.PI * (0.15 + 0.06 * Math.sin(t * 1.7 + phase)), Math.PI * 0.85);
         ctx.stroke();
       }
-      // Cœur-organisme.
       ctx.globalAlpha = alpha;
       ctx.fillStyle = '#f0fdf4';
       ctx.beginPath();
       ctx.arc(Math.sin(t * 1.3 + phase) * 2, Math.cos(t * 1.1 + phase) * 2, 4.5, 0, TAU);
       ctx.fill();
     } else {
-      // CRISTAL : diamant facetté + spores orbitales.
+      // CRISTAL : goutte facettée (losange adouci), pas un diamant tranchant.
       const pulse = 1 + 0.04 * Math.sin(t * 2.2 + phase);
       ctx.save();
       ctx.scale(pulse, pulse);
-      ctx.globalAlpha = alpha * 0.95;
-      ctx.fillStyle = BLOOM_P2;
-      ctx.strokeStyle = BLOOM_FACET;
-      ctx.lineWidth = 2;
-      ctx.shadowColor = BLOOM_P2;
-      ctx.shadowBlur = 10;
+      ctx.globalAlpha = alpha * 0.92;
+      ctx.fillStyle = BLOOM_FACET;
+      ctx.strokeStyle = rgba('#ffffff', 0.55);
+      ctx.lineWidth = 1.6;
       ctx.beginPath();
-      ctx.moveTo(0, -r * 0.95);
-      ctx.lineTo(r * 0.7, 0);
-      ctx.lineTo(0, r * 0.95);
-      ctx.lineTo(-r * 0.7, 0);
-      ctx.closePath();
+      ctx.moveTo(0, -r * 0.82);
+      ctx.quadraticCurveTo(r * 0.62, 0, 0, r * 0.82);
+      ctx.quadraticCurveTo(-r * 0.62, 0, 0, -r * 0.82);
       ctx.fill();
-      ctx.shadowBlur = 0;
       ctx.stroke();
-      ctx.globalAlpha = alpha * 0.8;
-      ctx.lineWidth = 1.2;
+      ctx.globalAlpha = alpha * 0.45;
       ctx.beginPath();
-      ctx.moveTo(0, -r * 0.95);
-      ctx.lineTo(0, r * 0.95);
-      ctx.moveTo(-r * 0.7, 0);
-      ctx.lineTo(r * 0.7, 0);
+      ctx.moveTo(0, -r * 0.62);
+      ctx.lineTo(0, r * 0.62);
+      ctx.moveTo(-r * 0.32, 0);
+      ctx.lineTo(r * 0.32, 0);
       ctx.stroke();
       ctx.fillStyle = '#ffffff';
+      ctx.globalAlpha = alpha * 0.9;
       ctx.beginPath();
-      ctx.arc(-r * 0.18, -r * 0.3, 3, 0, TAU);
+      ctx.arc(-r * 0.16, -r * 0.28, 3.2, 0, TAU);
       ctx.fill();
       ctx.restore();
-      // Spores orbitales.
       for (let i = 0; i < 3; i++) {
         const a = -t * (0.8 + i * 0.2) + phase + (i / 3) * TAU;
         ctx.globalAlpha = alpha * 0.85;
         ctx.fillStyle = BLOOM_FACET;
         ctx.beginPath();
-        ctx.arc(Math.cos(a) * r * 1.15, Math.sin(a) * r * 1.15, 2.4, 0, TAU);
+        ctx.arc(Math.cos(a) * r * 1.12, Math.sin(a) * r * 1.12, 2.5, 0, TAU);
         ctx.fill();
       }
       ctx.globalAlpha = alpha;
@@ -971,23 +1303,93 @@ export class BloomGame extends BaseGame {
     const speed = CELL / WAVE_DELAY_PER;
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
+    ctx.lineCap = 'round';
     for (const ray of anim.rays) {
       const traveled = (anim.t - WAVE_DELAY0) * speed;
       const maxLen = ray.cells.length * CELL;
-      if (traveled < 0 || traveled > maxLen + 30) continue;
+      if (traveled < -20) continue;
       const o = this.cellCenter(anim.moveX, anim.moveY);
+      const color = this.sideColor(anim.player);
+      const shown = Math.min(maxLen, Math.max(0, traveled));
+      if (shown > 4) {
+        ctx.strokeStyle = rgba(color, 0.35);
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(o.x, o.y);
+        ctx.lineTo(o.x + ray.dx * shown, o.y + ray.dy * shown);
+        ctx.stroke();
+        ctx.strokeStyle = rgba('#ffffff', 0.35);
+        ctx.lineWidth = 2.2;
+        ctx.stroke();
+      }
+      if (traveled < 0 || traveled > maxLen + 30) continue;
       const fx = o.x + ray.dx * traveled;
       const fy = o.y + ray.dy * traveled;
-      const color = this.sideColor(anim.player);
-      const g = ctx.createRadialGradient(fx, fy, 1, fx, fy, 22);
+      const g = ctx.createRadialGradient(fx, fy, 1, fx, fy, 26);
       g.addColorStop(0, '#ffffff');
-      g.addColorStop(0.4, color);
+      g.addColorStop(0.35, color);
       g.addColorStop(1, 'rgba(0,0,0,0)');
       ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(fx, fy, 22, 0, TAU);
+      organicBlobPath(ctx, fx, fy, 18, this.time * 4, ray.dx + ray.dy, 1.4);
       ctx.fill();
     }
+    ctx.restore();
+  }
+
+  private renderRipples(ctx: CanvasRenderingContext2D): void {
+    if (this.ripples.length === 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const ripple of this.ripples) {
+      const k = clamp(ripple.t / ripple.life, 0, 1);
+      const r = 12 + k * 90 * ripple.amp;
+      ctx.globalAlpha = (1 - k) * 0.55 * ripple.amp;
+      ctx.strokeStyle = ripple.color;
+      ctx.lineWidth = 3.5 * (1 - k) + 1;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, r, 0, TAU);
+      ctx.stroke();
+      ctx.globalAlpha = (1 - k) * 0.22;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.arc(ripple.x, ripple.y, r * 0.62, 0, TAU);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  private renderDrops(ctx: CanvasRenderingContext2D): void {
+    if (this.drops.length === 0) return;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    for (const d of this.drops) {
+      const k = clamp(d.life / d.max, 0, 1);
+      ctx.globalAlpha = k * 0.85;
+      ctx.fillStyle = d.color;
+      ctx.beginPath();
+      ctx.ellipse(d.x, d.y, d.r * (0.7 + k * 0.5), d.r * 0.7, 0, 0, TAU);
+      ctx.fill();
+    }
+    ctx.restore();
+    ctx.globalAlpha = 1;
+  }
+
+  private renderShockwave(ctx: CanvasRenderingContext2D): void {
+    if (this.shockT <= 0.01) return;
+    const k = clamp(this.shockT / 0.7, 0, 1);
+    const r = (1 - k) * 620 + 40;
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = k * 0.35;
+    const g = ctx.createRadialGradient(this.shockX, this.shockY, r * 0.55, this.shockX, this.shockY, r);
+    g.addColorStop(0, 'rgba(0,0,0,0)');
+    g.addColorStop(0.7, this.shockColor);
+    g.addColorStop(1, 'rgba(0,0,0,0)');
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.arc(this.shockX, this.shockY, r, 0, TAU);
+    ctx.fill();
     ctx.restore();
   }
 
@@ -1003,39 +1405,29 @@ export class BloomGame extends BaseGame {
     ctx.save();
     ctx.translate(shake, 0);
     ctx.strokeStyle = color;
-    ctx.globalAlpha = 0.65 + pulse * 0.35;
+    ctx.globalAlpha = 0.7 + pulse * 0.3;
     ctx.lineWidth = 3;
     ctx.shadowColor = color;
-    ctx.shadowBlur = 12;
-    const L = 16;
-    const corners: Array<readonly [number, number, number, number]> = [
-      [px + 4, py + 4, 1, 1], [px + CELL - 4, py + 4, -1, 1],
-      [px + 4, py + CELL - 4, 1, -1], [px + CELL - 4, py + CELL - 4, -1, -1],
-    ];
-    for (const [cx, cy, sx, sy] of corners) {
-      ctx.beginPath();
-      ctx.moveTo(cx + L * sx, cy);
-      ctx.lineTo(cx, cy);
-      ctx.lineTo(cx, cy + L * sy);
-      ctx.stroke();
-    }
+    ctx.shadowBlur = 14;
+    UI.roundRect(ctx, px + 5, py + 5, CELL - 10, CELL - 10, 16);
+    ctx.stroke();
     ctx.restore();
-    // Coups jouables : spores d'invitation.
+    // Coups jouables : gouttes d'invitation, plus épaisses sous le curseur.
     ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
     for (const move of this.legal) {
       const c = this.cellCenter(move.x, move.y);
       const isCur = move.x === this.cell.x && move.y === this.cell.y;
-      ctx.globalAlpha = isCur ? 0.85 : 0.35 + 0.2 * Math.sin(this.time * 4 + move.x + move.y);
+      ctx.globalAlpha = isCur ? 0.9 : 0.32 + 0.18 * Math.sin(this.time * 4 + move.x + move.y);
       ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(c.x, c.y, isCur ? 8 : 6, 0, TAU);
+      organicBlobPath(ctx, c.x, c.y, isCur ? 8.5 : 5.5, this.time * 2, move.x + move.y, 0.8);
       ctx.fill();
       if (isCur) {
-        ctx.globalAlpha = 0.5;
+        ctx.globalAlpha = 0.45;
         ctx.strokeStyle = color;
         ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.arc(c.x, c.y, 13 + pulse * 4, 0, TAU);
+        ctx.arc(c.x, c.y, 14 + pulse * 4, 0, TAU);
         ctx.stroke();
       }
     }
@@ -1054,8 +1446,8 @@ export class BloomGame extends BaseGame {
     const count = player === 1 ? Math.round(this.shown.p1) : Math.round(this.shown.p2);
     ctx.save();
     UI.panel(ctx, x, 150, 300, 420, {
-      radius: 18,
-      fill: active ? 'rgba(14,20,32,0.95)' : 'rgba(9,12,19,0.88)',
+      radius: 22,
+      fill: active ? 'rgba(14,20,32,0.92)' : 'rgba(9,12,19,0.82)',
       stroke: active ? color + 'aa' : color + '33',
       lineWidth: active ? 2.5 : 1.5,
     });
@@ -1078,8 +1470,7 @@ export class BloomGame extends BaseGame {
       const pulse = 0.5 + 0.5 * Math.sin(this.time * 5);
       ctx.globalAlpha = 0.5 + pulse * 0.5;
       ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x + 150, 536, 6, 0, TAU);
+      organicBlobPath(ctx, x + 150, 536, 7 + pulse * 2, this.time * 3, player, 1);
       ctx.fill();
       ctx.globalAlpha = 1;
     }
@@ -1096,15 +1487,23 @@ export class BloomGame extends BaseGame {
     const total = Math.max(1, this.shown.p1 + this.shown.p2);
     const w1 = bw * (this.shown.p1 / total);
     ctx.save();
-    UI.roundRect(ctx, bx, by, bw, 12, 6);
+    UI.roundRect(ctx, bx, by, bw, 14, 7);
     ctx.fillStyle = 'rgba(255,255,255,0.08)';
     ctx.fill();
-    UI.roundRect(ctx, bx, by, bw, 12, 6);
+    UI.roundRect(ctx, bx, by, bw, 14, 7);
     ctx.clip();
     ctx.fillStyle = BLOOM_P1;
-    ctx.fillRect(bx, by, w1, 12);
+    ctx.fillRect(bx, by, w1, 14);
     ctx.fillStyle = BLOOM_P2;
-    ctx.fillRect(bx + w1, by, bw - w1, 12);
+    ctx.fillRect(bx + w1, by, bw - w1, 14);
+    ctx.restore();
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalAlpha = 0.45;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(bx + w1, by + 7, 5, 0, TAU);
+    ctx.fill();
     ctx.restore();
     UI.txt(ctx, `${Math.round(this.shown.p1)}`, bx - 12, by + 11, { size: 14, align: 'right', mono: true, color: BLOOM_P1 });
     UI.txt(ctx, `${Math.round(this.shown.p2)}`, bx + bw + 12, by + 11, { size: 14, align: 'left', mono: true, color: BLOOM_P2 });
