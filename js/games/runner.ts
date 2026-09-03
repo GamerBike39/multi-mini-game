@@ -1,26 +1,31 @@
 // BLOB RUN — auto-runner : saut variable (maintien), coyote time, buffer de saut,
 // plateformes flottantes, duck pour passer sous les barres, scies.
+// Le saut variable vit dans js/core/jump.ts (RUNNER_JUMP) pour être réutilisé
+// par les futurs jeux de plateforme ; ce fichier ne garde que la pose.
 
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
 import { SeededRng } from '../core/rng';
 import { ObjectPool } from '../core/pool';
+import {
+  RUNNER_JUMP,
+  advanceJumpAir,
+  applyJumpCut,
+  armCoyote,
+  createJumpState,
+  decayJumpTimers,
+  jumpGravity,
+  landJump,
+  launchJump,
+  pressJumpButton,
+  releaseJump,
+  tryLaunch,
+} from '../core/jump';
 
 const GY = 600;           // sol
 const PX = 320;           // x écran du joueur
-const JUMP_SPEED = 1080;
-const JUMP_HOLD_GRAVITY = 1700;
-const JUMP_RISE_GRAVITY = 3150;
-const JUMP_FALL_GRAVITY = 3600;
-const JUMP_FAST_FALL_GRAVITY = 4200;
-const JUMP_CUT_SPEED = 430;
-const JUMP_MIN_TIME = 0.07;
-const JUMP_HOLD_TIME = 0.18;
 const JUMP_POSE_RELAX_TIME = 0.27;
-const COYOTE_TIME = 0.11;
-const JUMP_BUFFER_TIME = 0.13;
-const MAX_JUMPS = 2;
 const RUNNER_BPM = 138;
 
 type RunnerObstacleType = 'spike' | 'block' | 'platform' | 'bar' | 'ceiling' | 'saw' | 'gap';
@@ -68,17 +73,13 @@ export class RunnerGame extends BaseGame {
     this.blob.speedMorph = 0.48;
     this.vy = 0;
     this.onGround = true;
-    this.coyote = 0;
-    this.buffer = 0;
+    this.jump = createJumpState();
     this.duck = 0;           // 0..1
     this.speed = 380;
     this.dist = 0;
     this.obs = this.obstaclePool.active;
     this.spawnGap = 500;
     this.milestone = 250;
-    this.jumpT = 0;
-    this.jumpReleased = false;
-    this.jumpCount = 0;
     this.patternHistory = [] as string[];
     this.bonusScore = 0;
     this.combo = 0;
@@ -151,35 +152,27 @@ export class RunnerGame extends BaseGame {
     // onGround off, and makes the duck animation oscillate.
     if (wasGround && this.vy === 0) b.y += previousRadius - b.r;
 
-    // Saut : le tap coupe la montée, le maintien prolonge la fenêtre de faible
-    // gravité. C'est plus lisible qu'un simple multiplicateur de gravité :
-    // chaque durée d'appui produit une hauteur clairement différente.
-    if (I.pressed('a')) this.buffer = JUMP_BUFFER_TIME;
-    this.buffer = Math.max(0, this.buffer - dt);
-    this.coyote = Math.max(0, this.coyote - dt);
+    // Saut variable (js/core/jump.ts) : le tap coupe la montée, le maintien
+    // prolonge la fenêtre de faible gravité. Chaque durée d'appui produit
+    // une hauteur clairement différente.
+    if (I.pressed('a')) pressJumpButton(this.jump, RUNNER_JUMP);
+    decayJumpTimers(this.jump, dt);
     let launched = false;
-    if (this.buffer > 0 && (this.onGround || this.coyote > 0)) {
-      this.startJump(false);
-      launched = true;
-    } else if (this.buffer > 0 && !this.onGround && this.jumpCount < MAX_JUMPS) {
-      this.startJump(true);
+    const kind = tryLaunch(this.jump, RUNNER_JUMP, this.onGround);
+    if (kind) {
+      this.startJump(kind === 'air');
       launched = true;
     }
 
     if (!this.onGround) {
-      this.jumpT += dt;
-      if (I.released('a') || !I.down('a')) this.jumpReleased = true;
+      advanceJumpAir(this.jump, dt);
+      releaseJump(this.jump, I.down('a'));
     }
 
     // Gravité en trois temps : montée retenue, montée relâchée, chute lourde.
     // Le temps minimum évite qu'un appui très bref ne devienne un faux saut.
-    if (this.jumpReleased && this.jumpT >= JUMP_MIN_TIME && this.jumpT < JUMP_HOLD_TIME && this.vy < -JUMP_CUT_SPEED) {
-      this.vy = -JUMP_CUT_SPEED;
-    }
-    let g = this.vy < 0
-      ? (I.down('a') && !this.jumpReleased && this.jumpT < JUMP_HOLD_TIME ? JUMP_HOLD_GRAVITY : JUMP_RISE_GRAVITY)
-      : JUMP_FALL_GRAVITY;
-    if (I.down('b') && !this.onGround) g += JUMP_FAST_FALL_GRAVITY;
+    this.vy = applyJumpCut(this.jump, RUNNER_JUMP, this.vy);
+    let g = jumpGravity(this.jump, RUNNER_JUMP, this.vy, I.down('a'), I.down('b') && !this.onGround);
 
     const prevFeet = b.y + b.r;
     this.vy += g * dt;
@@ -214,12 +207,9 @@ export class RunnerGame extends BaseGame {
         this.fx.burst(PX, supportY, { n: 8, speed: [50, 220], colors: ['#8fa3ad', '#d7e3ea'], size: [2, 4], life: 0.4, ang: -Math.PI / 2, spread: 2.6 });
       }
       this.vy = 0;
-      this.jumpT = 0;
-      this.jumpReleased = false;
-      this.coyote = 0;
-      this.jumpCount = 0;
+      landJump(this.jump);
     } else if (wasGround && !launched) {
-      this.coyote = COYOTE_TIME;
+      armCoyote(this.jump, RUNNER_JUMP);
     }
 
     // Un fossé se termine par une chute, pas par une collision artificielle.
@@ -277,17 +267,13 @@ export class RunnerGame extends BaseGame {
     const previousRadius = b.r;
     const wasGround = this.onGround;
 
-    this.buffer = 0;
-    this.coyote = 0;
+    launchJump(this.jump, doubleJump, RUNNER_JUMP.maxJumps);
     this.onGround = false;
-    this.jumpT = 0;
-    this.jumpReleased = false;
     this.duck = 0;
     b.r = this.r();
     if (wasGround) b.y += previousRadius - b.r;
 
-    this.vy = -JUMP_SPEED;
-    this.jumpCount = doubleJump ? MAX_JUMPS : 1;
+    this.vy = -RUNNER_JUMP.jumpSpeed;
     this.audio.jump();
     this.input.rumble(doubleJump ? 0.24 : 0.18, 0.05);
     this.fx.burst(PX, b.y + b.r, {
@@ -311,7 +297,7 @@ export class RunnerGame extends BaseGame {
   updateBlobPose(dt = 0): void {
     const duck = Math.min(1, this.duck * 1.12);
     const duckEase = duck * duck * (3 - 2 * duck);
-    const jumpT = this.onGround ? JUMP_POSE_RELAX_TIME : Math.min(JUMP_POSE_RELAX_TIME, this.jumpT);
+    const jumpT = this.onGround ? JUMP_POSE_RELAX_TIME : Math.min(JUMP_POSE_RELAX_TIME, this.jump.jumpT);
     const jumpProgress = Math.max(0, Math.min(1, jumpT / JUMP_POSE_RELAX_TIME));
     const jumpCompression = 1 - jumpProgress * jumpProgress * (3 - 2 * jumpProgress);
 

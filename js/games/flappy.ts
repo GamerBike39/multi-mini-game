@@ -1,5 +1,7 @@
 // FLAPPY BLOB — un bouton, de la gelée, des arches.
 // Bat des ailes (A / Espace / Clic), traverse les arches, un contact = game over.
+// Nuancier du runner (js/core/jump.ts) : tap = petit battement (~95 px),
+// maintien = grand battement (~170 px). Le clic, sans état tenu, tape toujours.
 // Difficulté : vitesse +6 px/s et ouverture −2 px par arche, planchers aux deux.
 // Textures procédurales (arches rivetées, sol, collines, étoiles) + game feel
 // arcade : punch, dust, rings, hitstop, passes parfaites en combo, slow-mo.
@@ -7,6 +9,16 @@
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
+import {
+  advanceJumpAir,
+  applyJumpCut,
+  createJumpState,
+  jumpGravity,
+  releaseJump,
+  resetJumpAir,
+  type JumpState,
+  type JumpTuning,
+} from '../core/jump';
 
 const TAU = Math.PI * 2;
 
@@ -25,6 +37,21 @@ export const FLAPPY_GAP_STEP = 2;
 export const FLAPPY_SPEED_0 = 265;
 export const FLAPPY_SPEED_STEP = 6;
 export const FLAPPY_SPEED_MAX = 440;
+
+// Nuancier du battement : tap ≈ 95 px, maintien ≈ 170 px.
+export const FLAPPY_FLAP: JumpTuning = {
+  jumpSpeed: -FLAPPY_FLAP_VY,
+  holdGravity: 1500,
+  riseGravity: FLAPPY_GRAVITY,
+  fallGravity: FLAPPY_GRAVITY,
+  fastFallExtra: 0,
+  cutSpeed: 560,
+  minTime: 0.05,
+  holdTime: 0.2,
+  coyoteTime: 0,
+  bufferTime: 0,
+  maxJumps: 1,
+};
 
 export interface FlappyPipe {
   x: number;
@@ -59,14 +86,15 @@ export class FlappyGame extends BaseGame {
   [key: string]: any;
   static meta: GameMeta = {
     id: 'flap', name: 'FLAPPY BLOB', accent: '#fb923c', mood: 'runner',
-    desc: 'Bat des ailes. Frôle. Survis.', controls: 'A / Espace / Clic = battre des ailes',
+    desc: 'Bat des ailes. Frôle. Survis.', controls: 'A / Espace / Clic = battre · maintenir = plus haut',
     keys: 'Espace / J / Clic',
-    hint: 'A / Espace / Clic pour voler · le centre des arches = PARFAIT',
+    hint: 'A / Espace / Clic pour voler, maintenir pour monter plus haut · le centre des arches = PARFAIT',
     unit: 'pts', ranks: [40, 25, 15, 8, 0],
   };
 
   vy = 0;
   started = false;
+  jump: JumpState = createJumpState();
   pipes: FlappyPipe[] = [];
   pipesPassed = 0;
   combo = 0;
@@ -132,6 +160,7 @@ export class FlappyGame extends BaseGame {
     if (this.state !== 'play' || this.paused) return;
     if (!this.started) this.started = true;
     this.vy = FLAPPY_FLAP_VY;
+    resetJumpAir(this.jump);
     this.flapT = 0;
     this.blob.punch(0.35);
     this.blob.setPose(0.82, 1.26, 0.1, 0);
@@ -189,9 +218,14 @@ export class FlappyGame extends BaseGame {
     }
 
     const speed = flappySpeedFor(this.pipesPassed);
+    const held = I.down('a') || I.down('up');
 
-    // Physique : gravité, plafond qui pardonne, sol qui ne pardonne pas.
-    this.vy = Math.min(FLAPPY_MAX_FALL, this.vy + FLAPPY_GRAVITY * dt);
+    // Physique : gravité nuancée au maintien, plafond qui pardonne,
+    // sol qui ne pardonne pas.
+    advanceJumpAir(this.jump, dt);
+    releaseJump(this.jump, held);
+    this.vy = applyJumpCut(this.jump, FLAPPY_FLAP, this.vy);
+    this.vy = Math.min(FLAPPY_MAX_FALL, this.vy + jumpGravity(this.jump, FLAPPY_FLAP, this.vy, held, false) * dt);
     b.y += this.vy * dt;
     if (b.y < FLAPPY_CEIL_Y + b.r) {
       b.y = FLAPPY_CEIL_Y + b.r;

@@ -27,6 +27,7 @@ import {
   frogOverlaps,
 } from '../js/games/frog';
 import {
+  FLAPPY_FLAP,
   FLAPPY_FLAP_VY,
   FLAPPY_GAP_0,
   FLAPPY_GAP_MIN,
@@ -40,6 +41,22 @@ import {
   flappyHitsPipe,
   flappySpeedFor,
 } from '../js/games/flappy';
+import {
+  RUNNER_JUMP,
+  advanceJumpAir,
+  applyJumpCut,
+  armCoyote,
+  createJumpState,
+  decayJumpTimers,
+  jumpGravity,
+  landJump,
+  launchJump,
+  pressJumpButton,
+  releaseJump,
+  resetJumpAir,
+  riseGravity,
+  tryLaunch,
+} from '../js/core/jump';
 import {
   ColumnBoard,
   ReleaseLatch,
@@ -1077,6 +1094,126 @@ function testFlappyInput(): void {
   equal(game.vy, FLAPPY_FLAP_VY, 'Flappy : un second battement écrase, il n’additionne pas');
 }
 
+function testJump(): void {
+  // Tuning historique du runner, verrouillé contre les régressions.
+  equal(RUNNER_JUMP.jumpSpeed, 1080, 'Saut : impulsion du runner');
+  equal(RUNNER_JUMP.holdGravity, 1700, 'Saut : gravité tenue du runner');
+  equal(RUNNER_JUMP.riseGravity, 3150, 'Saut : gravité relâchée du runner');
+  equal(RUNNER_JUMP.fallGravity, 3600, 'Saut : gravité de chute du runner');
+  equal(RUNNER_JUMP.fastFallExtra, 4200, 'Saut : bonus de descente du runner');
+  equal(RUNNER_JUMP.cutSpeed, 430, 'Saut : vitesse de coupe du runner');
+  close(RUNNER_JUMP.minTime, 0.07, 'Saut : temps minimum du runner');
+  close(RUNNER_JUMP.holdTime, 0.18, 'Saut : fenêtre de maintien du runner');
+  close(RUNNER_JUMP.coyoteTime, 0.11, 'Saut : coyote time du runner');
+  close(RUNNER_JUMP.bufferTime, 0.13, 'Saut : buffer du runner');
+  equal(RUNNER_JUMP.maxJumps, 2, 'Saut : double saut du runner');
+
+  // Décollage : rien sans appui, sol prioritaire, coyote = sol.
+  const idle = createJumpState();
+  equal(tryLaunch(idle, RUNNER_JUMP, true), null, 'Saut : rien sans appui');
+  pressJumpButton(idle, RUNNER_JUMP);
+  equal(tryLaunch(idle, RUNNER_JUMP, true), 'ground', 'Saut : appui + sol = décollage');
+  equal(idle.jumps, 1, 'Saut : le décollage au sol consomme un saut');
+  equal(idle.buffer, 0, 'Saut : l’appui est consommé au décollage');
+
+  const spent = createJumpState();
+  spent.jumps = 2;
+  pressJumpButton(spent, RUNNER_JUMP);
+  equal(tryLaunch(spent, RUNNER_JUMP, false), null, 'Saut : compteur épuisé = refusé');
+  assert(spent.buffer > 0, 'Saut : l’appui refusé reste mémorisé');
+  decayJumpTimers(spent, 1);
+  equal(spent.buffer, 0, 'Saut : le buffer expire');
+
+  const coy = createJumpState();
+  armCoyote(coy, RUNNER_JUMP);
+  pressJumpButton(coy, RUNNER_JUMP);
+  equal(tryLaunch(coy, RUNNER_JUMP, false), 'ground', 'Saut : coyote = décollage au sol');
+  equal(coy.jumps, 1, 'Saut : le coyote ne mange pas le double saut');
+
+  // Double saut : sol, air, puis refusé.
+  const dbl = createJumpState();
+  pressJumpButton(dbl, RUNNER_JUMP);
+  equal(tryLaunch(dbl, RUNNER_JUMP, true), 'ground', 'Saut : premier appui au sol');
+  pressJumpButton(dbl, RUNNER_JUMP);
+  equal(tryLaunch(dbl, RUNNER_JUMP, false), 'air', 'Saut : second appui en l’air');
+  equal(dbl.jumps, 2, 'Saut : le double saut consomme le compteur');
+  pressJumpButton(dbl, RUNNER_JUMP);
+  equal(tryLaunch(dbl, RUNNER_JUMP, false), null, 'Saut : troisième appui refusé');
+
+  // launchJump direct : le sol repart d’un compteur plein.
+  const lj = createJumpState();
+  lj.buffer = 0.05;
+  lj.coyote = 0.05;
+  launchJump(lj, false, 2);
+  equal(lj.jumps, 1, 'Saut : launchJump au sol');
+  equal(lj.buffer, 0, 'Saut : launchJump vide le buffer');
+  launchJump(lj, true, 2);
+  equal(lj.jumps, 2, 'Saut : launchJump en l’air');
+
+  // Vol : minuteur, relâche, réarmement.
+  const v = createJumpState();
+  advanceJumpAir(v, 0.1);
+  close(v.jumpT, 0.1, 'Saut : le temps de vol avance');
+  releaseJump(v, true);
+  assert(!v.released, 'Saut : tenu = pas relâché');
+  releaseJump(v, false);
+  assert(v.released, 'Saut : lâché = relâché');
+  resetJumpAir(v);
+  equal(v.jumpT, 0, 'Saut : resetJumpAir remet le minuteur');
+  assert(!v.released, 'Saut : resetJumpAir réarme la relâche');
+
+  // Coupe du tap : fenêtre [minTime, holdTime[, montée rapide, relâché.
+  const c = createJumpState();
+  c.released = true;
+  c.jumpT = 0.1;
+  equal(applyJumpCut(c, RUNNER_JUMP, -900), -430, 'Saut : le tap coupe la montée');
+  c.jumpT = 0.01;
+  equal(applyJumpCut(c, RUNNER_JUMP, -900), -900, 'Saut : pas de coupe avant le temps minimum');
+  c.jumpT = 0.1;
+  c.released = false;
+  equal(applyJumpCut(c, RUNNER_JUMP, -900), -900, 'Saut : pas de coupe bouton tenu');
+  c.released = true;
+  equal(applyJumpCut(c, RUNNER_JUMP, -100), -100, 'Saut : pas de coupe en montée lente');
+  c.jumpT = 0.5;
+  equal(applyJumpCut(c, RUNNER_JUMP, -900), -900, 'Saut : pas de coupe hors fenêtre');
+
+  // Gravité trois temps.
+  const g = createJumpState();
+  g.jumpT = 0.05;
+  equal(jumpGravity(g, RUNNER_JUMP, -500, true, false), 1700, 'Saut : maintien = montée retenue');
+  equal(jumpGravity(g, RUNNER_JUMP, -500, false, false), 3150, 'Saut : lâché = montée normale');
+  g.released = true;
+  equal(jumpGravity(g, RUNNER_JUMP, -500, true, false), 3150, 'Saut : relâché même tenu = montée normale');
+  equal(jumpGravity(g, RUNNER_JUMP, 200, true, false), 3600, 'Saut : chute lourde');
+  equal(jumpGravity(g, RUNNER_JUMP, 200, false, true), 7800, 'Saut : descente rapide B');
+  g.jumpT = 0.5;
+  equal(jumpGravity(g, RUNNER_JUMP, -500, true, false), 3150, 'Saut : hors fenêtre = montée normale');
+
+  // Nuancier direct : tenu + jeune + non relâché = gravité tenue.
+  equal(riseGravity(true, false, 0.05, 0.18, 1700, 3150), 1700, 'Saut : riseGravity tenue');
+  equal(riseGravity(false, false, 0.05, 0.18, 1700, 3150), 3150, 'Saut : riseGravity lâchée');
+  equal(riseGravity(true, true, 0.05, 0.18, 1700, 3150), 3150, 'Saut : riseGravity relâchée');
+  equal(riseGravity(true, false, 0.3, 0.18, 1700, 3150), 3150, 'Saut : riseGravity hors fenêtre');
+
+  // Atterrissage : compteur plein, appui mémorisé conservé.
+  const l = createJumpState();
+  l.jumps = 2;
+  l.jumpT = 0.4;
+  l.released = true;
+  l.coyote = 0.05;
+  l.buffer = 0.05;
+  landJump(l);
+  equal(l.jumps, 0, 'Saut : l’atterrissage rend les sauts');
+  equal(l.jumpT, 0, 'Saut : l’atterrissage remet le minuteur');
+  assert(!l.released, 'Saut : l’atterrissage réarme la relâche');
+  equal(l.coyote, 0, 'Saut : l’atterrissage vide le coyote');
+  equal(l.buffer, 0.05, 'Saut : l’atterrissage garde l’appui mémorisé');
+
+  // Flappy : le nuancier est branché dans le bon sens (tap < maintien).
+  assert(FLAPPY_FLAP.holdGravity < FLAPPY_FLAP.riseGravity, 'Flappy : le maintien retient la montée');
+  assert(FLAPPY_FLAP.cutSpeed < -FLAPPY_FLAP_VY, 'Flappy : le tap coupe sous l’impulsion');
+}
+
 function testFrogInput(): void {
   // Le moteur miroite les directions clavier/croix dans moveX/moveY
   // (composeRawStates) : un appui = front pressed() + stick la même frame.
@@ -1165,6 +1302,7 @@ const tests: readonly [string, Test][] = [
   ['Blob Frogger : un appui = une case', testFrogInput],
   ['Flappy Blob', testFlappy],
   ['Flappy Blob : un appui = un vol', testFlappyInput],
+  ['Saut variable partagé', testJump],
 ];
 
 for (const [name, test] of tests) {
