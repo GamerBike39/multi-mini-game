@@ -4,6 +4,7 @@
 import { Input } from './input';
 import { AudioSys } from './audio';
 import { Settings } from './settings';
+import { StageOverlay, blobAnchor } from './stage';
 import { vignette, txt, panel } from './ui';
 import {
   RESOLUTION_OPTIONS,
@@ -14,6 +15,7 @@ import {
   type ScreenFilterId,
   type ScreenFilters,
   type ScreenFilterSettings,
+  type StageWipeOptions,
 } from './types';
 
 const STEP = 1 / 60;
@@ -81,6 +83,7 @@ export class Engine implements EngineLike {
 
   app: AppLike | null = null;
   menuFactory: (() => AppLike) | null = null;
+  readonly stage = new StageOverlay();
   acc = 0;
   lastTs = 0;
   started = false;
@@ -110,7 +113,13 @@ export class Engine implements EngineLike {
     this.audio = new AudioSys() as AudioLike;
     this.input = new Input(() => this.audio.unlock());
     this.menuBack = () => {
-      if (this.menuFactory) this.setApp(this.menuFactory());
+      if (!this.menuFactory) return;
+      this.transitionTo(this.menuFactory(), {
+        accent: this.app?.accent || '#7dd3fc',
+        title: 'BLOB ARCADE',
+        from: blobAnchor(this.app),
+        to: { x: 640, y: 92 },
+      });
     };
     this.settings = new Settings(this);
 
@@ -301,7 +310,24 @@ export class Engine implements EngineLike {
     this.canvas.height = Math.max(1, Math.round(this.H * this.renderScale));
   }
 
-  setApp(app: AppLike): void {
+  setApp(app: AppLike, options?: StageWipeOptions | false): void {
+    if (options === false || !this.app) {
+      this.applyApp(app);
+      return;
+    }
+    this.transitionTo(app, options);
+  }
+
+  transitionTo(app: AppLike, options: StageWipeOptions = {}): void {
+    this.stage.beginWipe(app, {
+      accent: options.accent || app.accent || this.app?.accent || '#7dd3fc',
+      title: options.title || '',
+      from: options.from || blobAnchor(this.app),
+      to: options.to || { x: 640, y: 360 },
+    });
+  }
+
+  applyApp(app: AppLike): void {
     if (this.app?.exit) {
       try {
         this.app.exit();
@@ -351,7 +377,8 @@ export class Engine implements EngineLike {
       let simulationDt = fx ? fx.consume(STEP) : STEP;
       if (this.hiddenPause) simulationDt = 0;
       if (simulationDt > 0) {
-        if (app) {
+        const freezeOutgoing = this.stage.active && !this.stage.swapped;
+        if (app && !freezeOutgoing) {
           try {
             app.update(simulationDt);
           } catch (error) {
@@ -374,6 +401,13 @@ export class Engine implements EngineLike {
           // On ne consomme les frappes que quand la simulation a réellement tourné :
           // un frame sans pas ou un hitstop ne doit pas manger les boutons.
           this.input.clearEdges();
+        }
+      }
+      if (!this.hiddenPause) {
+        try {
+          this.stage.update(STEP, (next) => this.applyApp(next));
+        } catch (error) {
+          this.showError(error);
         }
       }
       if (fx) fx.cosmetic(STEP);
@@ -404,6 +438,8 @@ export class Engine implements EngineLike {
         txt(ctx, 'FENÊTRE INACTIVE', 640, 340, { size: 34, align: 'center', color: '#8b95a8', weight: 900 });
       }
     }
+
+    this.stage.render(ctx);
 
     this.drawScreenFilters(ctx);
 

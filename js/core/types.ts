@@ -225,13 +225,22 @@ export interface GameConstructor {
   meta: GameMeta;
 }
 
+export interface StageWipeOptions {
+  accent?: string;
+  title?: string;
+  from?: { x: number; y: number };
+  to?: { x: number; y: number };
+}
+
 export interface EngineLike {
   input: InputLike;
   audio: AudioLike;
   settings: SettingsLike;
   resolution: ResolutionId;
   readonly resolutionLabel: string;
-  setApp(app: AppLike): void;
+  menuFactory: (() => AppLike) | null;
+  setApp(app: AppLike, options?: StageWipeOptions | false): void;
+  transitionTo(app: AppLike, options?: StageWipeOptions): void;
   menuBack(): void;
   toggleFullscreen(): void;
   setResolution(resolution: ResolutionId): void;

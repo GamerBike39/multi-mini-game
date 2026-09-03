@@ -154,8 +154,11 @@ export class Menu {
   launch(): void {
     const game = this.games[this.sel];
     this.audio.uiOk();
-    this.fx.flash(game.meta.accent, 0.22);
-    this.eng.setApp(new game(this.eng));
+    this.eng.transitionTo(new game(this.eng), {
+      accent: game.meta.accent,
+      title: game.meta.name,
+      from: { x: this.blob.x, y: this.blob.y },
+    });
   }
 
   cardPos(index: number): Point {

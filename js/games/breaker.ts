@@ -11,6 +11,11 @@ const WALL = 20;             // marge de jeu (murs latéraux + plafond)
 const PAD_Y = 660;           // y du paddle
 const BUMPER_BOOST = 1.22;
 const BUMPER_BOOST_TIME = 0.45;
+const WALL_COLLISION_PADDING = 4;
+const BRICK_COLLISION_PADDING = 2;
+const BUMPER_COLLISION_PADDING = 4;
+const BUMPER_CHAOS_MIN = 0.045;
+const BUMPER_CHAOS_MAX = 0.105;
 const PTS = [50, 40, 30, 20, 15, 10];
 const PAL = ['#fb7185', '#f472b6', '#c084fc', '#818cf8', '#38bdf8', '#34d399'];
 const PALD = ['#6b2434', '#66284a', '#4a2a63', '#333a6b', '#1c4a66', '#1a5a42']; // teintes sombres (brique abîmée)
@@ -115,6 +120,9 @@ interface ExplosionPulse {
   t: number;
   maxT: number;
   depth: number;
+  chargeT: number;
+  burstT: number;
+  burstDone: boolean;
 }
 
 interface PendingExplosion {
@@ -161,9 +169,12 @@ const clampValue = (value: number, min: number, max: number): number => Math.max
 const circleVsAabb = (
   cx: number, cy: number, r: number,
   boxX: number, boxY: number, boxW: number, boxH: number,
+  padding = 0,
 ): CollisionHit | null => {
-  const contactX = clampValue(cx, boxX, boxX + boxW);
-  const contactY = clampValue(cy, boxY, boxY + boxH);
+  const leftEdge = boxX - padding, rightEdge = boxX + boxW + padding;
+  const topEdge = boxY - padding, bottomEdge = boxY + boxH + padding;
+  const contactX = clampValue(cx, leftEdge, rightEdge);
+  const contactY = clampValue(cy, topEdge, bottomEdge);
   const dx = cx - contactX, dy = cy - contactY;
   const distanceSq = dx * dx + dy * dy;
   if (distanceSq > r * r) return null;
@@ -175,31 +186,33 @@ const circleVsAabb = (
 
   // Le centre est dans la boîte : on choisit la face la plus proche et on
   // sort la balle de la géométrie avant de décider d'une réflexion.
-  const left = cx - boxX, right = boxX + boxW - cx;
-  const top = cy - boxY, bottom = boxY + boxH - cy;
+  const left = cx - leftEdge, right = rightEdge - cx;
+  const top = cy - topEdge, bottom = bottomEdge - cy;
   const nearest = Math.min(left, right, top, bottom);
-  if (nearest === left) return { nx: -1, ny: 0, penetration: r + left, contactX: boxX, contactY: cy };
-  if (nearest === right) return { nx: 1, ny: 0, penetration: r + right, contactX: boxX + boxW, contactY: cy };
-  if (nearest === top) return { nx: 0, ny: -1, penetration: r + top, contactX: cx, contactY: boxY };
-  return { nx: 0, ny: 1, penetration: r + bottom, contactX: cx, contactY: boxY + boxH };
+  if (nearest === left) return { nx: -1, ny: 0, penetration: r + left, contactX: leftEdge, contactY: cy };
+  if (nearest === right) return { nx: 1, ny: 0, penetration: r + right, contactX: rightEdge, contactY: cy };
+  if (nearest === top) return { nx: 0, ny: -1, penetration: r + top, contactX: cx, contactY: topEdge };
+  return { nx: 0, ny: 1, penetration: r + bottom, contactX: cx, contactY: bottomEdge };
 };
 
 const circleVsCircle = (
   ax: number, ay: number, ar: number,
   bx: number, by: number, br: number,
+  padding = 0,
 ): CollisionHit | null => {
   const dx = ax - bx, dy = ay - by;
   const distanceSq = dx * dx + dy * dy;
-  const sum = ar + br;
+  const effectiveBr = br + padding;
+  const sum = ar + effectiveBr;
   if (distanceSq > sum * sum) return null;
   if (distanceSq > 0.000001) {
     const distance = Math.sqrt(distanceSq);
     return {
       nx: dx / distance, ny: dy / distance, penetration: sum - distance,
-      contactX: bx + dx / distance * br, contactY: by + dy / distance * br,
+      contactX: bx + dx / distance * effectiveBr, contactY: by + dy / distance * effectiveBr,
     };
   }
-  return { nx: 0, ny: -1, penetration: sum, contactX: bx, contactY: by - br };
+  return { nx: 0, ny: -1, penetration: sum, contactX: bx, contactY: by - effectiveBr };
 };
 
 const reflectVelocity = (ball: any, hit: CollisionHit): number => {
@@ -541,6 +554,8 @@ export class BreakerGame extends BaseGame {
 
   registerBrickBreak(br: BreakerBrick, source?: any, allowDrop = true, chainDepth = 0): void {
     const cx = br.x + br.w / 2, cy = br.y + br.h / 2;
+    const isChain = chainDepth > 0;
+    const isExplosive = br.kind === 'explosive';
     const chainBonus = chainDepth > 0 ? Math.round(br.pts * Math.min(0.8, chainDepth * 0.2)) : 0;
     this.broken++;
     this.speed = Math.min(720, this.speed + 10);
@@ -550,22 +565,28 @@ export class BreakerGame extends BaseGame {
     if (this.lab) this.labStats.maxCombo = Math.max(this.labStats.maxCombo, this.comboStep);
     this.musicEvent('brickCombo', Math.min(1.4, 0.45 + this.comboStep * 0.04));
     if (this.comboStep >= 4) this.musicEvent('combo', Math.min(1.5, this.comboStep / 10));
-    this.audio.coin(this.comboStep);
-    if (this.comboStep % 8 === 0) {
+    if (!isChain || chainDepth % 2 === 0) this.audio.coin(this.comboStep);
+    if (this.comboStep % 8 === 0 && !isChain) {
       this.fx.stop(0.03);
       this.fx.text(cx, cy - 34, 'COMBO ×' + this.comboStep, { color: '#ffd166', size: 19 });
     }
-    source?.punch?.(chainDepth > 0 ? 0.2 : 0.35);
-    this.fx.shake(chainDepth > 0 ? 0.06 : 0.1);
-    this.input.rumble(chainDepth > 0 ? 0.11 : 0.15, 0.05);
-    this.fx.burst(cx, cy, {
-      n: chainDepth > 0 ? 8 : 14,
-      speed: [60, 320],
-      colors: [br.color, '#ffffff', this.accent],
-      size: [2, 5], life: 0.5, shape: 'sq',
-    });
-    this.fx.ring(cx, cy, { r0: 6, r1: 42, color: br.color, life: 0.3 });
-    this.fx.text(cx, cy - 12, '+' + (br.pts + chainBonus), { color: br.color, size: 15, mono: true });
+    source?.punch?.(isChain ? 0.16 : 0.35);
+    this.fx.shake(isChain ? 0.025 : 0.1);
+    this.input.rumble(isChain ? 0.055 : 0.15, isChain ? 0.035 : 0.05);
+    // Une explosive possède sa propre mise en scène différée. Éviter ici un
+    // burst instantané permet de lire : charge → implosion → nuage final.
+    if (!isExplosive) {
+      this.fx.burst(cx, cy, {
+        n: isChain ? 4 : 14,
+        speed: [60, isChain ? 190 : 320],
+        colors: [br.color, '#ffffff', this.accent],
+        size: [isChain ? 1.5 : 2, isChain ? 3 : 5], life: isChain ? 0.3 : 0.5, shape: 'sq',
+      });
+      this.fx.ring(cx, cy, { r0: 6, r1: isChain ? 26 : 42, color: br.color, life: isChain ? 0.18 : 0.3 });
+      if (!isChain || chainDepth % 2 === 0) {
+        this.fx.text(cx, cy - 12, '+' + (br.pts + chainBonus), { color: br.color, size: 15, mono: true });
+      }
+    }
     if (allowDrop && Math.random() < 0.12) {
       const kinds: DropKind[] = ['MULTI', 'LARGE', 'SLOW', 'LASER', 'GLUE', 'FLAME', 'GIANT', 'SMALL'];
       this.drops.push({ x: cx, y: cy, kind: kinds[(Math.random() * kinds.length) | 0] });
@@ -593,6 +614,71 @@ export class BreakerGame extends BaseGame {
     this.explosionQueue.push({ brick: br, delay, initialDelay: Math.max(0.001, delay), depth });
   }
 
+  playExplosionSfx(power: number, depth: number, burstDelay: number): void {
+    const now = this.audio.ctx ? this.audio.ctx.currentTime : 0;
+    const secondary = depth > 0;
+    const chainScene = this.lab === 'chain';
+    const scale = secondary ? (chainScene ? 0.3 : 0.5) : (chainScene ? 0.72 : 1);
+    const root = 55; // A1 : fondamentale profonde, puis rapports simples.
+    const sparkleT = now + burstDelay;
+
+    this.audio.tone({ f: root, f1: root / 2, type: 'sine', t: now, dur: secondary ? 0.38 : 0.72, vol: 0.28 * scale, attack: 0.025 });
+    this.audio.tone({ f: root * 1.5, f1: root * 0.75, type: 'sine', t: now + 0.018, dur: secondary ? 0.3 : 0.52, vol: 0.11 * scale, attack: 0.012 });
+    this.audio.tone({ f: root * 2, f1: root, type: 'triangle', t: now + 0.035, dur: secondary ? 0.24 : 0.42, vol: 0.08 * scale, attack: 0.008 });
+
+    // Texture courte de feu d'artifice : bruit filtré + partiels harmoniques
+    // espacés, plus doux sur les maillons secondaires d'une chaîne.
+    this.audio.noise({ t: sparkleT, dur: secondary ? 0.16 : 0.34, f: 4200, f1: 900, type: 'bandpass', q: 1.4, vol: 0.14 * scale });
+    [16, 24, 32].forEach((ratio, index) => {
+      this.audio.tone({
+        f: root * ratio,
+        f1: root * (ratio + 4),
+        type: index === 0 ? 'triangle' : 'sine',
+        t: sparkleT + 0.022 + index * 0.035,
+        dur: secondary ? 0.08 : 0.13,
+        vol: (0.055 - index * 0.009) * scale,
+        attack: 0.003,
+      });
+    });
+    if (!secondary || !chainScene) {
+      this.audio.noise({ t: sparkleT + 0.075, dur: secondary ? 0.1 : 0.2, f: 2300, f1: 700, type: 'highpass', q: 0.8, vol: 0.055 * scale });
+    }
+  }
+
+  emitExplosionCloud(pulse: ExplosionPulse): void {
+    const secondary = pulse.depth > 0;
+    const chainScene = this.lab === 'chain';
+    const scale = secondary ? (chainScene ? 0.28 : 0.52) : (chainScene ? 0.72 : 1);
+    const sparkCount = Math.max(3, Math.round((22 + pulse.power * 8) * scale));
+    this.fx.burst(pulse.x, pulse.y, {
+      n: sparkCount,
+      speed: [70, 310 + pulse.power * 55],
+      colors: [pulse.color, '#ffd166', '#ffffff'],
+      size: [1.5, 4.5], life: secondary ? 0.38 : 0.62, drag: 0.93, shape: 'spark',
+    });
+    if (!secondary || !chainScene) {
+      this.fx.burst(pulse.x, pulse.y, {
+        n: Math.max(2, Math.round((12 + pulse.power * 5) * scale)),
+        speed: [24, 220 + pulse.power * 35],
+        colors: [pulse.color, '#fff7ed', '#ffffff'],
+        size: [2, 5], life: secondary ? 0.32 : 0.56, drag: 0.94, grav: 48, shape: 'dot',
+      });
+    }
+    this.fx.ring(pulse.x, pulse.y, {
+      r0: Math.max(5, pulse.radius * 0.18), r1: pulse.radius * (secondary ? 0.86 : 1.04),
+      color: pulse.color, life: secondary ? 0.28 : 0.52, width: secondary ? 1.5 : 3 + pulse.power,
+    });
+    if (!secondary) {
+      this.fx.stop(chainScene ? 0.045 : Math.min(0.09, 0.035 + pulse.power * 0.018));
+      this.fx.shake(chainScene ? 0.11 : 0.18 + pulse.power * 0.08);
+      this.fx.flash(pulse.color, chainScene ? 0.1 : Math.min(0.2, 0.07 + pulse.power * 0.035));
+    }
+    const particleLimit = chainScene ? 320 : 460;
+    if (this.fx.parts.length > particleLimit) this.fx.parts.splice(0, this.fx.parts.length - particleLimit);
+    const ringLimit = chainScene ? 28 : 64;
+    if (this.fx.rings.length > ringLimit) this.fx.rings.splice(0, this.fx.rings.length - ringLimit);
+  }
+
   detonateExplosion(item: PendingExplosion): void {
     const br = item.brick;
     if (br.exploded) return;
@@ -605,16 +691,30 @@ export class BreakerGame extends BaseGame {
     const power = Math.max(1, br.blast || 1);
     const radius = 72 + power * 34;
     const color = power >= 3 ? '#ffd166' : '#ff8a34';
-    this.explosions.push({ x: cx, y: cy, radius, power, color, t: 0, maxT: 0.62 + power * 0.1, depth: item.depth });
-    this.audio.tone({ f: 110 + power * 34, f1: 54, type: 'sawtooth', dur: 0.22 + power * 0.04, vol: 0.14 });
-    this.input.rumble(Math.min(0.85, 0.28 + power * 0.16), 0.1 + power * 0.025);
-    this.fx.stop(Math.min(0.09, 0.025 + power * 0.02));
-    this.fx.shake(0.18 + power * 0.1);
-    this.fx.flash(color, Math.min(0.22, 0.08 + power * 0.04));
-    this.fx.burst(cx, cy, { n: 18 + power * 10, speed: [80, 360 + power * 70], colors: [color, '#ffd166', '#ffffff'], size: [2, 5], life: 0.7, shape: 'spark' });
-    this.fx.burst(cx, cy, { n: 14 + power * 7, speed: [40, 260 + power * 50], colors: [color, '#ffffff'], size: [2, 5], life: 0.62, grav: 180, shape: 'sq' });
-    this.fx.ring(cx, cy, { r0: 8, r1: radius, color, life: 0.42 + power * 0.05, width: 3 + power });
-    if (item.depth === 0 || item.depth % 3 === 0) this.fx.text(cx, cy - 32, 'BOOM ×' + power, { color: '#ffd166', size: 18 });
+    const secondary = item.depth > 0;
+    const chainScene = this.lab === 'chain';
+    const chargeT = secondary ? 0.18 : 0.26;
+    const burstT = chargeT + (secondary ? 0.1 : 0.14);
+    const lingerT = secondary ? 0.38 : 0.52 + power * 0.06;
+    this.explosions.push({
+      x: cx, y: cy, radius, power, color, t: 0, maxT: burstT + lingerT, depth: item.depth,
+      chargeT, burstT, burstDone: false,
+    });
+    this.playExplosionSfx(power, item.depth, burstT);
+    const feedbackScale = secondary ? (chainScene ? 0.3 : 0.52) : (chainScene ? 0.72 : 1);
+    this.input.rumble(Math.min(0.85, (0.24 + power * 0.14) * feedbackScale), secondary ? 0.055 : 0.1 + power * 0.02);
+    this.fx.implode(cx, cy, {
+      n: Math.max(5, Math.round((16 + power * 5) * feedbackScale)),
+      radius: radius * 0.72,
+      speed: [80, 250 + power * 25],
+      colors: [color, '#ffd166', '#fff7ed'],
+      size: [1.2, 3.5], life: secondary ? 0.22 : 0.34, shape: 'spark',
+    });
+    this.fx.ring(cx, cy, { r0: radius * 0.42, r1: radius * 0.58, color, life: secondary ? 0.2 : 0.3, width: secondary ? 1.5 : 2.5 });
+    if (!secondary) this.fx.flash(color, chainScene ? 0.045 : 0.06);
+    if (item.depth === 0 || (!chainScene && item.depth % 3 === 0)) {
+      this.fx.text(cx, cy - 32, 'BOOM ×' + power, { color: '#ffd166', size: 18 });
+    }
 
     for (const other of this.bricks as BreakerBrick[]) {
       if (other === br || other.hp <= 0 || other.falling || other.exploded || other.queued) continue;
@@ -637,7 +737,14 @@ export class BreakerGame extends BaseGame {
   }
 
   updateExplosions(dt: number): void {
-    for (const pulse of this.explosions) pulse.t += dt;
+    for (const pulse of this.explosions as ExplosionPulse[]) {
+      const previousT = pulse.t;
+      pulse.t += dt;
+      if (!pulse.burstDone && previousT < pulse.burstT && pulse.t >= pulse.burstT) {
+        pulse.burstDone = true;
+        this.emitExplosionCloud(pulse);
+      }
+    }
     this.explosions = this.explosions.filter((pulse: ExplosionPulse) => pulse.t < pulse.maxT);
     const pending: PendingExplosion[] = [];
     const ready: PendingExplosion[] = [];
@@ -651,6 +758,8 @@ export class BreakerGame extends BaseGame {
   }
 
   updateFallingTiles(dt: number): void {
+    // Une gravity détachée est un corps de feedback, pas une seconde balle :
+    // elle ignore volontairement Wall/Bumper dans cette V1.
     for (const br of this.bricks as BreakerBrick[]) {
       if ((br.detachT || 0) > 0) {
         br.detachT = Math.max(0, (br.detachT || 0) - dt);
@@ -726,7 +835,9 @@ export class BreakerGame extends BaseGame {
     }
 
     if (br.kind === 'explosive') {
-      this.queueExplosion(br, 0, 0.04);
+      // Un court temps de lecture laisse voir le noyau se charger avant la
+      // séquence charge → implosion → nuage.
+      this.queueExplosion(br, 0, 0.1);
       bl?.punch?.(0.3);
       return;
     }
@@ -811,13 +922,26 @@ export class BreakerGame extends BaseGame {
     this.audio.tone({ f: 190, dur: 0.03, vol: 0.05, type: 'sine' });
   }
 
+  bumperChaosAngle(x: number, y: number, bumperId: number, sampleTime = this.time): number {
+    const sampleRow = Math.round(sampleTime * 120);
+    const sign = cellNoise(this.level + bumperId * 13, sampleRow, Math.round(x + y)) < 0.5 ? -1 : 1;
+    const amount = BUMPER_CHAOS_MIN + cellNoise(this.level + bumperId * 29, sampleRow + 7, Math.round(x - y)) * (BUMPER_CHAOS_MAX - BUMPER_CHAOS_MIN);
+    return sign * amount;
+  }
+
   resolveWall(bl: any, wall: BreakerWall): boolean {
-    const hit = circleVsAabb(bl.x, bl.y, bl.r, wall.x, wall.y, wall.w, wall.h);
+    const hit = circleVsAabb(bl.x, bl.y, bl.r, wall.x, wall.y, wall.w, wall.h, WALL_COLLISION_PADDING);
     if (!hit) return false;
     const dot = reflectVelocity(bl, hit);
     bl.x += hit.nx * Math.max(hit.penetration, 0.5);
     bl.y += hit.ny * Math.max(hit.penetration, 0.5);
-    if (dot < 0) {
+    // Si la balle longe exactement un côté, une petite poussée vers
+    // l'extérieur évite l'impression d'une collision verticale “absorbée”.
+    // C'est une tolérance de gameplay, pas une nouvelle surface physique.
+    const edgeSlide = dot >= 0 && Math.abs(hit.nx) > 0.7
+      && Math.abs(bl.vy) > Math.abs(bl.vx) * 1.25;
+    if (edgeSlide) bl.vx += hit.nx * Math.max(22, this.speed * 0.08);
+    if (dot < 0 || edgeSlide) {
       this.wallHit(bl);
       this.fx.ring(hit.contactX, hit.contactY, { r0: 3, r1: 18, color: '#94a3b8', life: 0.18, width: 1.5 });
       this.fx.burst(hit.contactX, hit.contactY, { n: 3, speed: [30, 100], colors: ['#cbd5e1', '#ffffff'], size: [1, 2], life: 0.2, shape: 'sq' });
@@ -828,7 +952,7 @@ export class BreakerGame extends BaseGame {
   }
 
   resolveBumper(bl: any, bumper: BreakerBumper): boolean {
-    const hit = circleVsCircle(bl.x, bl.y, bl.r, bumper.x, bumper.y, bumper.r);
+    const hit = circleVsCircle(bl.x, bl.y, bl.r, bumper.x, bumper.y, bumper.r, BUMPER_COLLISION_PADDING);
     if (!hit) return false;
     bl.x += hit.nx * Math.max(hit.penetration, 0.5);
     bl.y += hit.ny * Math.max(hit.penetration, 0.5);
@@ -845,6 +969,14 @@ export class BreakerGame extends BaseGame {
     const target = this.speed * bumper.boost;
     bl.vx *= target / currentSpeed;
     bl.vy *= target / currentSpeed;
+    // Même un contact parfaitement frontal reçoit une petite variation. Elle
+    // reste bornée et déterministe pour qu'un lab soit comparable, mais évite
+    // l'effet de rail d'un rebond mathématiquement trop parfait.
+    const chaos = this.bumperChaosAngle(bl.x, bl.y, bumper.id);
+    const cos = Math.cos(chaos), sin = Math.sin(chaos);
+    const outVx = bl.vx * cos - bl.vy * sin;
+    const outVy = bl.vx * sin + bl.vy * cos;
+    bl.vx = outVx; bl.vy = outVy;
     bl.bumperBoost = bumper.boost;
     bl.bumperBoostT = BUMPER_BOOST_TIME;
     bl.lastBumperId = bumper.id;
@@ -899,7 +1031,7 @@ export class BreakerGame extends BaseGame {
       }
       for (const obstacle of this.obstacles as BreakerObstacle[]) {
         if (obstacle.kind !== 'wall') continue;
-        const hit = circleVsAabb(laser.x, laser.y, laser.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h);
+        const hit = circleVsAabb(laser.x, laser.y, laser.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h, WALL_COLLISION_PADDING);
         if (!hit) continue;
         laser.dead = true;
         this.audio.tone({ f: 260, f1: 150, type: 'square', dur: 0.045, vol: 0.045 });
@@ -1040,17 +1172,13 @@ export class BreakerGame extends BaseGame {
         const flaming = this.flameT > 0;
         for (const br of this.bricks as BreakerBrick[]) {
           if (br.hp <= 0) continue;
-          const nx = Math.max(br.x, Math.min(bl.x, br.x + br.w));
-          const ny = Math.max(br.y, Math.min(bl.y, br.y + br.h));
-          const dx = bl.x - nx, dy = bl.y - ny;
-          if (dx * dx + dy * dy > bl.r * bl.r) continue;
+          const brickHit = circleVsAabb(bl.x, bl.y, bl.r, br.x, br.y, br.w, br.h, BRICK_COLLISION_PADDING);
+          if (!brickHit) continue;
           if (flaming && bl.lastBrick === br && bl.lastBrickT > 0) continue;
           if (!flaming) {
-            const bcx = br.x + br.w / 2, bcy = br.y + br.h / 2;
-            const ox = br.w / 2 + bl.r - Math.abs(bl.x - bcx);
-            const oy = br.h / 2 + bl.r - Math.abs(bl.y - bcy);
-            if (ox < oy) { bl.vx = bl.x < bcx ? -Math.abs(bl.vx) : Math.abs(bl.vx); bl.x += bl.vx > 0 ? ox : -ox; }
-            else { bl.vy = bl.y < bcy ? -Math.abs(bl.vy) : Math.abs(bl.vy); bl.y += bl.vy > 0 ? oy : -oy; }
+            reflectVelocity(bl, brickHit);
+            bl.x += brickHit.nx * Math.max(brickHit.penetration, 0.5);
+            bl.y += brickHit.ny * Math.max(brickHit.penetration, 0.5);
           }
           this.hitBrick(br, bl);
           if (flaming) {
@@ -1250,18 +1378,30 @@ export class BreakerGame extends BaseGame {
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     for (const pulse of this.explosions as ExplosionPulse[]) {
-      const k = Math.min(1, pulse.t / 0.12);
-      const fade = Math.min(1, Math.max(0, (pulse.maxT - pulse.t) / 0.28));
-      const progress = 1 - Math.pow(1 - Math.min(1, pulse.t / pulse.maxT), 2);
-      const radius = pulse.radius * progress;
+      const chargeK = clampValue(pulse.t / pulse.chargeT, 0, 1);
+      const implodeK = clampValue((pulse.t - pulse.chargeT) / Math.max(0.001, pulse.burstT - pulse.chargeT), 0, 1);
+      const cloudK = clampValue((pulse.t - pulse.burstT) / Math.max(0.001, pulse.maxT - pulse.burstT), 0, 1);
+      const chargeEase = 1 - Math.pow(1 - chargeK, 2);
+      const implodeEase = implodeK * implodeK * (3 - 2 * implodeK);
+      const cloudEase = 1 - Math.pow(1 - cloudK, 2);
+      const secondary = pulse.depth > 0;
+      const lightMode = secondary || this.lab === 'chain';
+      const radius = pulse.radius;
+      const phase = pulse.t < pulse.chargeT ? 'charge' : pulse.t < pulse.burstT ? 'implode' : 'cloud';
+      const visualRadius = phase === 'charge'
+        ? radius * (0.28 + chargeEase * 0.2)
+        : phase === 'implode'
+          ? radius * (0.52 - implodeEase * 0.34)
+          : radius * (0.3 + cloudEase * 0.78);
+      const fade = phase === 'cloud' ? 1 - cloudK : phase === 'charge' ? 0.45 + chargeK * 0.35 : 0.85;
       const queued = (this.explosionQueue as PendingExplosion[]).filter((item) => {
         const qx = item.brick.x + item.brick.w / 2, qy = item.brick.y + item.brick.h / 2;
         return Math.hypot(qx - pulse.x, qy - pulse.y) < radius + 24;
       });
       if (queued.length) {
-        ctx.globalAlpha = fade * 0.6;
+        ctx.globalAlpha = fade * (lightMode ? 0.28 : 0.52);
         ctx.strokeStyle = pulse.color;
-        ctx.lineWidth = 1.5;
+        ctx.lineWidth = lightMode ? 1 : 1.5;
         ctx.setLineDash([3, 5]);
         for (const item of queued) {
           const qx = item.brick.x + item.brick.w / 2, qy = item.brick.y + item.brick.h / 2;
@@ -1269,22 +1409,46 @@ export class BreakerGame extends BaseGame {
         }
         ctx.setLineDash([]);
       }
-      const gradient = ctx.createRadialGradient(pulse.x, pulse.y, 0, pulse.x, pulse.y, Math.max(1, radius));
-      gradient.addColorStop(0, `rgba(255,255,255,${0.8 * fade})`);
-      gradient.addColorStop(Math.min(0.35, 0.18 + k * 0.1), pulse.color + 'bb');
-      gradient.addColorStop(1, pulse.color + '00');
-      ctx.globalAlpha = fade * 0.75;
-      ctx.fillStyle = gradient;
-      ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(2, radius), 0, 6.2832); ctx.fill();
+      if (!lightMode) {
+        const gradient = ctx.createRadialGradient(pulse.x, pulse.y, 0, pulse.x, pulse.y, Math.max(1, visualRadius));
+        gradient.addColorStop(0, `rgba(255,255,255,${0.78 * fade})`);
+        gradient.addColorStop(0.26, pulse.color + 'bb');
+        gradient.addColorStop(1, pulse.color + '00');
+        ctx.globalAlpha = fade * 0.8;
+        ctx.fillStyle = gradient;
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(2, visualRadius), 0, 6.2832); ctx.fill();
+      } else {
+        ctx.globalAlpha = fade * 0.42;
+        ctx.fillStyle = pulse.color + '66';
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(2, visualRadius), 0, 6.2832); ctx.fill();
+      }
+
       ctx.globalAlpha = fade;
       ctx.strokeStyle = '#fff7ed';
-      ctx.lineWidth = 2 + pulse.power * 0.7;
-      ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(4, radius), 0, 6.2832); ctx.stroke();
-      if (pulse.depth > 0) {
-        ctx.globalAlpha = fade * 0.55;
-        ctx.setLineDash([4, 6]);
-        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(5, radius * 0.72), 0, 6.2832); ctx.stroke();
-        ctx.setLineDash([]);
+      ctx.lineWidth = lightMode ? 1.25 + pulse.power * 0.25 : 2 + pulse.power * 0.7;
+      if (phase === 'charge') {
+        // Le souffle se densifie depuis le noyau : plusieurs enveloppes
+        // concentriques annoncent la détonation sans la déclencher trop tôt.
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(3, visualRadius), 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha = fade * 0.42;
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(4, visualRadius * 1.42), 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha = fade * 0.88;
+        ctx.fillStyle = '#fff7ed';
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(3, radius * (0.06 + chargeEase * 0.1)), 0, 6.2832); ctx.fill();
+      } else if (phase === 'implode') {
+        // La coque revient vers le centre juste avant le nuage de particules.
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(3, visualRadius), 0, 6.2832); ctx.stroke();
+        ctx.globalAlpha = fade * 0.78;
+        ctx.fillStyle = '#fff7ed';
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(3, radius * (0.11 + implodeEase * 0.11)), 0, 6.2832); ctx.fill();
+      } else {
+        ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(4, visualRadius), 0, 6.2832); ctx.stroke();
+        if (!lightMode) {
+          ctx.globalAlpha = fade * 0.4;
+          ctx.setLineDash([4, 6]);
+          ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(5, visualRadius * 0.72), 0, 6.2832); ctx.stroke();
+          ctx.setLineDash([]);
+        }
       }
     }
     ctx.restore();
@@ -1292,6 +1456,19 @@ export class BreakerGame extends BaseGame {
 
   drawWall(ctx: CanvasRenderingContext2D, wall: BreakerWall): void {
     ctx.save();
+    // Halo très discret autour de la zone de tolérance : le joueur voit la
+    // présence de l'arête avant que la collision “assistée” ne se déclenche.
+    ctx.strokeStyle = '#94a3b824';
+    ctx.lineWidth = 2;
+    UI.roundRect(
+      ctx,
+      wall.x - WALL_COLLISION_PADDING,
+      wall.y - WALL_COLLISION_PADDING,
+      wall.w + WALL_COLLISION_PADDING * 2,
+      wall.h + WALL_COLLISION_PADDING * 2,
+      Math.min(9, Math.min(wall.w, wall.h) * 0.35),
+    );
+    ctx.stroke();
     UI.roundRect(ctx, wall.x, wall.y, wall.w, wall.h, Math.min(7, Math.min(wall.w, wall.h) * 0.3));
     ctx.fillStyle = '#263244';
     ctx.fill();
@@ -1340,6 +1517,10 @@ export class BreakerGame extends BaseGame {
     ctx.strokeStyle = '#fff7ccaa';
     ctx.lineWidth = 1.5;
     ctx.beginPath(); ctx.arc(0, 0, bumper.r * 0.56, 0, 6.2832); ctx.stroke();
+    ctx.globalAlpha = 0.22;
+    ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.arc(0, 0, bumper.r + BUMPER_COLLISION_PADDING, 0, 6.2832); ctx.stroke();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#ffd166';
     ctx.beginPath(); ctx.arc(0, 0, bumper.r * 0.2 + pulse * 2, 0, 6.2832); ctx.fill();
     for (let i = 0; i < 4; i++) {
@@ -1378,14 +1559,25 @@ export class BreakerGame extends BaseGame {
       if (y - ball.r < WALL) { y = WALL + ball.r; vy = Math.abs(vy); bounces++; }
       for (const obstacle of this.obstacles as BreakerObstacle[]) {
         const hit = obstacle.kind === 'wall'
-          ? circleVsAabb(x, y, ball.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h)
-          : circleVsCircle(x, y, ball.r, obstacle.x, obstacle.y, obstacle.r);
+          ? circleVsAabb(x, y, ball.r, obstacle.x, obstacle.y, obstacle.w, obstacle.h, WALL_COLLISION_PADDING)
+          : circleVsCircle(x, y, ball.r, obstacle.x, obstacle.y, obstacle.r, BUMPER_COLLISION_PADDING);
         if (!hit) continue;
         const temp = { vx, vy };
         reflectVelocity(temp, hit);
         vx = temp.vx; vy = temp.vy;
         x += hit.nx * Math.max(hit.penetration, 0.5);
         y += hit.ny * Math.max(hit.penetration, 0.5);
+        if (obstacle.kind === 'bumper') {
+          const speed = Math.hypot(vx, vy) || 1;
+          const boostedSpeed = this.speed * obstacle.boost;
+          vx *= boostedSpeed / speed;
+          vy *= boostedSpeed / speed;
+          const chaos = this.bumperChaosAngle(x, y, obstacle.id, this.time + i * step);
+          const cos = Math.cos(chaos), sin = Math.sin(chaos);
+          const outVx = vx * cos - vy * sin;
+          const outVy = vx * sin + vy * cos;
+          vx = outVx; vy = outVy;
+        }
         bounces++;
         break;
       }
