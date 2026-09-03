@@ -235,6 +235,22 @@ export interface NoiseLikeOptions {
   dest?: AudioNode | null;
 }
 
+export interface SampleLikeOptions {
+  t?: number;
+  vol?: number;
+  attack?: number;
+  release?: number;
+  playbackRate?: number;
+  offset?: number;
+  duration?: number;
+  filterType?: BiquadFilterType;
+  filterStart?: number;
+  filterEnd?: number;
+  filterRamp?: number;
+  q?: number;
+  dest?: AudioNode | null;
+}
+
 export interface ThumpLikeOptions {
   f0?: number;
   f1?: number;
@@ -262,6 +278,8 @@ export interface AudioLike {
   tone(options?: ToneLikeOptions): void;
   noise(options?: NoiseLikeOptions): void;
   thump(vol?: number, options?: ThumpLikeOptions): void;
+  loadSample?(key: string, url: string): void;
+  playSample?(key: string, options?: SampleLikeOptions): void;
   beat(): number;
   uiMove(): void;
   uiOk(): void;

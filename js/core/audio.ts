@@ -1,9 +1,9 @@
-// Audio 100% synthétisé (WebAudio) : pas d'assets, tout est généré.
-// - SFX : blips, thumps, noise bursts, zaps...
+// Audio WebAudio : SFX synthétisés, samples courts et musique séquencée.
+// - SFX : blips, thumps, noise bursts, zaps et impacts échantillonnés.
 // - Musique : séquenceur 16 pas avec lookahead, synchronisé sur ctx.currentTime.
 // - Mode "chart" pour le jeu de rythme : les events du chart SONT la batterie.
 
-import type { AudioLike, MusicLayerName, VolumeKey } from './types';
+import type { AudioLike, MusicLayerName, SampleLikeOptions, VolumeKey } from './types';
 import { AdaptiveDirector } from './music/adaptive-director';
 import { InstrumentRack } from './music/instrument-rack';
 import { ReferencePlayer } from './music/reference-player';
@@ -111,6 +111,8 @@ export class AudioSys implements AudioLike {
   sfxBus!: GainNode;
   trackBus!: GainNode;
   noiseBuf!: AudioBuffer;
+  readonly sampleBuffers = new Map<string, AudioBuffer>();
+  readonly sampleLoads = new Map<string, Promise<void>>();
   instrumentRack: InstrumentRack | null = null;
   referencePlayer: ReferencePlayer | null = null;
   readonly musicState = new MusicStateController();
@@ -308,6 +310,84 @@ export class AudioSys implements AudioLike {
     gain.connect(dest || this.sfxBus);
     source.start(t);
     source.stop(t + dur + 0.05);
+  }
+
+  loadSample(key: string, url: string): void {
+    if (this.sampleBuffers.has(key) || this.sampleLoads.has(key)) return;
+    const loading = (async (): Promise<void> => {
+      if (!this.ensure() || !this.ctx) return;
+      const context = this.ctx;
+      try {
+        const response = await fetch(url);
+        if (!response.ok) return;
+        const bytes = await response.arrayBuffer();
+        const buffer = await context.decodeAudioData(bytes);
+        this.sampleBuffers.set(key, buffer);
+      } catch {
+        // Le synthé reste le fallback si le sample n'est pas disponible.
+      }
+    })();
+    this.sampleLoads.set(key, loading);
+    void loading.then(() => {
+      if (this.sampleLoads.get(key) === loading) this.sampleLoads.delete(key);
+    }, () => {
+      if (this.sampleLoads.get(key) === loading) this.sampleLoads.delete(key);
+    });
+  }
+
+  playSample(key: string, options: SampleLikeOptions = {}): void {
+    const context = this.ctx;
+    if (!context) return;
+    const buffer = this.sampleBuffers.get(key);
+    if (!buffer) {
+      const pending = this.sampleLoads.get(key);
+      if (pending) {
+        const requestedAt = options.t ?? context.currentTime;
+        void pending.then(() => {
+          if (!this.sampleBuffers.has(key)) return;
+          const current = this.ctx?.currentTime ?? requestedAt;
+          this.playSample(key, { ...options, t: Math.max(requestedAt, current) });
+        });
+      }
+      return;
+    }
+
+    const start = Math.max(context.currentTime + 0.001, options.t ?? context.currentTime);
+    const offset = Math.max(0, Math.min(Math.max(0, buffer.duration - 0.01), options.offset ?? 0));
+    const available = Math.max(0.02, buffer.duration - offset);
+    const duration = Math.min(available, Math.max(0.02, options.duration ?? available));
+    const end = start + duration;
+    const target = Math.max(0, options.vol ?? 1);
+    const attack = Math.min(duration * 0.25, Math.max(0.001, options.attack ?? 0.006));
+    const release = Math.min(duration * 0.35, Math.max(0.01, options.release ?? 0.16));
+    const source = context.createBufferSource();
+    const gain = context.createGain();
+    source.buffer = buffer;
+    source.playbackRate.setValueAtTime(Math.max(0.25, Math.min(4, options.playbackRate ?? 1)), start);
+
+    const filterType = options.filterType;
+    if (filterType) {
+      const filter = context.createBiquadFilter();
+      filter.type = filterType;
+      filter.Q.value = options.q ?? 0.7;
+      const filterStart = Math.max(20, options.filterStart ?? 18000);
+      filter.frequency.setValueAtTime(filterStart, start);
+      if (options.filterEnd) {
+        const rampEnd = start + Math.min(duration, Math.max(0.005, options.filterRamp ?? 0.08));
+        filter.frequency.exponentialRampToValueAtTime(Math.max(20, options.filterEnd), rampEnd);
+      }
+      source.connect(filter);
+      filter.connect(gain);
+    } else {
+      source.connect(gain);
+    }
+
+    gain.gain.setValueAtTime(0, start);
+    gain.gain.linearRampToValueAtTime(target, start + attack);
+    gain.gain.setValueAtTime(target, Math.max(start + attack, end - release));
+    gain.gain.exponentialRampToValueAtTime(0.0001, end);
+    gain.connect(options.dest || this.sfxBus);
+    source.start(start, offset, duration);
   }
 
   thump(vol = 0.5, { f0 = 150, f1 = 40, dur = 0.18 }: ThumpOptions = {}): void {

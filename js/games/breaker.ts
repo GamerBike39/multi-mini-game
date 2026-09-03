@@ -17,12 +17,18 @@ const BRICK_COLLISION_PADDING = 2;
 const BUMPER_COLLISION_PADDING = 4;
 const BUMPER_CHAOS_MIN = 0.045;
 const BUMPER_CHAOS_MAX = 0.105;
+const GRAVITY_DETACH_TIME = 0.14;
+const GRENADE_SAMPLE_KEY = 'breaker.grenade-explosion';
+const GRENADE_SAMPLE_URL = new URL(
+  '../../assets/breaker/sound/grenade-explosion-sfx-medium-sized-meaty-realistic-trimmed.mp3',
+  import.meta.url,
+).href;
 const PTS = [50, 40, 30, 20, 15, 10];
 const PAL = ['#fb7185', '#f472b6', '#c084fc', '#818cf8', '#38bdf8', '#34d399'];
 const PALD = ['#6b2434', '#66284a', '#4a2a63', '#333a6b', '#1c4a66', '#1a5a42']; // teintes sombres (brique abîmée)
 type DropKind = 'MULTI' | 'LARGE' | 'SLOW' | 'LASER' | 'GLUE' | 'FLAME' | 'GIANT' | 'SMALL';
 type BrickKind = 'normal' | 'reinforced' | 'gravity' | 'explosive';
-type PatternKind = 'grid' | 'diamond' | 'cross' | 'flower' | 'wave' | 'ring' | 'checker';
+type PatternKind = 'grid' | 'diamond' | 'cross' | 'flower' | 'wave' | 'ring' | 'checker' | 'spiral' | 'arches';
 type ObstacleKind = 'wall' | 'bumper';
 type BreakerLabMode = 'readability' | 'wall' | 'corridor' | 'bumper' | 'billiard' | 'chain';
 
@@ -106,6 +112,7 @@ interface BreakerBrick {
   animPhase: number;
   falling?: boolean;
   detachT?: number;
+  vx?: number;
   vy?: number;
   rot?: number;
   queued?: boolean;
@@ -159,10 +166,82 @@ const motifOn = (spec: LevelSpec, row: number, col: number, level: number): bool
     on = (radius > 0.36 && radius < 1.02) || (ax < 0.18 && ay < 0.18);
   } else if (spec.motif === 'checker') {
     on = (row + col) % 2 === 0 || row === 0 || row === spec.rows - 1;
+  } else if (spec.motif === 'spiral') {
+    const angle = Math.atan2(ny, nx);
+    const ribbon = Math.sin(angle * 2.2 + radius * 8.5 + level * 0.4);
+    on = radius < 1.08 && (ribbon > 0.16 || radius < 0.16);
+  } else if (spec.motif === 'arches') {
+    const arch = 0.58 - 0.42 * Math.cos(nx * Math.PI);
+    on = Math.abs(ny - arch) < 0.17 || Math.abs(ny + arch) < 0.17 || (ax < 0.14 && ay < 0.55);
   }
 
   if (!on || spec.density >= 0.999) return on;
   return cellNoise(level + 41, row, col) < spec.density;
+};
+
+interface SpecialBias {
+  reinforced: number;
+  gravity: number;
+  explosive: number;
+}
+
+const specialBiasFor = (spec: LevelSpec, row: number, col: number, level: number): SpecialBias => {
+  const cx = (spec.cols - 1) / 2;
+  const cy = (spec.rows - 1) / 2;
+  const nx = (col - cx) / Math.max(1, cx);
+  const ny = (row - cy) / Math.max(1, cy);
+  const ax = Math.abs(nx), ay = Math.abs(ny);
+  const radius = Math.hypot(nx, ny);
+  const angle = Math.atan2(ny, nx);
+  const bias: SpecialBias = { reinforced: 0.7, gravity: 0.45, explosive: 0.35 };
+
+  if (spec.motif === 'grid') {
+    bias.reinforced = row === 0 || row === spec.rows - 1 ? 1.35 : 0.55;
+  } else if (spec.motif === 'diamond') {
+    bias.reinforced = radius > 0.65 ? 1.5 : 0.75;
+    bias.gravity = ax < 0.18 ? 0.7 : 0.2;
+  } else if (spec.motif === 'cross') {
+    bias.reinforced = ax < 0.2 && ay < 0.3 ? 1.8 : 0.55;
+    bias.gravity = ax < 0.22 ? 2.4 : ay < 0.24 ? 1.5 : 0.18;
+  } else if (spec.motif === 'flower') {
+    const petalSignal = Math.sin(angle * 6 + radius * 8 + level * 0.2);
+    const petalTip = radius > 0.42 && petalSignal > 0.62;
+    bias.reinforced = radius > 0.78 ? 1.5 : 0.65;
+    bias.gravity = radius < 0.34 ? 1.7 : 0.32;
+    bias.explosive = petalTip ? 2.8 : 0.28;
+  } else if (spec.motif === 'wave') {
+    const wave = Math.sin(nx * Math.PI * 2.4 + level * 0.55) * 0.34;
+    const crest = Math.abs(ny - wave) < 0.11;
+    const counterWave = Math.abs(ny + wave * 0.72) < 0.11;
+    bias.reinforced = crest ? 1.5 : 0.6;
+    bias.gravity = counterWave ? 2.2 : 0.28;
+    bias.explosive = crest ? 2.5 : 0.3;
+  } else if (spec.motif === 'ring') {
+    const node = radius > 0.48 && radius < 0.94 && Math.abs(Math.sin(angle * 4)) > 0.72;
+    bias.reinforced = radius > 0.8 ? 1.65 : 0.65;
+    bias.gravity = radius < 0.5 ? 1.8 : 0.3;
+    bias.explosive = node ? 2.8 : 0.32;
+  } else if (spec.motif === 'checker') {
+    const alternating = (row + col) % 2 === 0;
+    bias.reinforced = alternating ? 1.25 : 0.45;
+    bias.gravity = col % 3 === 1 ? 1.4 : 0.3;
+    bias.explosive = row > 0 && row < spec.rows - 1 && col % 4 === 1 ? 2.2 : 0.22;
+  } else if (spec.motif === 'spiral') {
+    const ribbon = Math.sin(angle * 2.2 + radius * 8.5 + level * 0.4);
+    const node = ribbon > 0.68;
+    bias.reinforced = node ? 1.55 : 0.58;
+    bias.gravity = radius > 0.62 && radius < 0.86 ? 1.85 : 0.3;
+    bias.explosive = node ? 2.7 : 0.26;
+  } else if (spec.motif === 'arches') {
+    const arch = 0.58 - 0.42 * Math.cos(nx * Math.PI);
+    const archTop = Math.abs(ny - arch) < 0.1;
+    const archBottom = Math.abs(ny + arch) < 0.1;
+    bias.reinforced = ax < 0.2 || archTop ? 1.5 : 0.58;
+    bias.gravity = archBottom ? 2.1 : 0.26;
+    bias.explosive = archTop && ax > 0.3 ? 2.5 : 0.28;
+  }
+
+  return bias;
 };
 
 const clampValue = (value: number, min: number, max: number): number => Math.max(min, Math.min(max, value));
@@ -235,6 +314,60 @@ const DGLYPH: Record<DropKind, string> = {
   FLAME: 'F', GIANT: 'GI', SMALL: 'SM',
 };
 
+// Les PNG du bonus et du HUD sont volontairement chargés comme des images
+// Canvas : cela garde un fallback procédural pendant le premier chargement et
+// permet au jeu de rester autonome si un asset est absent ou encore lent.
+const BREAKER_BONUS_URL: Record<DropKind, string> = {
+  MULTI: new URL('../../assets/breaker/bonus/multi-ball.png', import.meta.url).href,
+  LARGE: new URL('../../assets/breaker/bonus/large.png', import.meta.url).href,
+  SLOW: new URL('../../assets/breaker/bonus/slow.png', import.meta.url).href,
+  LASER: new URL('../../assets/breaker/bonus/laser.png', import.meta.url).href,
+  GLUE: new URL('../../assets/breaker/bonus/glue.png', import.meta.url).href,
+  FLAME: new URL('../../assets/breaker/bonus/fire.png', import.meta.url).href,
+  GIANT: new URL('../../assets/breaker/bonus/giant.png', import.meta.url).href,
+  SMALL: new URL('../../assets/breaker/bonus/small.png', import.meta.url).href,
+};
+
+const BREAKER_HUD_URL: Record<string, string> = {
+  LIFE: new URL('../../assets/breaker/HUD/hud_life.png', import.meta.url).href,
+  MULTI: new URL('../../assets/breaker/HUD/hud_multiball.png', import.meta.url).href,
+  LASER: new URL('../../assets/breaker/HUD/hud_laser.png', import.meta.url).href,
+  GLUE: new URL('../../assets/breaker/HUD/hud_glue.png', import.meta.url).href,
+  FLAMME: new URL('../../assets/breaker/HUD/hud_flame.png', import.meta.url).href,
+  GÉANTE: new URL('../../assets/breaker/HUD/hud_giant.png', import.meta.url).href,
+  SLOW: new URL('../../assets/breaker/HUD/hud_slow.png', import.meta.url).href,
+  FREEZE: new URL('../../assets/breaker/HUD/hud_freeze.png', import.meta.url).href,
+};
+
+const BREAKER_GAMEPLAY_URL = {
+  paddle: new URL('../../assets/breaker/Nouveau dossier/basic-border.webp', import.meta.url).href,
+  wall: new URL('../../assets/breaker/Nouveau dossier/wall.webp', import.meta.url).href,
+  bumperOuter: new URL('../../assets/breaker/Nouveau dossier/bumper_out.webp', import.meta.url).href,
+  bumperInner: new URL('../../assets/breaker/Nouveau dossier/bumperèin.webp', import.meta.url).href,
+  reinforced: new URL('../../assets/breaker/Nouveau dossier/renforcer.webp', import.meta.url).href,
+  gravity: new URL('../../assets/breaker/Nouveau dossier/gravity_arrow.webp', import.meta.url).href,
+  explosive: new URL('../../assets/breaker/Nouveau dossier/explode.webp', import.meta.url).href,
+} as const;
+
+const breakerImageCache = new Map<string, HTMLImageElement>();
+
+const breakerImage = (url: string): HTMLImageElement | null => {
+  if (typeof Image === 'undefined') return null;
+  const cached = breakerImageCache.get(url);
+  if (cached) return cached.complete && cached.naturalWidth > 0 ? cached : null;
+  const image = new Image();
+  image.decoding = 'async';
+  image.src = url;
+  breakerImageCache.set(url, image);
+  return null;
+};
+
+const preloadBreakerAssets = (): void => {
+  for (const url of Object.values(BREAKER_BONUS_URL)) breakerImage(url);
+  for (const url of Object.values(BREAKER_HUD_URL)) breakerImage(url);
+  for (const url of Object.values(BREAKER_GAMEPLAY_URL)) breakerImage(url);
+};
+
 interface BreakerDrop {
   x: number;
   y: number;
@@ -296,6 +429,8 @@ export class BreakerGame extends BaseGame {
     this.lab = this.readLabMode();
     this.labStats = { wallHits: 0, bumperHits: 0, bumperToBrick: 0, bumperToExplosive: 0, maxCombo: 0 } as BreakerLabStats;
     this.labContact = null as LabContact | null;
+    this.audio.loadSample?.(GRENADE_SAMPLE_KEY, GRENADE_SAMPLE_URL);
+    preloadBreakerAssets();
     this.buildLevel();
   }
 
@@ -314,15 +449,17 @@ export class BreakerGame extends BaseGame {
   }
 
   levelSpecFor(level: number): LevelSpec {
-    const cycle = Math.floor((level - 1) / 6);
-    const stage = (level - 1) % 6;
+    const cycle = Math.floor((level - 1) / 8);
+    const stage = (level - 1) % 8;
     const templates: LevelSpec[] = [
-      { name: 'MOSAÏQUE', motif: 'grid', cols: 10, rows: 6, tileW: 100, tileH: 24, gapX: 12, gapY: 9, density: 1, reinforcedChance: 0.02, gravityChance: 0, explosiveChance: 0, maxBlast: 0 },
-      { name: 'DIAMANT', motif: 'diamond', cols: 12, rows: 7, tileW: 70, tileH: 21, gapX: 8, gapY: 8, density: 1, reinforcedChance: 0.1, gravityChance: 0, explosiveChance: 0, maxBlast: 0 },
-      { name: 'CROIX', motif: 'cross', cols: 13, rows: 7, tileW: 64, tileH: 20, gapX: 8, gapY: 8, density: 0.98, reinforcedChance: 0.14, gravityChance: 0.08, explosiveChance: 0, maxBlast: 0 },
-      { name: 'FLEUR', motif: 'flower', cols: 14, rows: 8, tileW: 58, tileH: 19, gapX: 7, gapY: 7, density: 0.96, reinforcedChance: 0.13, gravityChance: 0.04, explosiveChance: 0.08, maxBlast: 1 },
-      { name: 'VAGUE', motif: 'wave', cols: 15, rows: 8, tileW: 53, tileH: 19, gapX: 7, gapY: 7, density: 0.94, reinforcedChance: 0.16, gravityChance: 0.1, explosiveChance: 0.12, maxBlast: 2 },
-      { name: 'CASCADE', motif: 'ring', cols: 16, rows: 9, tileW: 48, tileH: 18, gapX: 6, gapY: 6, density: 0.93, reinforcedChance: 0.18, gravityChance: 0.14, explosiveChance: 0.16, maxBlast: 2 },
+      { name: 'MOSAÏQUE', motif: 'grid', cols: 10, rows: 6, tileW: 66, tileH: 38, gapX: 9, gapY: 9, density: 1, reinforcedChance: 0.02, gravityChance: 0, explosiveChance: 0, maxBlast: 0 },
+      { name: 'DIAMANT', motif: 'diamond', cols: 12, rows: 7, tileW: 58, tileH: 36, gapX: 8, gapY: 8, density: 1, reinforcedChance: 0.1, gravityChance: 0, explosiveChance: 0, maxBlast: 0 },
+      { name: 'CROIX', motif: 'cross', cols: 13, rows: 7, tileW: 54, tileH: 36, gapX: 8, gapY: 8, density: 0.98, reinforcedChance: 0.14, gravityChance: 0.08, explosiveChance: 0, maxBlast: 0 },
+      { name: 'FLEUR', motif: 'flower', cols: 14, rows: 8, tileW: 50, tileH: 36, gapX: 7, gapY: 7, density: 0.96, reinforcedChance: 0.13, gravityChance: 0.04, explosiveChance: 0.08, maxBlast: 1 },
+      { name: 'VAGUE', motif: 'wave', cols: 15, rows: 8, tileW: 48, tileH: 36, gapX: 7, gapY: 7, density: 0.94, reinforcedChance: 0.16, gravityChance: 0.1, explosiveChance: 0.12, maxBlast: 2 },
+      { name: 'CASCADE', motif: 'ring', cols: 16, rows: 9, tileW: 45, tileH: 35, gapX: 6, gapY: 6, density: 0.93, reinforcedChance: 0.18, gravityChance: 0.14, explosiveChance: 0.16, maxBlast: 2 },
+      { name: 'SPIRALE', motif: 'spiral', cols: 17, rows: 9, tileW: 42, tileH: 34, gapX: 6, gapY: 6, density: 0.92, reinforcedChance: 0.2, gravityChance: 0.16, explosiveChance: 0.18, maxBlast: 2 },
+      { name: 'ARCADES', motif: 'arches', cols: 15, rows: 10, tileW: 47, tileH: 32, gapX: 7, gapY: 6, density: 0.9, reinforcedChance: 0.22, gravityChance: 0.17, explosiveChance: 0.2, maxBlast: 3 },
     ];
     const base = templates[stage];
     if (!cycle) return { ...base };
@@ -335,8 +472,8 @@ export class BreakerGame extends BaseGame {
       name: base.name + ' +' + cycle,
       cols: Math.min(18, base.cols + cycle),
       rows: Math.min(10, base.rows + (cycle > 1 ? 1 : 0)),
-      tileW: Math.max(42, base.tileW - cycle * 3),
-      tileH: Math.max(16, base.tileH - (cycle > 1 ? 1 : 0)),
+      tileW: Math.max(38, base.tileW - cycle * 2),
+      tileH: Math.max(30, base.tileH - (cycle > 2 ? 1 : 0)),
       gapX: Math.max(5, base.gapX - Math.min(2, cycle)),
       gapY: Math.max(5, base.gapY - Math.min(2, cycle)),
       density: Math.min(1, base.density + cycle * 0.012),
@@ -381,19 +518,26 @@ export class BreakerGame extends BaseGame {
         const typeRoll = cellNoise(this.level + 7, r, c);
         const explosiveRoll = cellNoise(this.level + 17, r, c);
         const gravityRoll = cellNoise(this.level + 29, r, c);
+        const specialBias = specialBiasFor(spec, r, c, this.level);
+        const explosiveChance = Math.min(0.58, spec.explosiveChance * specialBias.explosive);
+        // Les tuiles gravitaires apparaissent plutôt dans la moitié haute :
+        // elles disposent ainsi d'une vraie course avant d'atteindre le blob.
+        const upperHalfBias = r < spec.rows * 0.72 ? 1 : 0.28;
+        const gravityChance = Math.min(0.42, spec.gravityChance * specialBias.gravity * upperHalfBias);
+        const reinforcedChance = Math.min(0.58, spec.reinforcedChance * specialBias.reinforced);
         let kind: BrickKind = 'normal';
         let hp = 1;
         let blast = 0;
 
-        if (spec.explosiveChance > 0 && explosiveRoll < spec.explosiveChance) {
+        if (spec.explosiveChance > 0 && explosiveRoll < explosiveChance) {
           kind = 'explosive';
           const maxBlast = Math.max(1, spec.maxBlast);
           blast = 1 + Math.min(maxBlast - 1, Math.floor(cellNoise(this.level + 67, r, c) * maxBlast));
-        } else if (spec.gravityChance > 0 && gravityRoll < spec.gravityChance) {
+        } else if (spec.gravityChance > 0 && gravityRoll < gravityChance) {
           kind = 'gravity';
-        } else if (typeRoll < spec.reinforcedChance) {
+        } else if (typeRoll < reinforcedChance) {
           kind = 'reinforced';
-          hp = this.level >= 7 && typeRoll < spec.reinforcedChance * 0.24 ? 3 : 2;
+          hp = this.level >= 7 && typeRoll < reinforcedChance * 0.24 ? 3 : 2;
         }
 
         const rowProgress = r / Math.max(1, spec.rows - 1);
@@ -412,11 +556,11 @@ export class BreakerGame extends BaseGame {
     };
     this.levelSpec = {
       name: 'LAB · ' + labNames[mode], motif: 'grid', cols: 12, rows: 4,
-      tileW: 80, tileH: 22, gapX: 10, gapY: 8, density: 1,
+      tileW: 64, tileH: 34, gapX: 8, gapY: 8, density: 1,
       reinforcedChance: 0, gravityChance: 0, explosiveChance: 0, maxBlast: 0,
     };
     const add = (x: number, y: number, row: number, kind: BrickKind = 'normal', hp = 1, blast = 0, phase = 0): void => {
-      this.bricks.push(this.createBrick(x, y, 80, 22, row, kind, hp, blast, phase));
+      this.bricks.push(this.createBrick(x, y, 64, 34, row, kind, hp, blast, phase));
     };
 
     if (mode === 'readability') {
@@ -424,8 +568,8 @@ export class BreakerGame extends BaseGame {
         ['normal', 1, 0], ['reinforced', 2, 0], ['explosive', 1, 2], ['gravity', 1, 0],
       ];
       kinds.forEach(([kind, hp, blast], i) => {
-        const x = 155 + i * 250;
-        this.bricks.push(this.createBrick(x, 220, 190, 48, i + 1, kind, hp, blast, cellNoise(17, i, 3)));
+        const x = 175 + i * 250;
+        this.bricks.push(this.createBrick(x, 208, 150, 72, i + 1, kind, hp, blast, cellNoise(17, i, 3)));
       });
       return;
     }
@@ -435,7 +579,7 @@ export class BreakerGame extends BaseGame {
       for (let r = 0; r < 3; r++) {
         for (let c = 0; c < 6; c++) {
           const explosive = r > 0;
-          add(420 + c * 90, 230 + r * 30, 2 + r, explosive ? 'explosive' : 'normal', 1, explosive ? 2 : 0, cellNoise(29, r, c));
+        add(420 + c * 90, 230 + r * 42, 2 + r, explosive ? 'explosive' : 'normal', 1, explosive ? 2 : 0, cellNoise(29, r, c));
         }
       }
       return;
@@ -445,7 +589,7 @@ export class BreakerGame extends BaseGame {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < 12; c++) {
         const kind: BrickKind = mode === 'bumper' && r === 1 && c % 4 === 1 ? 'reinforced' : 'normal';
-        add(150 + c * 90, 110 + r * 30, r, kind, kind === 'reinforced' ? 2 : 1, 0, cellNoise(37, r, c));
+        add(150 + c * 90, 110 + r * 42, r, kind, kind === 'reinforced' ? 2 : 1, 0, cellNoise(37, r, c));
       }
     }
   }
@@ -604,10 +748,17 @@ export class BreakerGame extends BaseGame {
     if (br.falling || br.exploded) return;
     this.setBrickImpact(br, source);
     br.hp = 0;
-    br.detachT = 0.08;
+    // Une impulsion courte précède la chute : la tuile recule, dérive un peu
+    // et commence à tourner avant que la gravité ne prenne franchement le
+    // dessus. Cela donne un vrai momentum au contact au lieu d'un simple
+    // changement d'état instantané.
+    const drift = cellNoise(this.level + 92, Math.round(br.y), Math.round(br.x));
+    const recoil = cellNoise(this.level + 93, Math.round(br.y), Math.round(br.x));
+    br.detachT = GRAVITY_DETACH_TIME;
     br.falling = false;
-    br.vy = 75 + cellNoise(this.level + 91, Math.round(br.y), Math.round(br.x)) * 85;
-    br.rot = (cellNoise(this.level + 101, Math.round(br.y), Math.round(br.x)) - 0.5) * 0.18;
+    br.vx = (drift - 0.5) * 190;
+    br.vy = -66 - recoil * 36;
+    br.rot = (cellNoise(this.level + 101, Math.round(br.y), Math.round(br.x)) - 0.5) * 0.28;
     this.registerBrickBreak(br, source, !fromExplosion, chainDepth);
     this.audio.tone({ f: 180, f1: 92, type: 'sawtooth', dur: 0.12, vol: 0.08 });
     this.input.rumble(0.2, 0.08);
@@ -629,13 +780,47 @@ export class BreakerGame extends BaseGame {
     const root = 55; // A1 : fondamentale profonde, puis rapports simples.
     const sparkleT = now + burstDelay;
 
-    this.audio.tone({ f: root, f1: root / 2, type: 'sine', t: now, dur: secondary ? 0.38 : 0.72, vol: 0.28 * scale, attack: 0.025 });
-    this.audio.tone({ f: root * 1.5, f1: root * 0.75, type: 'sine', t: now + 0.018, dur: secondary ? 0.3 : 0.52, vol: 0.11 * scale, attack: 0.012 });
-    this.audio.tone({ f: root * 2, f1: root, type: 'triangle', t: now + 0.035, dur: secondary ? 0.24 : 0.42, vol: 0.08 * scale, attack: 0.008 });
+    // Un souffle grave démarre dès la charge, puis le kick et la fondamentale
+    // descendent ensemble au moment du burst. Les valeurs sont volontairement
+    // généreuses : le compresseur master garde le choc dense sans crête sèche.
+    this.audio.noise({ t: now, dur: secondary ? 0.2 : 0.36, f: 190, f1: 28, type: 'lowpass', q: 0.7, vol: 0.62 * scale });
+    this.audio.tone({ f: 42, f1: 22, type: 'sine', t: now + 0.012, dur: secondary ? 0.32 : 0.58, vol: 0.52 * scale, attack: 0.012 });
+    this.audio.tone({ f: root, f1: root / 2, type: 'sine', t: now, dur: secondary ? 0.38 : 0.72, vol: 0.9 * scale, attack: 0.025 });
+    this.audio.tone({ f: root * 1.5, f1: root * 0.75, type: 'sine', t: now + 0.018, dur: secondary ? 0.3 : 0.52, vol: 0.32 * scale, attack: 0.012 });
+    this.audio.tone({ f: root * 2, f1: root, type: 'triangle', t: now + 0.035, dur: secondary ? 0.24 : 0.42, vol: 0.23 * scale, attack: 0.008 });
+
+    // Attaque courte au moment précis de l'implosion : c'est elle qui donne
+    // le “coup dans la poitrine”, avec une queue sub très lente.
+    this.audio.tone({ f: 128, f1: 28, type: 'sine', t: sparkleT, dur: secondary ? 0.16 : 0.27, vol: 1.45 * scale, attack: 0.002 });
+    // Couche de traduction audible sur des enceintes qui ne reproduisent pas
+    // correctement 20–45 Hz : elle reste grave, mais son attaque vit autour
+    // de 70–95 Hz pour que l'explosion soit réellement ressentie/entendue.
+    this.audio.tone({ f: 94, f1: 34, type: 'sine', t: sparkleT + 0.004, dur: secondary ? 0.22 : 0.38, vol: 1.12 * scale, attack: 0.003 });
+    this.audio.tone({ f: 72, f1: 27, type: 'triangle', t: sparkleT + 0.014, dur: secondary ? 0.32 : 0.56, vol: 0.76 * scale, attack: 0.005 });
+    this.audio.tone({ f: 58, f1: 20, type: 'sine', t: sparkleT + 0.008, dur: secondary ? 0.28 : 0.52, vol: 0.95 * scale, attack: 0.006 });
+    this.audio.noise({ t: sparkleT, dur: secondary ? 0.13 : 0.28, f: 640, f1: 32, type: 'lowpass', q: 0.65, vol: 0.65 * scale });
+
+    // Chaque élément de la réaction en chaîne possède sa propre instance du
+    // sample. Le volume décroît avec la profondeur pour garder le crescendo
+    // spectaculaire sans transformer plusieurs détonations en mur uniforme.
+    const sampleVolume = secondary
+      ? Math.max(0.18, (chainScene ? 0.38 : 0.62) * Math.pow(0.82, Math.min(4, depth - 1)))
+      : (chainScene ? 0.84 : 1.16);
+    this.audio.playSample?.(GRENADE_SAMPLE_KEY, {
+      t: Math.max(now, sparkleT - 0.018),
+      vol: sampleVolume,
+      playbackRate: secondary ? Math.min(1.04, 0.94 + depth * 0.018) : 0.9,
+      filterType: 'lowpass',
+      filterStart: secondary ? 2200 + Math.min(1600, depth * 280) : 1500,
+      filterEnd: 18000,
+      filterRamp: secondary ? 0.06 : 0.09,
+      attack: 0.004,
+      release: secondary ? 0.16 : 0.24,
+    });
 
     // Texture courte de feu d'artifice : bruit filtré + partiels harmoniques
     // espacés, plus doux sur les maillons secondaires d'une chaîne.
-    this.audio.noise({ t: sparkleT, dur: secondary ? 0.16 : 0.34, f: 4200, f1: 900, type: 'bandpass', q: 1.4, vol: 0.14 * scale });
+    this.audio.noise({ t: sparkleT, dur: secondary ? 0.16 : 0.34, f: 4200, f1: 900, type: 'bandpass', q: 1.4, vol: 0.46 * scale });
     [16, 24, 32].forEach((ratio, index) => {
       this.audio.tone({
         f: root * ratio,
@@ -643,12 +828,12 @@ export class BreakerGame extends BaseGame {
         type: index === 0 ? 'triangle' : 'sine',
         t: sparkleT + 0.022 + index * 0.035,
         dur: secondary ? 0.08 : 0.13,
-        vol: (0.055 - index * 0.009) * scale,
+        vol: (0.17 - index * 0.025) * scale,
         attack: 0.003,
       });
     });
     if (!secondary || !chainScene) {
-      this.audio.noise({ t: sparkleT + 0.075, dur: secondary ? 0.1 : 0.2, f: 2300, f1: 700, type: 'highpass', q: 0.8, vol: 0.055 * scale });
+      this.audio.noise({ t: sparkleT + 0.075, dur: secondary ? 0.1 : 0.2, f: 2300, f1: 700, type: 'highpass', q: 0.8, vol: 0.2 * scale });
     }
   }
 
@@ -656,29 +841,43 @@ export class BreakerGame extends BaseGame {
     const secondary = pulse.depth > 0;
     const chainScene = this.lab === 'chain';
     const scale = secondary ? (chainScene ? 0.28 : 0.52) : (chainScene ? 0.72 : 1);
-    const sparkCount = Math.max(3, Math.round((22 + pulse.power * 8) * scale));
+    const sparkCount = Math.max(3, Math.round((32 + pulse.power * 10) * scale));
     this.fx.burst(pulse.x, pulse.y, {
       n: sparkCount,
-      speed: [70, 310 + pulse.power * 55],
-      colors: [pulse.color, '#ffd166', '#ffffff'],
-      size: [1.5, 4.5], life: secondary ? 0.38 : 0.62, drag: 0.93, shape: 'spark',
+      speed: [80, 360 + pulse.power * 65],
+      colors: [pulse.color, '#ffd166', '#fff7ed', '#ffffff'],
+      size: [1.5, 5], life: secondary ? 0.38 : 0.7, drag: 0.93, shape: 'spark',
     });
     if (!secondary || !chainScene) {
       this.fx.burst(pulse.x, pulse.y, {
-        n: Math.max(2, Math.round((12 + pulse.power * 5) * scale)),
-        speed: [24, 220 + pulse.power * 35],
+        n: Math.max(2, Math.round((18 + pulse.power * 7) * scale)),
+        speed: [24, 250 + pulse.power * 45],
         colors: [pulse.color, '#fff7ed', '#ffffff'],
-        size: [2, 5], life: secondary ? 0.32 : 0.56, drag: 0.94, grav: 48, shape: 'dot',
+        size: [2, 5.5], life: secondary ? 0.32 : 0.62, drag: 0.94, grav: 48, shape: 'dot',
       });
     }
     this.fx.ring(pulse.x, pulse.y, {
       r0: Math.max(5, pulse.radius * 0.18), r1: pulse.radius * (secondary ? 0.86 : 1.04),
       color: pulse.color, life: secondary ? 0.28 : 0.52, width: secondary ? 1.5 : 3 + pulse.power,
     });
+    // Deux bandes distinctes donnent une onde de choc lisible : une large
+    // poussée lumineuse, puis une seconde ride plus fine qui reste visible
+    // après le flash central.
+    this.fx.ring(pulse.x, pulse.y, {
+      r0: 0, r1: pulse.radius * (secondary ? 0.98 : 1.28),
+      color: '#fff7ed', life: secondary ? 0.3 : 0.72, width: secondary ? 1.4 : 5 + pulse.power * 1.5,
+    });
     if (!secondary) {
-      this.fx.stop(chainScene ? 0.045 : Math.min(0.09, 0.035 + pulse.power * 0.018));
-      this.fx.shake(chainScene ? 0.11 : 0.18 + pulse.power * 0.08);
-      this.fx.flash(pulse.color, chainScene ? 0.1 : Math.min(0.2, 0.07 + pulse.power * 0.035));
+      this.fx.ring(pulse.x, pulse.y, {
+        r0: pulse.radius * 0.2, r1: pulse.radius * 1.02,
+        color: pulse.color, life: 0.48, width: 2.5 + pulse.power * 0.6,
+      });
+    }
+    if (!secondary) {
+      this.fx.stop(chainScene ? 0.045 : Math.min(0.13, 0.05 + pulse.power * 0.024));
+      this.fx.shake(chainScene ? 0.11 : 0.24 + pulse.power * 0.1);
+      this.fx.flash(pulse.color, chainScene ? 0.12 : Math.min(0.3, 0.14 + pulse.power * 0.045));
+      this.input.rumble(chainScene ? 0.36 : Math.min(0.95, 0.58 + pulse.power * 0.1), chainScene ? 0.05 : 0.11 + pulse.power * 0.018);
     }
     const particleLimit = chainScene ? 320 : 460;
     if (this.fx.parts.length > particleLimit) this.fx.parts.splice(0, this.fx.parts.length - particleLimit);
@@ -768,22 +967,33 @@ export class BreakerGame extends BaseGame {
     // Une gravity détachée est un corps de feedback, pas une seconde balle :
     // elle ignore volontairement Wall/Bumper dans cette V1.
     for (const br of this.bricks as BreakerBrick[]) {
+      let frameDt = dt;
       if ((br.detachT || 0) > 0) {
-        br.detachT = Math.max(0, (br.detachT || 0) - dt);
+        const leadDt = Math.min(frameDt, br.detachT || 0);
+        br.vx = (br.vx || 0) * Math.pow(0.84, leadDt * 60);
+        br.vy = (br.vy || 0) + 760 * leadDt;
+        br.x += (br.vx || 0) * leadDt;
+        br.y += (br.vy || 0) * leadDt;
+        br.rot = clampValue((br.rot || 0) + (br.vy * 0.0009 + 0.018) * leadDt, -Math.PI / 10, Math.PI / 10);
+        br.detachT = Math.max(0, (br.detachT || 0) - leadDt);
+        frameDt -= leadDt;
         if (br.detachT <= 0) {
           br.detachT = undefined;
           br.falling = true;
-        } else {
+        }
+        if (!br.falling || frameDt <= 0) {
           continue;
         }
       }
       if (!br.falling) continue;
       const previousBottom = br.y + br.h;
-      br.vy = (br.vy || 0) + 920 * dt;
-      br.y += br.vy * dt;
+      br.vx = (br.vx || 0) * Math.pow(0.96, frameDt * 60);
+      br.vy = (br.vy || 0) + 920 * frameDt;
+      br.x += (br.vx || 0) * frameDt;
+      br.y += br.vy * frameDt;
       // La chute reste lisible : la tuile peut basculer, mais ne part jamais
       // dans une rotation incontrôlable (±15°).
-      br.rot = clampValue((br.rot || 0) + (br.vy * 0.0008 + 0.012) * dt, -Math.PI / 12, Math.PI / 12);
+      br.rot = clampValue((br.rot || 0) + (br.vy * 0.0008 + 0.012) * frameDt, -Math.PI / 12, Math.PI / 12);
       const overlapsPad = br.x < this.pad.x + this.padW / 2 && br.x + br.w > this.pad.x - this.padW / 2;
       const crossedPad = previousBottom < PAD_Y + 10 && br.y + br.h >= PAD_Y - 10;
       if (overlapsPad && crossedPad) {
@@ -1260,21 +1470,23 @@ export class BreakerGame extends BaseGame {
     const pulse = isExplosive
       ? (queued ? 0.88 + 0.22 * (0.5 + 0.5 * Math.sin(idlePhase)) : 1 + 0.1 * Math.sin(idlePhase))
       : 1;
-    const visualOffset = isDetaching ? 2 * (1 - (br.detachT || 0) / 0.08) : 0;
-    const localCx = isFalling ? 0 : cx;
-    const localCy = isFalling ? 0 : cy + visualOffset;
-    const ox = isFalling ? -br.w / 2 : br.x;
-    const oy = isFalling ? -br.h / 2 : br.y + visualOffset;
+    const visualOffset = isDetaching ? 2 * (1 - (br.detachT || 0) / GRAVITY_DETACH_TIME) : 0;
+    const isDetached = isFalling || isDetaching;
+    const localCx = isDetached ? 0 : cx;
+    const localCy = isDetached ? 0 : cy + visualOffset;
+    const ox = isDetached ? -br.w / 2 : br.x;
+    const oy = isDetached ? -br.h / 2 : br.y + visualOffset;
+    const brickRadius = Math.min(7, br.h * 0.3);
 
     ctx.save();
-    if (isFalling) {
+    if (isDetached) {
       ctx.translate(cx, cy);
       ctx.rotate(br.rot || 0);
-      ctx.globalAlpha = 0.9;
+      ctx.globalAlpha = isFalling ? 0.9 : 0.96;
       ctx.shadowColor = '#38bdf8';
-      ctx.shadowBlur = 16;
+      ctx.shadowBlur = isFalling ? 16 : 10;
     }
-    UI.roundRect(ctx, ox, oy, br.w, br.h, Math.min(7, br.h * 0.3));
+    UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
     ctx.fillStyle = br.fl > 0 ? '#ffffff' : damaged ? br.dark : body;
     ctx.fill();
     ctx.shadowBlur = 0;
@@ -1282,87 +1494,219 @@ export class BreakerGame extends BaseGame {
     UI.roundRect(ctx, ox + 5, oy + 4, Math.max(4, br.w - 10), Math.max(2, Math.min(5, br.h * 0.25)), 2.5);
     ctx.fill();
 
+    // Un filet sombre détache la silhouette des tuiles quand leur taille
+    // diminue, puis un liseré clair garde la matière lisible sur le fond.
+    ctx.strokeStyle = '#020617b8';
+    ctx.lineWidth = Math.max(1.5, Math.min(3, br.h * 0.08));
+    UI.roundRect(ctx, ox + 1, oy + 1, br.w - 2, br.h - 2, Math.max(2, brickRadius - 1));
+    ctx.stroke();
+    ctx.strokeStyle = '#ffffff3d';
+    ctx.lineWidth = 1;
+    UI.roundRect(ctx, ox + 2.5, oy + 2.5, br.w - 5, br.h - 5, Math.max(2, brickRadius - 2));
+    ctx.stroke();
+
     if (isGravity) {
-      ctx.strokeStyle = '#dbeafe';
-      ctx.globalAlpha = 0.72 + Math.sin(idlePhase) * 0.1;
-      ctx.lineWidth = 1.5;
-      const flow = (Math.sin(idlePhase) * 0.5 + 0.5) * 2.5;
-      ctx.beginPath();
-      for (const x of [0.34, 0.5, 0.66]) {
-        ctx.moveTo(ox + br.w * x, oy + br.h * 0.3 + flow);
-        ctx.lineTo(ox + br.w * x, oy + br.h * 0.62 + flow);
+      const image = breakerImage(BREAKER_GAMEPLAY_URL.gravity);
+      if (image) {
+        ctx.save();
+        UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'screen';
+        ctx.globalAlpha = 0.78 + Math.sin(idlePhase) * 0.08;
+        ctx.drawImage(image, ox - br.w * 0.02, oy - br.h * 0.02, br.w * 1.04, br.h * 1.04);
+        ctx.restore();
+      } else {
+        const drawGravityGlyph = (): void => {
+          const flow = (Math.sin(idlePhase) * 0.5 + 0.5) * Math.min(2.5, br.h * 0.08);
+          ctx.beginPath();
+          for (const x of [0.34, 0.5, 0.66]) {
+            ctx.moveTo(ox + br.w * x, oy + br.h * 0.27 + flow);
+            ctx.lineTo(ox + br.w * x, oy + br.h * 0.57 + flow);
+          }
+          ctx.moveTo(ox + br.w * 0.27, oy + br.h * 0.5 + flow);
+          ctx.lineTo(ox + br.w * 0.5, oy + br.h * 0.78 + flow);
+          ctx.lineTo(ox + br.w * 0.73, oy + br.h * 0.5 + flow);
+          ctx.stroke();
+        };
+        // Double tracé (encre sombre sous le cyan) : le symbole reste lisible
+        // même sur les mailles les plus fines.
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#082f49';
+        ctx.globalAlpha = 0.92;
+        ctx.lineWidth = Math.max(3.2, Math.min(5, br.h * 0.17));
+        drawGravityGlyph();
+        ctx.strokeStyle = '#eff6ff';
+        ctx.globalAlpha = 0.95 + Math.sin(idlePhase) * 0.04;
+        ctx.lineWidth = Math.max(1.6, Math.min(3, br.h * 0.085));
+        drawGravityGlyph();
       }
-      ctx.moveTo(ox + br.w * 0.27, oy + br.h * 0.54 + flow);
-      ctx.lineTo(ox + br.w * 0.5, oy + br.h * 0.79 + flow);
-      ctx.lineTo(ox + br.w * 0.73, oy + br.h * 0.54 + flow);
-      ctx.stroke();
     } else if (isExplosive) {
-      ctx.globalCompositeOperation = 'lighter';
-      ctx.strokeStyle = '#fff7ed';
-      ctx.fillStyle = queued ? '#fff7ed' : '#ffe4c7';
-      ctx.globalAlpha = queued ? 0.95 : 0.88;
-      ctx.lineWidth = queued ? 1.8 : 1.4;
-      const coreR = Math.max(4, Math.min(br.w, br.h) * 0.34 * pulse);
-      ctx.beginPath();
-      ctx.arc(localCx, localCy, coreR, 0, 6.2832);
-      ctx.fill();
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.moveTo(localCx - coreR * 1.7, localCy);
-      ctx.lineTo(localCx + coreR * 1.7, localCy);
-      ctx.moveTo(localCx, localCy - coreR * 1.35);
-      ctx.lineTo(localCx, localCy + coreR * 1.35);
-      ctx.stroke();
-      for (let i = 0; i < Math.min(3, br.blast || 1); i++) {
-        const a = -Math.PI / 2 + i * Math.PI * 2 / Math.min(3, br.blast || 1);
-        const px = localCx + Math.cos(a) * Math.max(5, br.w * 0.27);
-        const py = localCy + Math.sin(a) * Math.max(4, br.h * 0.33);
-        ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 6.2832); ctx.fill();
+      const image = breakerImage(BREAKER_GAMEPLAY_URL.explosive);
+      if (image) {
+        // L'asset conserve le pictogramme explosif riche et contrasté, tandis
+        // que le clip l'empêche de déborder quand la tuile est petite.
+        ctx.save();
+        UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+        ctx.clip();
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.globalAlpha = (queued ? 0.86 : 0.72) + (queued ? 0.12 : 0.08) * pulse;
+        ctx.shadowColor = '#fff0c2';
+        ctx.shadowBlur = 8 + (queued ? 8 : 0) * pulse;
+        ctx.drawImage(image, ox, oy, br.w, br.h);
+        ctx.restore();
+      } else {
+        // Fallback lisible pendant le chargement : noyau clair + croix nette.
+        ctx.globalCompositeOperation = 'lighter';
+        ctx.strokeStyle = '#fff7ed';
+        ctx.fillStyle = queued ? '#fff7ed' : '#ffe4c7';
+        ctx.globalAlpha = queued ? 0.95 : 0.88;
+        ctx.lineWidth = queued ? 1.8 : 1.4;
+        const coreR = Math.max(4, Math.min(br.w, br.h) * 0.34 * pulse);
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.arc(localCx, localCy, coreR, 0, 6.2832);
+        ctx.fill();
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(localCx - coreR * 1.7, localCy);
+        ctx.lineTo(localCx + coreR * 1.7, localCy);
+        ctx.moveTo(localCx, localCy - coreR * 1.35);
+        ctx.lineTo(localCx, localCy + coreR * 1.35);
+        ctx.stroke();
+        for (let i = 0; i < Math.min(3, br.blast || 1); i++) {
+          const a = -Math.PI / 2 + i * Math.PI * 2 / Math.min(3, br.blast || 1);
+          const px = localCx + Math.cos(a) * Math.max(5, br.w * 0.27);
+          const py = localCy + Math.sin(a) * Math.max(4, br.h * 0.33);
+          ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 6.2832); ctx.fill();
+        }
       }
       if (queued) {
+        const coreR = Math.max(4, Math.min(br.w, br.h) * 0.34 * pulse);
         ctx.globalAlpha = 0.45 + queuedProgress * 0.45;
+        ctx.strokeStyle = '#fff7ed';
+        ctx.lineWidth = 1.4;
         ctx.setLineDash([2, 3]);
         ctx.beginPath(); ctx.arc(localCx, localCy, coreR + 5 + (1 - queuedProgress) * 7, 0, 6.2832); ctx.stroke();
         ctx.setLineDash([]);
       }
     } else if (br.maxHp > 1) {
-      // Deux coques + rivets : la masse reste reconnaissable même sans sa couleur.
-      ctx.strokeStyle = 'rgba(255,255,255,0.72)';
-      ctx.lineWidth = 1.5;
-      UI.roundRect(ctx, ox + 2, oy + 2, br.w - 4, br.h - 4, Math.min(5, br.h * 0.25));
-      ctx.stroke();
-      ctx.strokeStyle = 'rgba(255,255,255,0.32)';
-      ctx.lineWidth = 1;
-      UI.roundRect(ctx, ox + 6, oy + 5, br.w - 12, br.h - 10, Math.min(4, br.h * 0.2));
-      ctx.stroke();
-      ctx.fillStyle = '#ffffffaa';
-      for (const px of [ox + 8, ox + br.w - 8]) {
-        for (const py of [oy + 8, oy + br.h - 8]) {
-          ctx.beginPath(); ctx.arc(px, py, 1.5, 0, 6.2832); ctx.fill();
+      const image = breakerImage(BREAKER_GAMEPLAY_URL.reinforced);
+      if (image) {
+        // Le cadre métallique est lui-même contenu dans la forme de la tuile,
+        // ce qui conserve l'impact de la fissure sans débordement visuel.
+        ctx.save();
+        UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+        ctx.clip();
+        ctx.globalAlpha = damaged ? 0.92 : 0.82;
+        ctx.drawImage(image, ox, oy, br.w, br.h);
+        ctx.restore();
+      } else {
+        // Fallback : deux coques + rivets pendant le chargement de l'asset.
+        ctx.lineJoin = 'round';
+        ctx.strokeStyle = '#111827dd';
+        ctx.lineWidth = Math.max(3, Math.min(5, br.h * 0.12));
+        UI.roundRect(ctx, ox + 2, oy + 2, br.w - 4, br.h - 4, Math.min(5, br.h * 0.25));
+        ctx.stroke();
+        ctx.strokeStyle = '#f8fafccc';
+        ctx.lineWidth = Math.max(1.6, Math.min(2.4, br.h * 0.06));
+        UI.roundRect(ctx, ox + 2, oy + 2, br.w - 4, br.h - 4, Math.min(5, br.h * 0.25));
+        ctx.stroke();
+        ctx.strokeStyle = '#111827cc';
+        ctx.lineWidth = Math.max(2.5, Math.min(4, br.h * 0.095));
+        UI.roundRect(ctx, ox + 6, oy + 5, br.w - 12, br.h - 10, Math.min(4, br.h * 0.2));
+        ctx.stroke();
+        ctx.strokeStyle = '#ffffffb8';
+        ctx.lineWidth = 1.2;
+        UI.roundRect(ctx, ox + 6, oy + 5, br.w - 12, br.h - 10, Math.min(4, br.h * 0.2));
+        ctx.stroke();
+        const rivetR = Math.max(1.8, Math.min(2.8, br.h * 0.075));
+        ctx.fillStyle = '#111827';
+        for (const px of [ox + 8, ox + br.w - 8]) {
+          for (const py of [oy + 8, oy + br.h - 8]) {
+            ctx.beginPath(); ctx.arc(px, py, rivetR + 1, 0, 6.2832); ctx.fill();
+            ctx.fillStyle = '#ffffff';
+            ctx.beginPath(); ctx.arc(px, py, rivetR, 0, 6.2832); ctx.fill();
+            ctx.fillStyle = '#111827';
+          }
         }
       }
+      // Les points de vie restent dessinés par le canvas afin de garder leur
+      // lisibilité à toutes les tailles et de refléter l'état réel de la tuile.
       for (let i = 0; i < br.maxHp; i++) {
         ctx.fillStyle = i < br.hp ? '#ffffffcc' : '#0b0e1466';
         ctx.beginPath(); ctx.arc(ox + br.w - 8 - i * 6, oy + br.h - 6, 1.7, 0, 6.2832); ctx.fill();
       }
     }
 
-    if (damaged && !isFalling) {
+    if (damaged && !isDetached) {
+      // La cicatrice est réellement découpée par le chemin de la tuile. Le
+      // point d'impact est déjà ramené dans ses limites dans setBrickImpact,
+      // et ce clip empêche les branches de dépasser dans les interstices.
+      const impactX = clampValue(br.hitX, br.x + 3, br.x + br.w - 3);
+      const impactY = clampValue(br.hitY, br.y + 3, br.y + br.h - 3) + visualOffset;
+      const crackProgress = br.hitT > 0 ? clampValue(1 - br.hitT / 0.3, 0, 1) : 1;
+      const crackEase = 1 - Math.pow(1 - crackProgress, 2.2);
+      const branches: Array<Array<[number, number]>> = [
+        [[impactX, impactY], [impactX + br.w * 0.05, impactY - br.h * 0.13], [impactX + br.w * 0.16, impactY - br.h * 0.32]],
+        [[impactX, impactY], [impactX - br.w * 0.09, impactY + br.h * 0.06], [impactX - br.w * 0.2, impactY + br.h * 0.24]],
+        [[impactX, impactY], [impactX + br.w * 0.06, impactY + br.h * 0.14], [impactX + br.w * 0.08, impactY + br.h * 0.38]],
+      ];
+      const forks: Array<Array<[number, number]>> = [
+        [[impactX + br.w * 0.05, impactY - br.h * 0.13], [impactX + br.w * 0.14, impactY - br.h * 0.07], [impactX + br.w * 0.22, impactY - br.h * 0.1]],
+        [[impactX - br.w * 0.09, impactY + br.h * 0.06], [impactX - br.w * 0.04, impactY + br.h * 0.16], [impactX - br.w * 0.12, impactY + br.h * 0.25]],
+      ];
+      const drawBranch = (points: Array<[number, number]>, progress: number): void => {
+        if (progress <= 0) return;
+        let totalLength = 0;
+        for (let i = 1; i < points.length; i++) {
+          totalLength += Math.hypot(points[i][0] - points[i - 1][0], points[i][1] - points[i - 1][1]);
+        }
+        let remaining = totalLength * Math.min(1, progress);
+        ctx.moveTo(points[0][0], points[0][1]);
+        for (let i = 1; i < points.length; i++) {
+          const from = points[i - 1], to = points[i];
+          const length = Math.hypot(to[0] - from[0], to[1] - from[1]);
+          if (remaining >= length) {
+            ctx.lineTo(to[0], to[1]);
+            remaining -= length;
+          } else {
+            const k = length > 0 ? remaining / length : 1;
+            ctx.lineTo(from[0] + (to[0] - from[0]) * k, from[1] + (to[1] - from[1]) * k);
+            break;
+          }
+        }
+      };
+      const drawCrack = (progress: number): void => {
+        ctx.beginPath();
+        for (const branch of branches) drawBranch(branch, progress);
+        for (const fork of forks) drawBranch(fork, clampValue((progress - 0.38) / 0.62, 0, 1));
+        ctx.stroke();
+      };
+      ctx.save();
+      UI.roundRect(ctx, ox, oy, br.w, br.h, brickRadius);
+      ctx.clip();
+      ctx.lineCap = 'round';
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 0.58 + crackEase * 0.42;
+      ctx.strokeStyle = '#050816dd';
+      ctx.lineWidth = Math.max(1.8, Math.min(2.5, br.h * 0.055));
+      drawCrack(crackEase);
       ctx.globalCompositeOperation = 'lighter';
-      ctx.strokeStyle = '#ffffffaa';
-      ctx.lineWidth = 1.2;
-      ctx.beginPath();
-      ctx.moveTo(br.hitX, br.hitY);
-      ctx.lineTo(br.hitX + br.w * 0.16, br.hitY - br.h * 0.32);
-      ctx.moveTo(br.hitX, br.hitY);
-      ctx.lineTo(br.hitX - br.w * 0.2, br.hitY + br.h * 0.24);
-      ctx.moveTo(br.hitX, br.hitY);
-      ctx.lineTo(br.hitX + br.w * 0.08, br.hitY + br.h * 0.38);
-      ctx.stroke();
+      ctx.strokeStyle = '#ffffffdd';
+      ctx.lineWidth = Math.max(0.65, Math.min(1.2, br.h * 0.028));
+      drawCrack(crackEase);
+      if (crackProgress > 0 && crackProgress < 1) {
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath(); ctx.arc(impactX, impactY, 1.5 + crackProgress * 1.3, 0, 6.2832); ctx.fill();
+      }
+      ctx.restore();
     }
     if (br.hitT > 0) {
       const k = Math.min(1, br.hitT / 0.3);
-      const ix = isFalling ? 0 : br.hitX, iy = isFalling ? 0 : br.hitY + visualOffset;
+      const ix = isDetached ? 0 : br.hitX, iy = isDetached ? 0 : br.hitY + visualOffset;
       ctx.globalCompositeOperation = 'lighter';
       ctx.globalAlpha = k;
       ctx.strokeStyle = '#ffffff';
@@ -1420,16 +1764,63 @@ export class BreakerGame extends BaseGame {
       }
       if (!lightMode) {
         const gradient = ctx.createRadialGradient(pulse.x, pulse.y, 0, pulse.x, pulse.y, Math.max(1, visualRadius));
-        gradient.addColorStop(0, `rgba(255,255,255,${0.78 * fade})`);
-        gradient.addColorStop(0.26, pulse.color + 'bb');
+        gradient.addColorStop(0, `rgba(255,255,255,${Math.min(1, 0.98 * fade)})`);
+        gradient.addColorStop(0.2, pulse.color + 'ee');
+        gradient.addColorStop(0.42, pulse.color + 'bb');
         gradient.addColorStop(1, pulse.color + '00');
-        ctx.globalAlpha = fade * 0.8;
+        ctx.globalAlpha = fade * 0.92;
+        ctx.shadowColor = pulse.color;
+        ctx.shadowBlur = phase === 'implode' ? 26 + pulse.power * 6 : 16 + pulse.power * 4;
         ctx.fillStyle = gradient;
         ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(2, visualRadius), 0, 6.2832); ctx.fill();
+        ctx.shadowBlur = 0;
       } else {
-        ctx.globalAlpha = fade * 0.42;
+        ctx.globalAlpha = fade * 0.54;
         ctx.fillStyle = pulse.color + '66';
         ctx.beginPath(); ctx.arc(pulse.x, pulse.y, Math.max(2, visualRadius), 0, 6.2832); ctx.fill();
+      }
+
+      if (phase === 'cloud') {
+        // Une bande irrégulière, avec franges lumineuses, simule la lentille
+        // d'air comprimé qui repousse le décor autour du point d'impact.
+        const waveFade = Math.pow(Math.max(0, 1 - cloudK), 1.18) * (lightMode ? 0.58 : 1);
+        if (waveFade > 0.01) {
+          const shockRadius = radius * (0.05 + cloudEase * (lightMode ? 1.08 : 1.36));
+          const rippleAmplitude = Math.min(9, radius * 0.045) * (1 - cloudEase * 0.25);
+          const drawShockRing = (offset = 0): void => {
+            const segments = lightMode ? 32 : 56;
+            ctx.beginPath();
+            for (let i = 0; i <= segments; i++) {
+              const angle = (i / segments) * 6.2832;
+              const wobble = Math.sin(angle * 5 + pulse.x * 0.013 + pulse.t * 14) * rippleAmplitude
+                + Math.sin(angle * 9 - pulse.y * 0.009 - pulse.t * 9) * rippleAmplitude * 0.42;
+              const ringRadius = Math.max(1, shockRadius + offset + wobble);
+              const px = pulse.x + Math.cos(angle) * ringRadius;
+              const py = pulse.y + Math.sin(angle) * ringRadius;
+              if (i === 0) ctx.moveTo(px, py);
+              else ctx.lineTo(px, py);
+            }
+            ctx.stroke();
+          };
+          ctx.lineCap = 'round';
+          ctx.shadowColor = pulse.color;
+          ctx.shadowBlur = lightMode ? 5 : 18 + pulse.power * 5;
+          ctx.globalAlpha = waveFade * (lightMode ? 0.24 : 0.44);
+          ctx.strokeStyle = pulse.color;
+          ctx.lineWidth = lightMode ? 4 : 9 + pulse.power * 2;
+          drawShockRing();
+          ctx.shadowBlur = 0;
+          ctx.globalAlpha = waveFade * (lightMode ? 0.72 : 0.98);
+          ctx.strokeStyle = '#fff7ed';
+          ctx.lineWidth = lightMode ? 1.5 : 2.6 + pulse.power * 0.45;
+          drawShockRing();
+          if (!lightMode) {
+            ctx.globalAlpha = waveFade * 0.3;
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 1;
+            drawShockRing(6 + pulse.power * 1.5);
+          }
+        }
       }
 
       ctx.globalAlpha = fade;
@@ -1478,6 +1869,41 @@ export class BreakerGame extends BaseGame {
       Math.min(9, Math.min(wall.w, wall.h) * 0.35),
     );
     ctx.stroke();
+
+    const image = breakerImage(BREAKER_GAMEPLAY_URL.wall);
+    if (image) {
+      const vertical = wall.h > wall.w;
+      // L'épaisseur visuelle dépasse légèrement la hitbox : l'arête est plus
+      // facile à lire et la tolérance de collision ne donne pas l'impression
+      // que la balle rebondit dans le vide.
+      const visualPad = Math.max(3, Math.min(8, Math.min(wall.w, wall.h) * 0.3));
+      ctx.save();
+      ctx.globalAlpha = 0.96;
+      ctx.shadowColor = '#7dd3fc';
+      ctx.shadowBlur = 10;
+      if (vertical) {
+        ctx.translate(wall.x + wall.w / 2, wall.y + wall.h / 2);
+        ctx.rotate(Math.PI / 2);
+        ctx.drawImage(image, -wall.h / 2, -(wall.w + visualPad * 2) / 2, wall.h, wall.w + visualPad * 2);
+      } else {
+        ctx.drawImage(image, wall.x, wall.y - visualPad, wall.w, wall.h + visualPad * 2);
+      }
+      ctx.restore();
+      ctx.strokeStyle = '#e0f2fe66';
+      ctx.lineWidth = 1;
+      UI.roundRect(
+        ctx,
+        wall.x - visualPad * 0.35,
+        wall.y - visualPad * 0.35,
+        wall.w + visualPad * 0.7,
+        wall.h + visualPad * 0.7,
+        Math.min(9, Math.min(wall.w, wall.h) * 0.35),
+      );
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     UI.roundRect(ctx, wall.x, wall.y, wall.w, wall.h, Math.min(7, Math.min(wall.w, wall.h) * 0.3));
     ctx.fillStyle = '#263244';
     ctx.fill();
@@ -1511,9 +1937,44 @@ export class BreakerGame extends BaseGame {
     const breath = 1 + Math.sin(this.time * 3.14 + bumper.id * 1.7) * 0.025;
     const pulse = clampValue(bumper.pulseT / 0.25, 0, 1);
     const squash = breath + pulse * 0.1;
+    const outer = breakerImage(BREAKER_GAMEPLAY_URL.bumperOuter);
+    const inner = breakerImage(BREAKER_GAMEPLAY_URL.bumperInner);
     ctx.save();
     ctx.translate(bumper.x, bumper.y);
     ctx.scale(squash, 1 - pulse * 0.08);
+
+    if (outer || inner) {
+      // Les deux calques ont été fournis pour être superposés : l'anneau
+      // externe porte la silhouette et le disque interne donne la cible
+      // lisible. Les effets de pulse restent procéduraux pour suivre le hit.
+      const size = bumper.r * 2 + 6;
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.shadowColor = '#ffd166';
+      ctx.shadowBlur = 10 + pulse * 12;
+      if (outer) {
+        ctx.globalAlpha = 0.96;
+        ctx.drawImage(outer, -size / 2, -size / 2, size, size);
+      }
+      if (inner) {
+        ctx.globalAlpha = 0.98;
+        ctx.drawImage(inner, -size / 2, -size / 2, size, size);
+      }
+      ctx.shadowBlur = 0;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.28 + pulse * 0.38;
+      ctx.strokeStyle = '#fff7cc';
+      ctx.lineWidth = 1.5 + pulse * 2;
+      ctx.beginPath(); ctx.arc(0, 0, bumper.r * (0.7 + pulse * 0.16), 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = 0.18 + pulse * 0.2;
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 0, bumper.r + BUMPER_COLLISION_PADDING, 0, 6.2832); ctx.stroke();
+      ctx.globalAlpha = 0.8;
+      ctx.fillStyle = '#fff7cc';
+      ctx.beginPath(); ctx.arc(0, 0, bumper.r * 0.12 + pulse * 2, 0, 6.2832); ctx.fill();
+      ctx.restore();
+      return;
+    }
+
     ctx.globalCompositeOperation = 'lighter';
     ctx.shadowColor = '#ffd166';
     ctx.shadowBlur = 10 + pulse * 12;
@@ -1657,21 +2118,81 @@ export class BreakerGame extends BaseGame {
     ctx.restore();
   }
 
+  drawDrop(ctx: CanvasRenderingContext2D, drop: BreakerDrop): void {
+    const image = breakerImage(BREAKER_BONUS_URL[drop.kind]);
+    const bob = Math.sin(this.time * 5 + drop.x * 0.03) * 2;
+    ctx.save();
+    ctx.translate(drop.x, drop.y + bob);
+    ctx.rotate(Math.sin(this.time * 3 + drop.x) * 0.12);
+    ctx.shadowColor = DCOL[drop.kind];
+    ctx.shadowBlur = image ? 16 : 12;
+    if (image) {
+      // Les bonus sont désormais de vrais objets visuels : leur silhouette
+      // ronde reste identifiable même quand ils tombent entre deux briques.
+      ctx.globalAlpha = 0.98;
+      ctx.drawImage(image, -17, -17, 34, 34);
+      ctx.shadowBlur = 0;
+      ctx.globalCompositeOperation = 'lighter';
+      ctx.globalAlpha = 0.28 + Math.sin(this.time * 8 + drop.x) * 0.08;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.arc(0, 0, 16.5, 0, 6.2832); ctx.stroke();
+    } else {
+      // Fallback compact conservé pour le premier frame ou un asset manquant.
+      UI.roundRect(ctx, -9, -9, 18, 18, 5);
+      ctx.fillStyle = DCOL[drop.kind];
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      UI.txt(ctx, DGLYPH[drop.kind], 0, 1, {
+        size: DGLYPH[drop.kind].length > 1 ? 8 : 12,
+        align: 'center', baseline: 'middle', color: '#0b0e14', weight: 900,
+      });
+    }
+    ctx.restore();
+  }
+
   drawPaddle(ctx: CanvasRenderingContext2D): void {
     const pad = this.pad, w = this.padW, h = 18;
     const sq = Math.min(1, Math.abs(pad.vx) / 900);
+    const paddleImage = breakerImage(BREAKER_GAMEPLAY_URL.paddle);
     ctx.save();
     ctx.translate(pad.x, PAD_Y);
     ctx.scale(1 + sq * 0.1 + Math.sin(this.time * 9) * 0.015, 1 - sq * 0.14 + Math.cos(this.time * 9) * 0.01);
-    ctx.shadowColor = this.freezeT > 0 ? '#7dd3fc' : this.accent;
-    ctx.shadowBlur = 16;
-    UI.roundRect(ctx, -w / 2, -h / 2, w, h, 9);
-    ctx.fillStyle = this.freezeT > 0 ? '#7dd3fc' : this.accent;
-    ctx.fill();
-    ctx.shadowBlur = 0;
-    ctx.fillStyle = 'rgba(255,255,255,0.2)';
-    UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 5, 2.5);
-    ctx.fill();
+    const paddleColor = this.freezeT > 0 ? '#7dd3fc' : this.accent;
+    if (paddleImage) {
+      // Le visuel est un peu plus haut que la hitbox : la planche paraît
+      // matérielle sans rendre les contacts plus difficiles à anticiper.
+      const visualH = 26;
+      ctx.shadowColor = paddleColor;
+      ctx.shadowBlur = 16;
+      ctx.globalAlpha = 0.96;
+      ctx.drawImage(paddleImage, -w / 2, -visualH / 2, w, visualH);
+      // Teinte légère : on garde les reflets blancs du pack tout en faisant
+      // suivre la couleur de l'état actif (freeze ou accent du niveau).
+      ctx.globalCompositeOperation = 'source-atop';
+      ctx.globalAlpha = 0.3;
+      ctx.fillStyle = paddleColor;
+      ctx.fillRect(-w / 2, -visualH / 2, w, visualH);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.globalAlpha = 0.5;
+      ctx.fillStyle = '#ffffff';
+      UI.roundRect(ctx, -w / 2 + 8, -visualH * 0.28, w - 16, 3, 1.5);
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    } else {
+      ctx.shadowColor = paddleColor;
+      ctx.shadowBlur = 16;
+      UI.roundRect(ctx, -w / 2, -h / 2, w, h, 9);
+      ctx.fillStyle = paddleColor;
+      ctx.fill();
+      ctx.shadowBlur = 0;
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      UI.roundRect(ctx, -w / 2 + 6, -h / 2 + 3, w - 12, 5, 2.5);
+      ctx.fill();
+    }
     // yeux qui suivent la balle
     const b0 = this.balls[0];
     const lx = b0 ? Math.max(-1, Math.min(1, (b0.x - pad.x) / 320)) * 2.5 : 0;
@@ -1773,40 +2294,55 @@ export class BreakerGame extends BaseGame {
     if (this.largeT > 0) powers.push(['LARGE', Math.ceil(this.largeT) + 's', DCOL.LARGE]);
     if (this.smallT > 0) powers.push(['SMALL', Math.ceil(this.smallT) + 's', DCOL.SMALL]);
     if (this.slowT > 0) powers.push(['SLOW', Math.ceil(this.slowT) + 's', DCOL.SLOW]);
+    if (this.freezeT > 0) powers.push(['FREEZE', Math.ceil(this.freezeT) + 's', '#7dd3fc']);
     if (this.balls.length > 1) powers.push(['MULTI', '×' + this.balls.length, DCOL.MULTI]);
     if (!powers.length) return;
 
     const columns = powers.length > 4 ? 2 : 1;
     const rows = Math.ceil(powers.length / columns);
-    const x = 20, y = 514, w = columns === 2 ? 300 : 224, h = 30 + rows * 18;
+    const rowHeight = 24;
+    const x = 20, y = 514, w = columns === 2 ? 300 : 224, h = 30 + rows * rowHeight;
     UI.panel(ctx, x, y, w, h, { radius: 12, fill: '#100d18e8', stroke: '#ffffff22', lineWidth: 1 });
     UI.txt(ctx, 'POUVOIRS', x + 12, y + 18, { size: 10, mono: true, color: '#8b95a8', weight: 800 });
     powers.forEach(([name, value, color], index) => {
       const column = index % columns;
       const row = Math.floor(index / columns);
       const cellX = x + column * (w / columns);
-      const py = y + 37 + row * 18;
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(cellX + 14, py - 4, 3, 0, 6.2832);
-      ctx.fill();
-      UI.txt(ctx, name, cellX + 24, py, { size: 11, mono: true, color, weight: 800 });
+      const py = y + 42 + row * rowHeight;
+      const icon = BREAKER_HUD_URL[name] ? breakerImage(BREAKER_HUD_URL[name]) : null;
+      if (icon) {
+        ctx.globalAlpha = 0.96;
+        ctx.drawImage(icon, cellX + 3, py - 22, 22, 22);
+        ctx.globalAlpha = 1;
+      } else {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(cellX + 14, py - 5, 3, 0, 6.2832);
+        ctx.fill();
+      }
+      UI.txt(ctx, name, cellX + (icon ? 29 : 24), py, { size: 11, mono: true, color, weight: 800 });
       UI.txt(ctx, value, cellX + w / columns - 12, py, { size: 11, mono: true, color: '#dce3ee', align: 'right' });
     });
   }
 
   lifeBlob(ctx: CanvasRenderingContext2D, x: number, y: number, on: boolean): void {
+    const icon = breakerImage(BREAKER_HUD_URL.LIFE);
+    ctx.save();
     ctx.globalAlpha = on ? 1 : 0.15;
-    ctx.fillStyle = this.accent;
-    ctx.beginPath();
-    ctx.arc(x, y, 8, 0, 6.2832);
-    ctx.fill();
-    if (on) {
-      ctx.fillStyle = '#0b0e14';
-      ctx.beginPath(); ctx.arc(x - 2.6, y - 1.5, 1.4, 0, 6.2832); ctx.fill();
-      ctx.beginPath(); ctx.arc(x + 2.6, y - 1.5, 1.4, 0, 6.2832); ctx.fill();
+    if (icon) {
+      ctx.drawImage(icon, x - 11, y - 11, 22, 22);
+    } else {
+      ctx.fillStyle = this.accent;
+      ctx.beginPath();
+      ctx.arc(x, y, 8, 0, 6.2832);
+      ctx.fill();
+      if (on) {
+        ctx.fillStyle = '#0b0e14';
+        ctx.beginPath(); ctx.arc(x - 2.6, y - 1.5, 1.4, 0, 6.2832); ctx.fill();
+        ctx.beginPath(); ctx.arc(x + 2.6, y - 1.5, 1.4, 0, 6.2832); ctx.fill();
+      }
     }
-    ctx.globalAlpha = 1;
+    ctx.restore();
   }
 
   render(ctx: CanvasRenderingContext2D): void {
@@ -1836,19 +2372,7 @@ export class BreakerGame extends BaseGame {
 
     // drops
     for (const d of this.drops as BreakerDrop[]) {
-      ctx.save();
-      ctx.translate(d.x, d.y + Math.sin(this.time * 5 + d.x * 0.03) * 2);
-      ctx.rotate(Math.sin(this.time * 3 + d.x) * 0.12);
-      ctx.shadowColor = DCOL[d.kind]; ctx.shadowBlur = 12;
-      UI.roundRect(ctx, -9, -9, 18, 18, 5);
-      ctx.fillStyle = DCOL[d.kind];
-      ctx.fill();
-      ctx.shadowBlur = 0;
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      UI.txt(ctx, DGLYPH[d.kind], 0, 1, { size: DGLYPH[d.kind].length > 1 ? 8 : 12, align: 'center', baseline: 'middle', color: '#0b0e14', weight: 900 });
-      ctx.restore();
+      this.drawDrop(ctx, d);
     }
 
     // paddle-blob

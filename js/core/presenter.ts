@@ -153,6 +153,9 @@ export class WebGLPresenter implements RenderPresenter {
     gl.vertexAttribPointer(resources.position, 2, gl.FLOAT, false, 0, 0);
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, resources.texture);
+    // CanvasImageSource utilise une origine en haut à gauche, alors que les
+    // coordonnées de texture WebGL partent du bas à gauche.
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, 1);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, 1);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source as TexImageSource);
     gl.uniform1i(resources.scene, 0);
