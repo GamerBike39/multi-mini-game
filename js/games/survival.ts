@@ -5,6 +5,7 @@
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
+import { ObjectPool } from '../core/pool';
 
 const M = 70;
 const AW = 1280 - M * 2;
@@ -167,6 +168,7 @@ function circleHitsMovingBar(px: number, py: number, radius: number, bar: Moving
 
 export class SurvivalGame extends BaseGame {
   [key: string]: any;
+  readonly bulletPool = new ObjectPool<SurvivalBullet>(() => ({ x: 0, y: 0, vx: 0, vy: 0, r: 5, dead: false }), 64);
 
   static meta: GameMeta = {
     id: 'surv', name: 'SURVIBLOB', accent: '#34d399', mood: 'survival',
@@ -209,7 +211,7 @@ export class SurvivalGame extends BaseGame {
     this.boundaryCueT = 0;
 
     this.enemies = [] as SurvivalEnemy[];
-    this.bullets = [] as SurvivalBullet[];
+    this.bullets = this.bulletPool.active;
     this.telegraphs = [] as Telegraph[];
     this.bars = [] as MovingBar[];
     this.rotors = [] as RotorTrap[];
@@ -393,8 +395,8 @@ export class SurvivalGame extends BaseGame {
   }
 
   spawnPoint(): [number, number] {
-    const side = (Math.random() * 4) | 0;
-    const p = 0.15 + Math.random() * 0.7;
+    const side = this.rng.int(0, 3);
+    const p = this.rng.float(0.15, 0.85);
     if (side === 0) return [M + AW * p, M + 30];
     if (side === 1) return [M + AW * p, M + AH - 30];
     if (side === 2) return [M + 30, M + AH * p];
@@ -403,8 +405,8 @@ export class SurvivalGame extends BaseGame {
 
   randomArenaPoint(minDistance = 100): [number, number] {
     for (let attempt = 0; attempt < 12; attempt++) {
-      const x = M + 70 + Math.random() * (AW - 140);
-      const y = M + 70 + Math.random() * (AH - 140);
+      const x = this.rng.float(M + 70, M + AW - 70);
+      const y = this.rng.float(M + 70, M + AH - 70);
       if (Math.hypot(x - this.blob.x, y - this.blob.y) >= minDistance) return [x, y];
     }
     return [M + AW * 0.75, M + AH * 0.25];
@@ -427,7 +429,7 @@ export class SurvivalGame extends BaseGame {
     this.rotors.length = 0;
     this.orbs.length = 0;
     this.enemies.length = 0;
-    this.bullets.length = 0;
+    this.bulletPool.clear();
 
     this.audioWaveCue();
     this.musicEvent('waveStart', this.wavePlan.boss ? 0.95 : 0.42 + this.wavePlan.difficulty * 0.3);
@@ -458,7 +460,7 @@ export class SurvivalGame extends BaseGame {
     this.fx.text(640, 330, 'VAGUE ' + completedWave + ' NETTE', { color: this.wavePlan.color, size: 27, mono: true });
     this.fx.text(640, 365, '+' + reward, { color: '#ffd166', size: 20, mono: true });
 
-    if (Math.random() < this.wavePlan.bonusChance + (completedWave >= 7 ? 0.1 : 0)) {
+    if (this.rng.next() < this.wavePlan.bonusChance + (completedWave >= 7 ? 0.1 : 0)) {
       const bonus = 90 + completedWave * 12;
       this.score += bonus;
       this.lastBonus = 'BONUS ALÉATOIRE  +' + bonus;
@@ -473,7 +475,7 @@ export class SurvivalGame extends BaseGame {
     // Une vague est une unité lisible : les menaces qui restent sont retirées
     // proprement pendant la respiration, plutôt que de contaminer la suivante.
     this.enemies.length = 0;
-    this.bullets.length = 0;
+    this.bulletPool.clear();
     this.telegraphs.length = 0;
     this.bars.length = 0;
     this.rotors.length = 0;
@@ -640,11 +642,11 @@ export class SurvivalGame extends BaseGame {
     const canSpawnEnemy = this.wavePlan.enemies && (!this.wavePlan.boss || this.waveElapsed >= 2.8);
     if (canSpawnEnemy && this.spawnT <= 0) {
       let kind: EnemyKind = 'chaser';
-      const random = Math.random();
+      const random = this.rng.next();
       if (this.wavePlan.mines && this.waveElapsed > 1.5 && random < 0.25) kind = 'mine';
       else if (this.wavePlan.gunners && this.waveElapsed > 3.5 && random < 0.2) kind = 'gunner';
       this.queueEnemy(kind);
-      this.spawnT = Math.max(0.9, this.wavePlan.enemyInterval - this.wavePlan.difficulty * 0.22 + Math.random() * 0.25);
+      this.spawnT = Math.max(0.9, this.wavePlan.enemyInterval - this.wavePlan.difficulty * 0.22 + this.rng.float(0, 0.25));
     }
 
     if (this.wavePlan.bars && this.bars.length === 0 && this.waveElapsed >= 0.35) this.createBars();
@@ -883,7 +885,7 @@ export class SurvivalGame extends BaseGame {
         e.burst = (e.burst || 0) - 1;
         e.bt = 0.22;
         const angle = e.ang || 0;
-        this.bullets.push({
+        this.spawnBullet({
           x: e.x + Math.cos(angle) * 20,
           y: e.y + Math.sin(angle) * 20,
           vx: Math.cos(angle) * (260 + this.wavePlan.difficulty * 32),
@@ -956,7 +958,7 @@ export class SurvivalGame extends BaseGame {
     const offset = this.waveElapsed * 0.6;
     for (let i = 0; i < count; i++) {
       const angle = offset + i * PI2 / count + (i === 0 ? targetAngle * 0.08 : 0);
-      this.bullets.push({
+      this.spawnBullet({
         x: e.x + Math.cos(angle) * 40,
         y: e.y + Math.sin(angle) * 40,
         vx: Math.cos(angle) * (175 + this.wavePlan.difficulty * 22),
@@ -996,7 +998,7 @@ export class SurvivalGame extends BaseGame {
     this.boom(x, y, '#fb923c', 0.62);
     for (let i = 0; i < 8; i++) {
       const angle = i / 8 * PI2 + this.time * 0.12;
-      this.bullets.push({ x, y, vx: Math.cos(angle) * 220, vy: Math.sin(angle) * 220, r: 5, color: '#fb923c' });
+      this.spawnBullet({ x, y, vx: Math.cos(angle) * 220, vy: Math.sin(angle) * 220, r: 5, color: '#fb923c' });
     }
     if (hurtPlayer) this.die();
   }
@@ -1012,7 +1014,20 @@ export class SurvivalGame extends BaseGame {
       }
       if (bullet.x < -30 || bullet.x > 1310 || bullet.y < -30 || bullet.y > 750) bullet.dead = true;
     }
-    this.bullets = this.bullets.filter((bullet: SurvivalBullet) => !bullet.dead);
+    for (let i = this.bulletPool.active.length - 1; i >= 0; i--) {
+      if (this.bulletPool.active[i].dead) this.bulletPool.releaseAt(i);
+    }
+  }
+
+  spawnBullet(value: SurvivalBullet): void {
+    const bullet = this.bulletPool.acquire();
+    bullet.x = value.x;
+    bullet.y = value.y;
+    bullet.vx = value.vx;
+    bullet.vy = value.vy;
+    bullet.r = value.r;
+    bullet.color = value.color;
+    bullet.dead = false;
   }
 
   updateResources(dt: number): void {
@@ -1038,7 +1053,7 @@ export class SurvivalGame extends BaseGame {
 
   spawnResource(): void {
     const [x, y] = this.randomArenaPoint(125);
-    const kind = Math.random() < this.wavePlan.bonusChance ? 'bonus' : 'resource';
+    const kind = this.rng.next() < this.wavePlan.bonusChance ? 'bonus' : 'resource';
     const color = kind === 'bonus' ? '#ffd166' : '#7df9ff';
     this.orbs.push({ x, y, t: Math.random() * 6, life: kind === 'bonus' ? 6.4 : 5.8, maxLife: kind === 'bonus' ? 6.4 : 5.8, kind });
     this.audio.tone({ f: kind === 'bonus' ? 920 : 680, f1: kind === 'bonus' ? 1320 : 920, type: 'triangle', dur: 0.12, vol: 0.07 });

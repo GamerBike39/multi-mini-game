@@ -15,16 +15,19 @@ const MAIN_MUTE_INDEX = 3;
 const MAIN_FULLSCREEN_INDEX = 4;
 const MAIN_VIBRATION_INDEX = 5;
 const VISUAL_RESOLUTION_INDEX = 0;
-const VISUAL_CRT_INDEX = 1;
-const VISUAL_CRT_INTENSITY_INDEX = 2;
-const VISUAL_NOISE_INDEX = 3;
-const VISUAL_NOISE_INTENSITY_INDEX = 4;
+const VISUAL_GPU_INDEX = 1;
+const VISUAL_GPU_INTENSITY_INDEX = 2;
+const VISUAL_CRT_INDEX = 3;
+const VISUAL_CRT_INTENSITY_INDEX = 4;
+const VISUAL_NOISE_INDEX = 5;
+const VISUAL_NOISE_INTENSITY_INDEX = 6;
 const FILTER_IDS: readonly ScreenFilterId[] = ['crt', 'noise'];
+type VisualControl = VolumeKey | ScreenFilterId | 'gpu';
 
 const clamp01 = (value: number): number => Math.max(0, Math.min(1, value));
 
 type SettingRow =
-  | { label: string; kind: 'slider'; key: VolumeKey | ScreenFilterId }
+  | { label: string; kind: 'slider'; key: VisualControl }
   | { label: string; kind: 'choice'; value: string; hint?: string }
   | { label: string; kind: 'submenu'; hint?: string }
   | { label: string; kind: 'toggle'; on: boolean; hint?: string };
@@ -38,7 +41,7 @@ interface SettingRect {
   type: 'slider' | 'choice' | 'submenu' | 'toggle';
   bx?: number;
   bw?: number;
-  control?: VolumeKey | ScreenFilterId;
+  control?: VisualControl;
 }
 
 export class Settings {
@@ -106,7 +109,7 @@ export class Settings {
   }
 
   count(): number {
-    return this.page === 'visuals' ? 5 : 7;
+    return this.page === 'visuals' ? 7 : 7;
   }
 
   update(dt: number): boolean {
@@ -168,6 +171,9 @@ export class Settings {
       } else if (this.sel === VISUAL_RESOLUTION_INDEX) {
         this.eng.cycleResolution(dir);
         this.audio.uiMove();
+      } else if (this.sel === VISUAL_GPU_INTENSITY_INDEX) {
+        this.eng.setGpuEffectsIntensity(this.eng.gpuEffects.intensity + dir * 0.05);
+        this.audio.uiMove();
       } else if (this.sel === VISUAL_CRT_INTENSITY_INDEX) {
         this.eng.setScreenFilterIntensity('crt', this.eng.screenFilters.crt.intensity + dir * 0.05);
         this.audio.uiMove();
@@ -181,6 +187,7 @@ export class Settings {
       this.audio.uiOk();
       if (this.page === 'visuals') {
         if (this.sel === VISUAL_RESOLUTION_INDEX) this.eng.cycleResolution(1);
+        else if (this.sel === VISUAL_GPU_INDEX) this.eng.setGpuEffectsEnabled(!this.eng.gpuEffects.enabled);
         else if (this.sel === VISUAL_CRT_INDEX) this.eng.setScreenFilterEnabled('crt', !this.eng.screenFilters.crt.enabled);
         else if (this.sel === VISUAL_NOISE_INDEX) this.eng.setScreenFilterEnabled('noise', !this.eng.screenFilters.noise.enabled);
       } else if (this.sel === MAIN_MUTE_INDEX) this.audio.setMuted(!this.audio.muted);
@@ -200,16 +207,18 @@ export class Settings {
     this.input.rumble(0.6, 0.2);
   }
 
-  private isFilter(control: VolumeKey | ScreenFilterId): control is ScreenFilterId {
+  private isFilter(control: VisualControl): control is ScreenFilterId {
     return FILTER_IDS.includes(control as ScreenFilterId);
   }
 
-  private sliderValue(control: VolumeKey | ScreenFilterId): number {
+  private sliderValue(control: VisualControl): number {
+    if (control === 'gpu') return this.eng.gpuEffects.intensity;
     return this.isFilter(control) ? this.eng.screenFilters[control].intensity : this.audio.vols[control];
   }
 
-  private setSliderValue(control: VolumeKey | ScreenFilterId, value: number): void {
-    if (this.isFilter(control)) this.eng.setScreenFilterIntensity(control, value);
+  private setSliderValue(control: VisualControl, value: number): void {
+    if (control === 'gpu') this.eng.setGpuEffectsIntensity(value);
+    else if (this.isFilter(control)) this.eng.setScreenFilterIntensity(control, value);
     else this.audio.setVol(control, value);
   }
 
@@ -241,7 +250,9 @@ export class Settings {
       } else if (rect.type === 'submenu') {
         this.openVisuals();
       } else {
-        if (this.page === 'visuals' && rect.i === VISUAL_CRT_INDEX) {
+        if (this.page === 'visuals' && rect.i === VISUAL_GPU_INDEX) {
+          this.eng.setGpuEffectsEnabled(!this.eng.gpuEffects.enabled);
+        } else if (this.page === 'visuals' && rect.i === VISUAL_CRT_INDEX) {
           this.eng.setScreenFilterEnabled('crt', !this.eng.screenFilters.crt.enabled);
         } else if (this.page === 'visuals' && rect.i === VISUAL_NOISE_INDEX) {
           this.eng.setScreenFilterEnabled('noise', !this.eng.screenFilters.noise.enabled);
@@ -313,6 +324,8 @@ export class Settings {
     const rows: SettingRow[] = this.page === 'visuals'
       ? [
         { label: 'Résolution', kind: 'choice', value: this.eng.resolutionLabel, hint: '← → pour choisir' },
+        { label: 'Effets WebGL', kind: 'toggle', on: this.eng.gpuEffects.enabled, hint: this.eng.gpuEffects.available ? 'post-process optionnel' : 'indisponible' },
+        { label: 'Intensité WebGL', kind: 'slider', key: 'gpu' },
         { label: 'Filtre CRT', kind: 'toggle', on: this.eng.screenFilters.crt.enabled },
         { label: 'Intensité CRT', kind: 'slider', key: 'crt' },
         { label: 'Filtre bruit', kind: 'toggle', on: this.eng.screenFilters.noise.enabled },
@@ -352,7 +365,8 @@ export class Settings {
 
       if (row.kind === 'slider') {
         const value = this.sliderValue(row.key);
-        const filterDisabled = this.isFilter(row.key) && !this.eng.screenFilters[row.key].enabled;
+        const filterDisabled = (this.isFilter(row.key) && !this.eng.screenFilters[row.key].enabled)
+          || (row.key === 'gpu' && !this.eng.gpuEffects.available);
         ctx.beginPath();
         if (ctx.roundRect) ctx.roundRect(bx, y + 10, bw, 10, 5);
         else ctx.rect(bx, y + 10, bw, 10);

@@ -4,9 +4,12 @@
 import { BaseGame } from '../core/game';
 import * as UI from '../core/ui';
 import type { EngineLike, GameMeta } from '../core/types';
+import { ObjectPool } from '../core/pool';
 
 export class ShooterGame extends BaseGame {
   [key: string]: any;
+  readonly pbulletPool = new ObjectPool<any>(() => ({ x: 0, y: 0, vx: 0, vy: 0, r: 4, dead: false }), 48);
+  readonly ebulletPool = new ObjectPool<any>(() => ({ x: 0, y: 0, vx: 0, vy: 0, r: 6, dead: false }), 32);
   static meta: GameMeta = {
     id: 'shoot', name: 'BLOBBLASTER', accent: '#fbbf24', mood: 'shooter',
     desc: 'Twin-stick frénétique', controls: 'Stick G bouger · Stick D viser',
@@ -25,8 +28,8 @@ export class ShooterGame extends BaseGame {
     this.hp = 3;
     this.inv = 0;
     this.enemies = [];
-    this.pbullets = [];
-    this.ebullets = [];
+    this.pbullets = this.pbulletPool.active;
+    this.ebullets = this.ebulletPool.active;
     this.spawnT = 0.8;
     this.rockT = 2.2;
     this.satT = 22;
@@ -77,7 +80,7 @@ export class ShooterGame extends BaseGame {
     if (wantFire && this.fireCd <= 0 && this.state === 'play') {
       this.fireCd = 0.115;
       const ca = Math.cos(this.aim), sa = Math.sin(this.aim);
-      this.pbullets.push({ x: b.x + ca * (b.r + 6), y: b.y + sa * (b.r + 6), vx: ca * 950, vy: sa * 950, r: 4 });
+      this.acquireBullet(this.pbulletPool, { x: b.x + ca * (b.r + 6), y: b.y + sa * (b.r + 6), vx: ca * 950, vy: sa * 950, r: 4 });
       b.vx -= ca * 46; b.vy -= sa * 46;   // recul visible
       this.audio.shoot();
       this.fx.burst(b.x + ca * (b.r + 8), b.y + sa * (b.r + 8), { n: 3, speed: [40, 160], colors: ['#ffd166', '#fff7cc'], size: [1.5, 3], life: 0.15, ang: this.aim, spread: 0.7 });
@@ -87,7 +90,7 @@ export class ShooterGame extends BaseGame {
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
       this.spawnT = Math.max(0.48, 1.5 - this.time * 0.017);
-      const r = Math.random();
+      const r = this.rng.next();
       if (this.time > 35 && r < 0.24) this.spawnTank();
       else if (this.time > 16 && r < 0.44) this.spawnSniper();
       else this.spawnDrone();
@@ -101,7 +104,7 @@ export class ShooterGame extends BaseGame {
     }
     this.satT -= dt;
     if (this.satT <= 0) {
-      this.satT = 9 + Math.random() * 5;
+      this.satT = this.rng.float(9, 14);
       if (this.enemies.length < 22) this.spawnSat();
     }
 
@@ -134,7 +137,7 @@ export class ShooterGame extends BaseGame {
           e.t -= dt;
           if (e.t <= 0) {
             e.st = 'wait'; e.t = 1.15;
-            this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(e.ang) * 540, vy: Math.sin(e.ang) * 540, r: 6 });
+            this.acquireBullet(this.ebulletPool, { x: e.x, y: e.y, vx: Math.cos(e.ang) * 540, vy: Math.sin(e.ang) * 540, r: 6 });
             this.audio.shoot();
             e.shots--;
           }
@@ -176,7 +179,7 @@ export class ShooterGame extends BaseGame {
               // les gros astéroïdes se brisent en deux plus petits
               if (e.r > 19) {
                 for (const s of [-1, 1]) {
-                  born.push(this.makeRock(e.r * 0.55, e.x + s * 12, e.y, e.vx + s * (55 + Math.random() * 40), e.vy * 0.8 + 25));
+                  born.push(this.makeRock(e.r * 0.55, e.x + s * 12, e.y, e.vx + s * this.rng.float(55, 95), e.vy * 0.8 + 25));
                 }
               }
             } else if (e.kind === 'sat') {
@@ -187,7 +190,7 @@ export class ShooterGame extends BaseGame {
               if (e.kind === 'tank') {
                 for (let i = 0; i < 6; i++) {
                   const a = (i / 6) * 6.2832 + 0.3;
-                  this.ebullets.push({ x: e.x, y: e.y, vx: Math.cos(a) * 230, vy: Math.sin(a) * 230, r: 6 });
+                  this.acquireBullet(this.ebulletPool, { x: e.x, y: e.y, vx: Math.cos(a) * 230, vy: Math.sin(a) * 230, r: 6 });
                 }
               }
             }
@@ -195,7 +198,7 @@ export class ShooterGame extends BaseGame {
         }
       }
     }
-    this.pbullets = this.pbullets.filter((p: any) => !p.dead);
+    this.releaseDeadBullets(this.pbulletPool);
     // les ennemis tués par balles disparaissent dès cette frame (pas de cadavre jouable)
     this.enemies = this.enemies.filter((e: any) => !e.dead);
     this.enemies.push(...born);
@@ -206,7 +209,7 @@ export class ShooterGame extends BaseGame {
       if (p.x < -20 || p.x > 1300 || p.y < -20 || p.y > 740) { p.dead = true; continue; }
       if (this.inv <= 0 && Math.hypot(b.x - p.x, b.y - p.y) < p.r + b.r - 5) { p.dead = true; this.hurt(); }
     }
-    this.ebullets = this.ebullets.filter((p: any) => !p.dead);
+    this.releaseDeadBullets(this.ebulletPool);
 
     // étoiles parallaxe
     for (const s of this.stars) {
@@ -221,29 +224,45 @@ export class ShooterGame extends BaseGame {
 
   mult(): number { return 1 + Math.min(3, Math.floor(this.streak) * 0.1); }
 
+  acquireBullet(pool: ObjectPool<any>, value: { x: number; y: number; vx: number; vy: number; r: number }): void {
+    const bullet = pool.acquire();
+    bullet.x = value.x;
+    bullet.y = value.y;
+    bullet.vx = value.vx;
+    bullet.vy = value.vy;
+    bullet.r = value.r;
+    bullet.dead = false;
+  }
+
+  releaseDeadBullets(pool: ObjectPool<any>): void {
+    for (let i = pool.active.length - 1; i >= 0; i--) {
+      if (pool.active[i].dead) pool.releaseAt(i);
+    }
+  }
+
   spawnDrone(): void {
-    this.enemies.push({ kind: 'drone', x0: 100 + Math.random() * 1080, x: 0, y: -30, vy: 95 + this.time * 0.6, r: 15, hp: 1, t: 0, ph: Math.random() * 6.28 });
+    this.enemies.push({ kind: 'drone', x0: this.rng.float(100, 1180), x: 0, y: -30, vy: 95 + this.time * 0.6, r: 15, hp: 1, t: 0, ph: this.rng.float(0, 6.28) });
   }
   spawnTank(): void {
-    this.enemies.push({ kind: 'tank', x: 150 + Math.random() * 980, y: -40, r: 26, hp: 4, t: 0, ph: Math.random() * 6.28 });
+    this.enemies.push({ kind: 'tank', x: this.rng.float(150, 1130), y: -40, r: 26, hp: 4, t: 0, ph: this.rng.float(0, 6.28) });
   }
   spawnSniper(): void {
-    this.enemies.push({ kind: 'sniper', x: Math.random() < 0.5 ? -30 : 1310, y: 80 + Math.random() * 300, tx: 200 + Math.random() * 880, ty: 90 + Math.random() * 220, r: 16, hp: 2, st: 'in', t: 0, shots: 3, ang: 0 });
+    this.enemies.push({ kind: 'sniper', x: this.rng.next() < 0.5 ? -30 : 1310, y: this.rng.float(80, 380), tx: this.rng.float(200, 1080), ty: this.rng.float(90, 310), r: 16, hp: 2, st: 'in', t: 0, shots: 3, ang: 0 });
   }
 
   // astéroïde : polygone irrégulier généré, rotation, dérive, se brise en deux
   makeRock(r: number, x: number, y: number, vx: number, vy: number): any {
-    const n = 8 + ((Math.random() * 4) | 0);
+    const n = this.rng.int(8, 11);
     const verts = [];
-    for (let i = 0; i < n; i++) verts.push(0.72 + Math.random() * 0.42);
-    return { kind: 'rock', x, y, vx, vy, r, verts, hp: r > 26 ? 2 : 1, rot: Math.random() * 6.28, vr: (Math.random() - 0.5) * 1.6, t: 0 };
+    for (let i = 0; i < n; i++) verts.push(this.rng.float(0.72, 1.14));
+    return { kind: 'rock', x, y, vx, vy, r, verts, hp: r > 26 ? 2 : 1, rot: this.rng.float(0, 6.28), vr: this.rng.float(-0.5, 0.5) * 1.6, t: 0 };
   }
   spawnRock(): void {
-    const r = 15 + Math.random() * 20;
-    this.enemies.push(this.makeRock(r, 80 + Math.random() * 1120, -50, (Math.random() - 0.5) * 50, 45 + Math.random() * 55));
+    const r = this.rng.float(15, 35);
+    this.enemies.push(this.makeRock(r, this.rng.float(80, 1200), -50, this.rng.float(-25, 25), this.rng.float(45, 100)));
   }
   spawnSat(): void {
-    this.enemies.push({ kind: 'sat', x: 100 + Math.random() * 1080, y: -40, vx: (Math.random() - 0.5) * 30, vy: 26 + Math.random() * 18, r: 24, hp: 3, t: 0, ph: Math.random() * 6.28 });
+    this.enemies.push({ kind: 'sat', x: this.rng.float(100, 1180), y: -40, vx: this.rng.float(-15, 15), vy: this.rng.float(26, 44), r: 24, hp: 3, t: 0, ph: this.rng.float(0, 6.28) });
   }
 
   boom(x: number, y: number, power: number, color: string): void {

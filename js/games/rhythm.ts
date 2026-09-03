@@ -362,7 +362,7 @@ export class RhythmGame extends BaseGame {
       if (!free.length) return -1;
       let cand = run >= 2 ? free.filter((l) => l !== last) : free;
       if (!cand.length) cand = free;
-      const l = cand[(Math.random() * cand.length) | 0];
+      const l = cand[this.rng.int(0, cand.length - 1)];
       run = l === last ? run + 1 : 0;
       last = l;
       return l;
@@ -371,7 +371,7 @@ export class RhythmGame extends BaseGame {
       // montée douce : la densité plafonne tôt, ce sont les effets et les scènes qui font la montée
       const ph = Math.min(4, Math.floor(b / 40));
       const drum = b % 2 === 1 ? 'snare' : 'kick';
-      if (Math.random() < d.hat[ph]) {
+      if (this.rng.next() < d.hat[ph]) {
         const lh = pick(lanes.filter((l) => freeUntil[l] <= b - 0.5 + 1e-9));
         if (lh >= 0) {
           events.push({ t: (b - 0.5) * SPB, lane: lh, drum: 'hat', dur: 0 });
@@ -424,7 +424,7 @@ export class RhythmGame extends BaseGame {
     const pref: Record<number, number> = { 0: 0, 1: Math.floor((lanes - 1) / 2), 2: lanes - 1 };
     for (const o of spaced) {
       let lane = pref[o.band];
-      if (Math.random() < 0.35) lane = Math.max(0, Math.min(lanes - 1, lane + (Math.random() < 0.5 ? -1 : 1)));
+      if (this.rng.next() < 0.35) lane = Math.max(0, Math.min(lanes - 1, lane + (this.rng.next() < 0.5 ? -1 : 1)));
       if (lane === last && run >= 2) lane = (lane + 1) % lanes;
       let tries = 0;
       while (busy[lane] > o.t && tries++ < lanes) lane = (lane + 1) % lanes;

@@ -19,7 +19,7 @@ export class CaveGame extends BaseGame {
 
   constructor(engine: EngineLike) {
     super(engine);
-    this.ph = [0, 0, 0, 0].map(() => Math.random() * 100);
+    this.ph = [0, 0, 0, 0].map(() => this.rng.float(0, 100));
     this.blob.x = 300; this.blob.y = 360; this.blob.r = 17;
     this.blob.trailOn = true;
     this.worldX = 0;

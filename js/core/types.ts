@@ -40,6 +40,21 @@ export interface ScreenFilters {
   noise: ScreenFilterSettings;
 }
 
+export interface GpuEffectsSettings {
+  enabled: boolean;
+  intensity: number;
+  available: boolean;
+}
+
+export interface RenderPresenter {
+  readonly available: boolean;
+  readonly active: boolean;
+  resize(width: number, height: number): void;
+  present(source: CanvasImageSource, time: number, intensity?: number, legacyCrt?: boolean, legacyNoise?: boolean): void;
+  enable(enabled: boolean): void;
+  dispose(): void;
+}
+
 export interface ActionState {
   down: boolean;
   pressed: boolean;
@@ -53,6 +68,114 @@ export interface InputTap {
   a: Action;
 }
 
+export type PlayerSource = 'keyboard' | 'gamepad' | 'mixed' | 'none';
+
+export interface PlayerInputLike extends InputLike {
+  readonly playerId: number;
+  readonly source: PlayerSource;
+  readonly gamepadIndex: number | null;
+  readonly gamepadName: string;
+}
+
+export interface InputHubLike extends InputLike {
+  readonly players: readonly PlayerInputLike[];
+  readonly joinRequests: readonly { gamepadIndex: number; t: number }[];
+  player(id: number): PlayerInputLike;
+  configureLobby(maxPlayers?: number): void;
+  configureSession(mode: 'solo' | 'local', playerCount?: number): void;
+  claimGamepad(gamepadIndex: number, playerId: number): boolean;
+  releasePlayer(playerId: number): void;
+  poll(): void;
+  advanceStep(): void;
+}
+
+export interface Rng {
+  next(): number;
+  float(min: number, max: number): number;
+  int(min: number, max: number): number;
+  pick<T>(items: readonly T[]): T;
+}
+
+export type RngLike = Rng;
+
+export interface ReplayPlayerFrame {
+  downMask: number;
+  pressedMask: number;
+  releasedMask: number;
+  moveX: number;
+  moveY: number;
+  aimX: number;
+  aimY: number;
+}
+
+export interface ReplayFrame {
+  step: number;
+  players: readonly ReplayPlayerFrame[];
+}
+
+export interface ReplayTrace {
+  version: 1;
+  gameId: string;
+  seed: number;
+  fixedStep: number;
+  playerCount: number;
+  buildVersion: string;
+  frames: readonly ReplayFrame[];
+}
+
+export interface GameSession {
+  id: string;
+  gameId: string;
+  mode: 'solo' | 'local';
+  playerCount: number;
+  seed: number;
+  buildVersion: string;
+  replayMode: 'live' | 'record' | 'playback';
+  replay?: ReplayTrace;
+}
+
+export interface StartGameOptions {
+  mode?: 'solo' | 'local';
+  playerCount?: number;
+  seed?: number;
+  replay?: ReplayTrace;
+  skipLobby?: boolean;
+}
+
+export interface FrameMetrics {
+  fps: number;
+  frameMs: number;
+  updateMs: number;
+  renderMs: number;
+  presentMs: number;
+  simulationSteps: number;
+  droppedSteps: number;
+  accumulator: number;
+  renderPixels: number;
+  gpuEnabled: boolean;
+  appId: string;
+}
+
+export type DebugValue = string | number | boolean | null;
+
+export interface DevToolsLike {
+  enabled: boolean;
+  overlay: boolean;
+  readonly flags: {
+    hitboxes: boolean;
+    bounds: boolean;
+    spatialHash: boolean;
+    noFx: boolean;
+    noAudio: boolean;
+  };
+  count(name: string, value: number): void;
+  state(name: string, value: DebugValue): void;
+  log(message: string): void;
+  mark(name: string): void;
+  assertFinite(name: string, value: number): void;
+  command(name: string): void;
+}
+
 export interface GameMeta {
   id: string;
   name: string;
@@ -64,6 +187,10 @@ export interface GameMeta {
   hint: string;
   unit: string;
   ranks: readonly number[];
+  players?: {
+    min: 1;
+    max: 1 | 2 | 4;
+  };
 }
 
 export interface InputLike {
@@ -205,6 +332,8 @@ export interface FxLike {
 
 export interface AppLike {
   engine?: EngineLike;
+  session?: GameSession;
+  isLobby?: boolean;
   accent?: string;
   fx?: FxLike;
   paused?: boolean;
@@ -218,10 +347,12 @@ export interface AppLike {
   onPointerMove?(x: number, y: number): void;
   onPointerUp?(): void;
   onPointerLeave?(): void;
+  debugRender?(ctx: CanvasRenderingContext2D): void;
+  debugSnapshot?(): Record<string, DebugValue>;
 }
 
 export interface GameConstructor {
-  new (engine: EngineLike): AppLike;
+  new (engine: EngineLike, session?: GameSession): AppLike;
   meta: GameMeta;
 }
 
@@ -233,20 +364,28 @@ export interface StageWipeOptions {
 }
 
 export interface EngineLike {
-  input: InputLike;
+  input: InputHubLike;
   audio: AudioLike;
   settings: SettingsLike;
+  readonly dev: DevToolsLike;
+  readonly metrics: FrameMetrics;
+  readonly session: GameSession | null;
   resolution: ResolutionId;
   readonly resolutionLabel: string;
   menuFactory: (() => AppLike) | null;
   setApp(app: AppLike, options?: StageWipeOptions | false): void;
   transitionTo(app: AppLike, options?: StageWipeOptions): void;
+  startGame(game: GameConstructor, options?: StartGameOptions): void;
   menuBack(): void;
   toggleFullscreen(): void;
   setResolution(resolution: ResolutionId): void;
   cycleResolution(direction: number): void;
   readonly screenFilters: ScreenFilters;
+  readonly gpuEffects: GpuEffectsSettings;
   setScreenFilterEnabled(filter: ScreenFilterId, enabled: boolean): void;
   setScreenFilterIntensity(filter: ScreenFilterId, intensity: number): void;
+  setGpuEffectsEnabled(enabled: boolean): void;
+  setGpuEffectsIntensity(intensity: number): void;
+  exportMetrics(): void;
   showError(message: unknown): void;
 }
