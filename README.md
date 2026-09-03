@@ -1,6 +1,6 @@
 # BLOB ARCADE
 
-Collection de 10 mini-jeux jouables à la manette (ou au clavier), en HTML5/Canvas —
+Collection de mini-jeux jouables à la manette (ou au clavier), en HTML5/Canvas —
 zéro dépendance runtime, zéro asset : tous les sons sont synthétisés (WebAudio) et
 tous les graphismes sont dessinés à la volée. DA minimal : des blobs.
 
@@ -58,8 +58,10 @@ stockés dans le `localStorage` du navigateur de chaque joueur.
 | **BLOB SIMON** | Mémoire : regarde la séquence de blobs, rejoue-la | Y X B A | Flèches ↑ ← → ↓ |
 | **BLOB SNAKE** | Serpent sur grille, lucioles, fruit doré, ça accélère | Stick / D-pad | Flèches / ZQSD |
 | **BLOB BREAKER** | Casse-briques, balle-blob, drops (multi, large, slow) | Stick G paddle + A | ZQSD + Espace |
-| **BLOB GOLF** | 9 trous faits main, visée + puissance, sable et banques | Stick viser + A (charge) | Flèches + Espace |
+| **BLOB GOLF** | 9 trous texturés, trajectoire prédite, puissance progressive et duel local | Stick viser + A (charge), X précision | ← → viser, ↑ trou, Espace, L précision |
 | **BLOB PÊCHE** | Lance l'hameçon, ferrade, remorge sous tension | A + Stick G | Espace + ZQSD |
+| **BLOB TRI** | Range les couleurs dans leur garage, éjecte les intrus, résiste aux leurres | D-pad / Stick + A | Flèches / ZQSD + Espace |
+| **BLOB TRACE** | Mémorise un chemin orthogonal, en trace fine ou cases illuminées, puis rejoins l’arrivée | D-pad / Stick + A, X affichage | Flèches / ZQSD + Espace, L affichage |
 
 Menu : `← → ↑ ↓` choisir, `A` lancer (raccourcis `1`–`9`, `0`), `V` alterner entre
 fiche et vue d'ensemble, `Échap` ou l'icône ⚙ ouvrir les options. À la manette,
@@ -115,7 +117,7 @@ sur les cartes, vignettes, bouton LANCER et sliders. En jeu, elle n'a aucun effe
 ```
 js/core/    input, audio, fx, blob, moteur (pas fixe 60 Hz), UI commune, BaseGame, réglages (TypeScript)
 js/core/music/ transport, références, état manuel, direction adaptative et adaptateurs de jeu (TypeScript)
-js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm (TypeScript)
+js/games/   survival, shooter, runner, cave, simon, snake, breaker, golf, fish, rhythm, pong, columns, bubble, sort, path (TypeScript)
 js/main.ts  point d'entrée navigateur
 js/menu.ts  hub (fiche plein écran + grille globale)
 js/demos.ts démos simulées (attract mode) de la fiche

@@ -1214,6 +1214,166 @@ function demoFallback(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB TRI : le centre distribue vers quatre garages ----------------
+function demoSort(accent: string): DemoImpl {
+  const colors = ['#facc15', '#38bdf8', '#fb7185', '#4ade80'];
+  const targets = [[640, 205], [420, 365], [860, 365], [640, 535]] as const;
+  const s: any = {
+    t: 0,
+    wait: 0.35,
+    index: 0,
+    intruder: false,
+    blob: new Blob({ x: 640, y: 365, r: 28, color: colors[0], trailOn: true }),
+    parked: [[], [], [], []],
+    puffs: new Puffs(),
+  };
+  const reset = (): void => {
+    s.index = (s.index + 1) % 5;
+    s.intruder = s.index === 4;
+    const colorIndex = s.index % 4;
+    s.blob = new Blob({ x: 640, y: 365, r: 28, color: s.intruder ? '#a8b0be' : colors[colorIndex], trailOn: true });
+    s.blob.setEmotion(s.intruder ? 'determined' : 'focused');
+    s.fromX = 640; s.fromY = 365;
+    s.toX = s.intruder ? 640 : targets[colorIndex][0];
+    s.toY = s.intruder ? 100 : targets[colorIndex][1];
+    s.t = 0;
+    s.wait = 0;
+  };
+  return {
+    update(dt: number): void {
+      if (s.wait > 0) {
+        s.wait -= dt;
+        s.blob.update(dt);
+        if (s.wait <= 0) reset();
+        return;
+      }
+      s.t += dt / 0.65;
+      const k = Math.min(1, s.t);
+      const e = 1 - Math.pow(1 - k, 3);
+      s.blob.x = s.fromX + (s.toX - s.fromX) * e;
+      s.blob.y = s.fromY + (s.toY - s.fromY) * e;
+      s.blob.vx = (s.toX - s.fromX) * 2;
+      s.blob.vy = (s.toY - s.fromY) * 2;
+      s.blob.update(dt);
+      s.puffs.update(dt);
+      if (k >= 1) {
+        if (!s.intruder) {
+          const parked = new Blob({ x: s.toX + rand(-28, 28), y: s.toY + rand(-16, 16), r: 9, color: s.blob.color });
+          parked.setEmotion('happy');
+          s.parked[s.index].push(parked);
+          if (s.parked[s.index].length > 8) s.parked[s.index].shift();
+        }
+        s.puffs.burst(s.toX, s.toY, [s.blob.color, '#ffffff'], 12, [50, 220], 0.45);
+        s.wait = 0.3;
+      }
+      for (const group of s.parked) for (const blob of group) blob.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.save();
+      ctx.strokeStyle = accent + '28';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([6, 8]);
+      for (let i = 0; i < 4; i++) {
+        const [x, y] = targets[i];
+        ctx.strokeRect(x - 72, y - 42, 144, 84);
+        ctx.fillStyle = colors[i] + '18';
+        ctx.fillRect(x - 72, y - 42, 144, 84);
+        ctx.fillStyle = colors[i];
+        ctx.globalAlpha = 0.8;
+        ctx.beginPath(); ctx.arc(x, y, 5, 0, TAU); ctx.fill();
+      }
+      ctx.setLineDash([]);
+      ctx.globalAlpha = 1;
+      for (const group of s.parked) for (const blob of group) blob.render(ctx);
+      s.blob.render(ctx);
+      if (s.intruder) {
+        ctx.strokeStyle = '#10131c'; ctx.lineWidth = 5; ctx.lineCap = 'round';
+        ctx.beginPath(); ctx.moveTo(s.blob.x - 11, s.blob.y - 11); ctx.lineTo(s.blob.x + 11, s.blob.y + 11);
+        ctx.moveTo(s.blob.x + 11, s.blob.y - 11); ctx.lineTo(s.blob.x - 11, s.blob.y + 11); ctx.stroke();
+      }
+      s.puffs.draw(ctx);
+      ctx.restore();
+    },
+  };
+}
+
+// ---------------- BLOB TRACE : chemin mémorisé puis parcouru ----------------
+function demoPath(accent: string): DemoImpl {
+  const path = [
+    [0, 3], [1, 3], [1, 2], [2, 2], [2, 3], [3, 3],
+    [3, 2], [4, 2], [4, 1], [3, 1], [3, 0], [4, 0],
+  ] as const;
+  const cell = 76;
+  const left = 640 - cell * 2.5;
+  const top = 350 - cell * 2;
+  const center = (p: readonly [number, number]): { x: number; y: number } => ({ x: left + (p[0] + 0.5) * cell, y: top + (p[1] + 0.5) * cell });
+  const s: any = {
+    t: 0,
+    phase: 'reveal',
+    index: 0,
+    blob: new Blob({ ...center(path[0]), r: 18, color: accent, trailOn: true }),
+    puffs: new Puffs(),
+  };
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      if (s.phase === 'reveal') {
+        if (s.t > 2.1) { s.phase = 'walk'; s.t = 0; s.index = 0; }
+      } else {
+        const span = 0.3;
+        const k = Math.min(1, s.t / span);
+        const a = center(path[s.index]);
+        const b = center(path[Math.min(path.length - 1, s.index + 1)]);
+        const e = 1 - Math.pow(1 - k, 3);
+        s.blob.x = a.x + (b.x - a.x) * e;
+        s.blob.y = a.y + (b.y - a.y) * e - Math.sin(k * Math.PI) * 8;
+        s.blob.vx = (b.x - a.x) * 5;
+        s.blob.vy = (b.y - a.y) * 5;
+        if (k >= 1) {
+          s.index++;
+          s.t = 0;
+          s.blob.punch(0.22);
+          s.puffs.burst(b.x, b.y, [accent, '#ffffff'], 6, [25, 120], 0.35);
+          if (s.index >= path.length - 1) {
+            s.phase = 'reveal'; s.t = 0; s.index = 0;
+            const start = center(path[0]); s.blob.x = start.x; s.blob.y = start.y;
+          }
+        }
+      }
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.save();
+      ctx.strokeStyle = '#ffffff12';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 5; i++) {
+        ctx.beginPath(); ctx.moveTo(left + i * cell, top); ctx.lineTo(left + i * cell, top + 4 * cell); ctx.stroke();
+      }
+      for (let i = 0; i <= 4; i++) {
+        ctx.beginPath(); ctx.moveTo(left, top + i * cell); ctx.lineTo(left + 5 * cell, top + i * cell); ctx.stroke();
+      }
+      const visible = s.phase === 'reveal' ? Math.ceil((path.length - 1) * Math.min(1, s.t / 1.25)) : s.index;
+      ctx.strokeStyle = accent;
+      ctx.lineWidth = 9;
+      ctx.lineCap = 'round';
+      ctx.shadowColor = accent;
+      ctx.shadowBlur = 17;
+      for (let i = 0; i < visible; i++) {
+        const a = center(path[i]); const b = center(path[i + 1]);
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+      }
+      ctx.shadowBlur = 0;
+      const start = center(path[0]); const end = center(path[path.length - 1]);
+      ctx.fillStyle = '#4ade80'; ctx.beginPath(); ctx.arc(start.x, start.y, 7, 0, TAU); ctx.fill();
+      ctx.fillStyle = '#fef08a'; ctx.beginPath(); ctx.arc(end.x, end.y, 9, 0, TAU); ctx.fill();
+      s.blob.render(ctx);
+      s.puffs.draw(ctx);
+      ctx.restore();
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1227,6 +1387,8 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   fish: demoFish,
   columns: demoColumns,
   bubble: demoBubble,
+  sort: demoSort,
+  path: demoPath,
 };
 
 export class Demo {

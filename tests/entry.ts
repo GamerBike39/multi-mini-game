@@ -10,6 +10,9 @@ import { GridSystem, PhaseMachine, Scroller } from '../js/core/systems';
 import { DevTools } from '../js/core/devtools';
 import { ACTIONS, type ReplayPlayerFrame } from '../js/core/types';
 import { simonPadPressed } from '../js/games/simon';
+import { sortChoiceCorrect, sortDifficulty, sortDirectionPressed } from '../js/games/sort';
+import { createMemoryPath, isOrthogonalPath, nextPathVisualMode, pathDirectionPressed } from '../js/games/path';
+import { golfAngleDelta, golfShotSpeed, resolveGolfWall } from '../js/games/golf';
 import {
   ColumnBoard,
   ReleaseLatch,
@@ -96,6 +99,59 @@ function testSimonControls(): void {
   equal(simonPadPressed(input(['KeyK'], ['b'])), -1, 'Simon : K ne déclenche plus de note');
   equal(simonPadPressed(input(['KeyJ'], ['a'])), -1, 'Simon : J ne déclenche plus de note');
   equal(simonPadPressed(input(['Space'], ['a'])), -1, 'Simon : Espace ne déclenche pas la note A');
+}
+
+function testSortGame(): void {
+  const input = (actions: string[]) => ({ pressed: (action: string) => actions.includes(action) });
+  equal(sortDirectionPressed(input(['left'])), 'left', 'Blob Tri : lit une direction');
+  equal(sortDirectionPressed(input([])), null, 'Blob Tri : aucune direction reste neutre');
+
+  equal(sortDifficulty(0).colorCount, 2, 'Blob Tri commence avec deux couleurs');
+  equal(sortDifficulty(23).colorCount, 2, 'Blob Tri conserve deux couleurs sur les deux premiers paliers');
+  equal(sortDifficulty(24).colorCount, 3, 'Blob Tri débloque la troisième couleur');
+  equal(sortDifficulty(47).colorCount, 3, 'Blob Tri laisse vingt-quatre blobs au palier trois couleurs');
+  equal(sortDifficulty(48).colorCount, 4, 'Blob Tri débloque la quatrième couleur pour le dernier tiers');
+  assert(sortDifficulty(71).decisionTime < sortDifficulty(0).decisionTime, 'Blob Tri accélère avec le stock');
+
+  equal(sortChoiceCorrect({ intruder: false, colorIndex: 0 }, 'up'), true, 'Blob Tri : jaune vers le haut');
+  equal(sortChoiceCorrect({ intruder: false, colorIndex: 1 }, 'right'), false, 'Blob Tri : mauvais garage refusé');
+  equal(sortChoiceCorrect({ intruder: true, colorIndex: 0 }, 'eject'), true, 'Blob Tri : intrus éjecté');
+  equal(sortChoiceCorrect({ intruder: false, colorIndex: 0 }, 'eject'), false, 'Blob Tri : blob valide non éjectable');
+}
+
+function testPathGame(): void {
+  const input = (actions: string[]) => ({ pressed: (action: string) => actions.includes(action) });
+  equal(pathDirectionPressed(input(['down'])), 'down', 'Blob Trace : lit une direction');
+  equal(pathDirectionPressed(input([])), null, 'Blob Trace : aucune direction reste neutre');
+  equal(nextPathVisualMode('line'), 'tiles', 'Blob Trace : la trace bascule vers les cases');
+  equal(nextPathVisualMode('tiles'), 'line', 'Blob Trace : les cases rebascule vers la trace difficile');
+
+  for (let size = 4; size <= 9; size++) {
+    const path = createMemoryPath(size, size - 3, new SeededRng(0x7000 + size));
+    assert(isOrthogonalPath(path), `Blob Trace : chemin ${size}×${size} orthogonal et sans boucle`);
+    equal(path[0].x, 0, `Blob Trace ${size}×${size} : départ à gauche`);
+    equal(path[0].y, size - 1, `Blob Trace ${size}×${size} : départ en bas`);
+    equal(path[path.length - 1].x, size - 1, `Blob Trace ${size}×${size} : arrivée à droite`);
+    equal(path[path.length - 1].y, 0, `Blob Trace ${size}×${size} : arrivée en haut`);
+    assert(path.length >= size * 2 - 1, `Blob Trace ${size}×${size} : longueur minimale respectée`);
+  }
+  equal(isOrthogonalPath([{ x: 0, y: 0 }, { x: 1, y: 1 }]), false, 'Blob Trace refuse les diagonales');
+  equal(isOrthogonalPath([{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 0, y: 0 }]), false, 'Blob Trace refuse les boucles');
+}
+
+function testGolfFeel(): void {
+  equal(golfShotSpeed(-1), golfShotSpeed(0), 'Golf : puissance bornée en bas');
+  equal(golfShotSpeed(2), golfShotSpeed(1), 'Golf : puissance bornée en haut');
+  assert(golfShotSpeed(0) < 200, 'Golf : un tap permet désormais un vrai petit coup');
+  assert(golfShotSpeed(0.5) > golfShotSpeed(0.25), 'Golf : puissance strictement progressive');
+  assert(golfShotSpeed(1) >= 880, 'Golf : pleine puissance conserve une grande portée');
+  close(golfAngleDelta(Math.PI - 0.1, -Math.PI + 0.1), 0.2, 'Golf : visée prend le chemin angulaire le plus court');
+
+  const ball = { x: 96, y: 50, vx: 120, vy: 0, r: 10 };
+  const hit = resolveGolfWall(ball, { x: 100, y: 0, w: 20, h: 100 });
+  assert(!!hit && hit.imp > 0, 'Golf : collision détectée sur le bloc');
+  assert(ball.vx < 0, 'Golf : la collision réfléchit la vitesse');
+  assert(ball.x <= 90, 'Golf : la balle est repoussée hors du bloc');
 }
 
 function testClock(): void {
@@ -916,6 +972,9 @@ const tests: readonly [string, Test][] = [
   ['Replay', testReplay],
   ['InputManager', testInput],
   ['Simon : contrôles', testSimonControls],
+  ['Blob Tri', testSortGame],
+  ['Blob Trace', testPathGame],
+  ['Blob Golf : game feel', testGolfFeel],
   ['ObjectPool + SpatialHash', testPoolAndHash],
   ['Collisions + PhysicsWorld', testCollisionsAndPhysics],
   ['GridSystem + Scroller + PhaseMachine', testSystems],

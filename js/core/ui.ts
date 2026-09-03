@@ -438,6 +438,26 @@ export function gameGlyph(ctx: CanvasRenderingContext2D, id: string, x: number, 
     ctx.beginPath(); ctx.moveTo(-4, -6); ctx.lineTo(13, -15); ctx.stroke();
     ctx.setLineDash([]);
     ctx.globalAlpha = 1;
+  } else if (id === 'sort') {
+    // Quatre garages directionnels autour d'un blob à trier.
+    ctx.beginPath(); ctx.arc(0, 0, 7, 0, 6.2832); ctx.fill();
+    const points: readonly (readonly [number, number])[] = [[0, -21], [-21, 0], [21, 0], [0, 21]];
+    for (const [px, py] of points) {
+      ctx.globalAlpha = 0.7;
+      ctx.strokeRect(px - 5, py - 5, 10, 10);
+      ctx.beginPath(); ctx.moveTo(px * 0.45, py * 0.45); ctx.lineTo(px * 0.72, py * 0.72); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  } else if (id === 'path') {
+    // Chemin orthogonal lumineux entre deux balises.
+    ctx.lineWidth = 5;
+    ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(-22, 16); ctx.lineTo(-8, 16); ctx.lineTo(-8, -5); ctx.lineTo(8, -5); ctx.lineTo(8, -17); ctx.lineTo(22, -17); ctx.stroke();
+    ctx.beginPath(); ctx.arc(-22, 16, 5, 0, 6.2832); ctx.fill();
+    ctx.globalAlpha = 0.7;
+    ctx.strokeRect(17, -22, 10, 10);
+    ctx.globalAlpha = 1;
+    ctx.lineCap = 'butt';
   }
   ctx.restore();
 }
