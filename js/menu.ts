@@ -12,14 +12,18 @@ import * as UI from './core/ui';
 import { MenuMusicAdapter } from './core/music/game-adapter';
 import type { GameConstructor, GameMeta, InputLike, EngineLike, AudioLike } from './core/types';
 
-// Grille (vue globale).
+// Grille (vue globale) : compacte au-delà de 12 jeux pour rester dans 1280×720.
 const COLS = 6;
-const CARD_W = 160;
-const CARD_H = 190;
-const GAP_X = 16;
-const GAP_Y = 18;
-const START_X = (1280 - (COLS * CARD_W + (COLS - 1) * GAP_X)) / 2;
-const ROW0_Y = 178;
+const CARD_W_FULL = 160;
+const CARD_H_FULL = 190;
+const GAP_X_FULL = 16;
+const GAP_Y_FULL = 18;
+const ROW0_Y_FULL = 178;
+const CARD_W_COMPACT = 138;
+const CARD_H_COMPACT = 152;
+const GAP_X_COMPACT = 12;
+const GAP_Y_COMPACT = 12;
+const ROW0_Y_COMPACT = 166;
 const DIGIT_KEYS = ['Digit1', 'Digit2', 'Digit3', 'Digit4', 'Digit5', 'Digit6', 'Digit7', 'Digit8', 'Digit9', 'Digit0'] as const;
 
 // Bandeau de vignettes (fiche).
@@ -158,7 +162,35 @@ export class Menu {
   cardPos(index: number): Point {
     const col = index % COLS;
     const row = Math.floor(index / COLS);
-    return { x: START_X + col * (CARD_W + GAP_X), y: ROW0_Y + row * (CARD_H + GAP_Y) };
+    return { x: this.startX() + col * (this.cardW() + this.gapX()), y: this.row0Y() + row * (this.cardH() + this.gapY()) };
+  }
+
+  compactGrid(): boolean {
+    return this.games.length > 12;
+  }
+
+  cardW(): number {
+    return this.compactGrid() ? CARD_W_COMPACT : CARD_W_FULL;
+  }
+
+  cardH(): number {
+    return this.compactGrid() ? CARD_H_COMPACT : CARD_H_FULL;
+  }
+
+  gapX(): number {
+    return this.compactGrid() ? GAP_X_COMPACT : GAP_X_FULL;
+  }
+
+  gapY(): number {
+    return this.compactGrid() ? GAP_Y_COMPACT : GAP_Y_FULL;
+  }
+
+  startX(): number {
+    return (1280 - (COLS * this.cardW() + (COLS - 1) * this.gapX())) / 2;
+  }
+
+  row0Y(): number {
+    return this.compactGrid() ? ROW0_Y_COMPACT : ROW0_Y_FULL;
   }
 
   thumbRect(index: number): { x: number; y: number; w: number; h: number } {
@@ -169,7 +201,7 @@ export class Menu {
   }
 
   thumbWidth(): number {
-    return Math.min(108, Math.max(76, (1280 - 40 - Math.max(0, this.games.length - 1) * TH_GAP) / Math.max(1, this.games.length)));
+    return Math.min(108, Math.max(64, (1280 - 40 - Math.max(0, this.games.length - 1) * TH_GAP) / Math.max(1, this.games.length)));
   }
 
   // ---------- souris (interface uniquement) ----------
@@ -184,7 +216,7 @@ export class Menu {
   hitCard(x: number, y: number): number {
     for (let i = 0; i < this.games.length; i++) {
       const pos = this.cardPos(i);
-      if (x >= pos.x && x <= pos.x + CARD_W && y >= pos.y && y <= pos.y + CARD_H) return i;
+      if (x >= pos.x && x <= pos.x + this.cardW() && y >= pos.y && y <= pos.y + this.cardH()) return i;
     }
     return -1;
   }
@@ -306,7 +338,7 @@ export class Menu {
     this.hop = Math.max(0, this.hop - dt);
 
     const pos = this.view === 'detail' ? this.thumbRect(this.sel) : this.cardPos(this.sel);
-    const cx = pos.x + (this.view === 'detail' ? this.thumbWidth() : CARD_W) / 2;
+    const cx = pos.x + (this.view === 'detail' ? this.thumbWidth() : this.cardW()) / 2;
     const hopH = this.hop > 0 ? Math.sin((1 - this.hop / 0.26) * Math.PI) * 16 : 0;
     const prevX = this.blob.x;
     const prevY = this.blob.y;
@@ -738,6 +770,13 @@ export class Menu {
 
     ctx.save();
     ctx.globalAlpha = entry;
+    const cw = this.cardW();
+    const ch = this.cardH();
+    const compact = this.compactGrid();
+    const glyphY = compact ? 54 : 66;
+    const nameY = compact ? 104 : 128;
+    const bestY = compact ? 126 : 156;
+    const playsY = compact ? 142 : 178;
     for (let i = 0; i < this.games.length; i++) {
       const game = this.games[i];
       const meta = game.meta;
@@ -749,11 +788,11 @@ export class Menu {
 
       ctx.save();
       if (isSelected) {
-        ctx.translate(x + CARD_W / 2, y + CARD_H / 2);
+        ctx.translate(x + cw / 2, y + ch / 2);
         ctx.scale(1.05, 1.05);
-        ctx.translate(-(x + CARD_W / 2), -(y + CARD_H / 2));
+        ctx.translate(-(x + cw / 2), -(y + ch / 2));
       }
-      UI.roundRect(ctx, x, y, CARD_W, CARD_H, 16);
+      UI.roundRect(ctx, x, y, cw, ch, 16);
       ctx.fillStyle = isSelected ? 'rgba(18, 24, 36, 0.95)' : isHovered ? 'rgba(14, 18, 28, 0.9)' : 'rgba(12, 15, 22, 0.85)';
       ctx.fill();
       ctx.strokeStyle = isSelected ? meta.accent : isHovered ? 'rgba(255,255,255,0.28)' : 'rgba(255,255,255,0.09)';
@@ -765,18 +804,18 @@ export class Menu {
       ctx.stroke();
       ctx.shadowBlur = 0;
 
-      this.glyph(ctx, meta.id, x + CARD_W / 2, y + 66, isSelected ? meta.accent : isHovered ? meta.accent + 'aa' : meta.accent + '88');
-      UI.txt(ctx, meta.name, x + CARD_W / 2, y + 128, { size: 16, align: 'center', color: isSelected ? '#ffffff' : '#b9c2d0' });
+      this.glyph(ctx, meta.id, x + cw / 2, y + glyphY, isSelected ? meta.accent : isHovered ? meta.accent + 'aa' : meta.accent + '88');
+      UI.txt(ctx, meta.name, x + cw / 2, y + nameY, { size: compact ? 13.5 : 16, align: 'center', color: isSelected ? '#ffffff' : '#b9c2d0' });
       const best = UI.getBest(meta.id);
-      UI.txt(ctx, best > 0 ? UI.fmt(best) + ' ' + meta.unit : '—', x + CARD_W / 2, y + 156, { size: 13, align: 'center', mono: true, color: '#7c8698' });
+      UI.txt(ctx, best > 0 ? UI.fmt(best) + ' ' + meta.unit : '—', x + cw / 2, y + bestY, { size: 13, align: 'center', mono: true, color: '#7c8698' });
       const stats = UI.getStats(meta.id);
-      if (stats.plays) UI.txt(ctx, '▸ ' + stats.plays + (stats.plays > 1 ? ' parties' : ' partie'), x + CARD_W / 2, y + 178, { size: 10.5, align: 'center', color: '#566072' });
+      if (stats.plays) UI.txt(ctx, '▸ ' + stats.plays + (stats.plays > 1 ? ' parties' : ' partie'), x + cw / 2, y + playsY, { size: 10.5, align: 'center', color: '#566072' });
       UI.txt(ctx, String((i + 1) % 10), x + 12, y + 24, { size: 12, color: '#4a5264', mono: true });
       ctx.restore();
     }
 
     const rows = Math.ceil(this.games.length / COLS);
-    const bottom = ROW0_Y + rows * CARD_H + (rows - 1) * GAP_Y;
+    const bottom = this.row0Y() + rows * ch + (rows - 1) * this.gapY();
     const meta = this.games[this.sel].meta;
     const descY = bottom + 40;
     UI.txt(ctx, meta.desc, 640, descY, { size: 16, align: 'center', color: '#c3cbd8' });

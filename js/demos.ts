@@ -1374,6 +1374,190 @@ function demoPath(accent: string): DemoImpl {
   };
 }
 
+// ---------------- BLOB FROGGER : route + rivière, hops vers les alcôves ----------------
+function demoFrog(accent: string): DemoImpl {
+  const L = 480, CW = 64, ROWS = 7, TOP = 190;
+  const cy = (r: number): number => TOP + (r + 0.5) * ((590 - TOP) / ROWS);
+  const cx = (c: number): number => L + (c + 0.5) * CW;
+  const s: any = {
+    t: 0, hopT: 0, c: 3, r: 6,
+    fx: 0, fy: 0, tx: 0, ty: 0, hopping: false,
+    blob: new Blob({ x: 0, y: 0, r: 14, color: accent }),
+    cars: [
+      { r: 4, x: 500, w: 70, v: 130, col: '#ff5470' },
+      { r: 4, x: 780, w: 70, v: 130, col: '#fbbf24' },
+      { r: 3, x: 650, w: 110, v: -170, col: '#c084fc' },
+    ],
+    logs: [
+      { r: 1, x: 560, w: 150, v: -70 },
+      { r: 2, x: 720, w: 130, v: 95 },
+    ],
+    puffs: new Puffs(),
+  };
+  s.blob.x = cx(3); s.blob.y = cy(6);
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      for (const c of s.cars) {
+        c.x += c.v * dt;
+        if (c.x > 960) c.x = 440;
+        if (c.x + c.w < 440) c.x = 950 - c.w;
+      }
+      for (const l of s.logs) {
+        l.x += l.v * dt;
+        if (l.x > 950) l.x = 440 - l.w;
+        if (l.x + l.w < 440) l.x = 950;
+      }
+      if (s.hopping) {
+        s.hopT += dt / 0.16;
+        const k = Math.min(1, s.hopT);
+        const e = 1 - Math.pow(1 - k, 3);
+        s.blob.x = s.fx + (s.tx - s.fx) * e;
+        s.blob.y = s.fy + (s.ty - s.fy) * e - Math.sin(k * Math.PI) * 10;
+        if (k >= 1) {
+          s.hopping = false;
+          s.blob.punch(0.25);
+          s.puffs.burst(s.tx, s.ty + 10, [accent, '#ffffff'], 5, [30, 130], 0.3);
+          if (s.r === 0) {
+            s.puffs.burst(s.tx, s.ty, ['#fef08a', accent, '#ffffff'], 20, [60, 300], 0.6);
+            s.c = 3; s.r = 6;
+            s.blob.x = cx(3); s.blob.y = cy(6);
+          }
+        }
+      } else {
+        // ride sur rondin ?
+        if (s.r === 1 || s.r === 2) {
+          const lane = s.r === 1 ? s.logs[0] : s.logs[1];
+          s.blob.x += lane.v * dt * 0.9;
+        }
+        s.hopCd = (s.hopCd || 0) - dt;
+        if ((s.hopCd || 0) <= 0) {
+          s.hopCd = 0.42;
+          let nc = s.c, nr = s.r - 1;
+          if (nr < 0) { nr = 6; nc = 3; }
+          if (Math.random() < 0.3) nc = Math.max(0, Math.min(6, nc + (Math.random() < 0.5 ? -1 : 1)));
+          s.fx = s.blob.x; s.fy = s.blob.y;
+          s.tx = cx(nc); s.ty = cy(nr);
+          s.c = nc; s.r = nr;
+          s.hopping = true; s.hopT = 0;
+          s.blob.punch(0.3);
+        }
+      }
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      // eau (2 rangées) + route (2 rangées)
+      ctx.fillStyle = '#06283a';
+      ctx.fillRect(440, cy(1) - 26, 510, 108);
+      ctx.fillStyle = '#161a24';
+      ctx.fillRect(440, cy(3) - 26, 510, 108);
+      ctx.fillStyle = 'rgba(250,204,21,0.35)';
+      for (let x = 450; x < 940; x += 44) ctx.fillRect(x, cy(3) + cy(4) - cy(3) - 28, 22, 3);
+      ctx.strokeStyle = '#5eead455';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (let x = 440; x <= 950; x += 10) {
+        const y = cy(1) + Math.sin(x * 0.04 + s.t * 3) * 3;
+        x === 440 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      for (const l of s.logs) {
+        ctx.fillStyle = '#7a5230';
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(l.x, cy(l.r) - 13, l.w, 26, 12); else ctx.rect(l.x, cy(l.r) - 13, l.w, 26);
+        ctx.fill();
+        ctx.fillStyle = '#a97a4a';
+        ctx.fillRect(l.x + 6, cy(l.r) - 10, l.w - 12, 5);
+      }
+      for (const c of s.cars) {
+        ctx.fillStyle = c.col;
+        ctx.shadowColor = c.col; ctx.shadowBlur = 10;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(c.x, cy(c.r) - 13, c.w, 26, 10); else ctx.rect(c.x, cy(c.r) - 13, c.w, 26);
+        ctx.fill();
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = '#0b1220';
+        ctx.fillRect(c.x + c.w / 2 - 14, cy(c.r) - 8, 28, 16);
+      }
+      // alcôves
+      for (let i = 0; i < 3; i++) {
+        const hx = cx(i * 2 + 1);
+        ctx.fillStyle = '#02040a';
+        ctx.beginPath(); ctx.ellipse(hx, cy(0), 24, 15, 0, 0, TAU); ctx.fill();
+        ctx.strokeStyle = accent + '88'; ctx.lineWidth = 2; ctx.stroke();
+      }
+      s.blob.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
+// ---------------- FLAPPY BLOB : pilote auto à travers les arches ----------------
+function demoFlap(accent: string): DemoImpl {
+  const BX = 620, GY = 590;
+  const s: any = {
+    t: 0, vy: 0, y: 360,
+    blob: new Blob({ x: BX, y: 360, r: 15, color: accent }),
+    pipes: [
+      { x: 780, gapY: 330, gapH: 190 },
+      { x: 780 + 330, gapY: 430, gapH: 190 },
+    ],
+    puffs: new Puffs(),
+  };
+  return {
+    update(dt: number): void {
+      s.t += dt;
+      // IA : bat quand le blob passe sous le centre de la prochaine arche.
+      const next = s.pipes.find((p: any) => p.x + 50 > BX - 15) || s.pipes[0];
+      if (s.y > next.gapY + 12) {
+        s.vy = -640;
+        s.blob.punch(0.35);
+        s.puffs.burst(BX - 6, s.y + 14, [accent, '#ffffff'], 5, [40, 180], 0.3);
+      }
+      s.vy = Math.min(880, s.vy + 2300 * dt);
+      s.y += s.vy * dt;
+      if (s.y > GY - 15) { s.y = GY - 15; s.vy = -640; }
+      if (s.y < 190) { s.y = 190; s.vy = Math.max(0, s.vy); }
+      for (const p of s.pipes) {
+        const before = p.x;
+        p.x -= 240 * dt;
+        if (!p.scored && before + 50 >= BX - 15 && p.x + 50 < BX - 15) {
+          p.scored = true;
+          s.puffs.burst(BX + 50, s.y, ['#f2c94c', accent, '#ffffff'], 12, [60, 260], 0.45);
+        }
+        if (p.x + 50 < 430) {
+          p.x = 950;
+          p.gapY = rand(280, 480);
+          p.scored = false;
+        }
+      }
+      s.blob.x = BX;
+      s.blob.y = s.y;
+      s.blob.vx = 90;
+      s.blob.vy = s.vy;
+      s.blob.update(dt);
+      s.puffs.update(dt);
+    },
+    draw(ctx: CanvasRenderingContext2D): void {
+      ctx.fillStyle = '#131a12';
+      ctx.fillRect(430, GY, 520, 720 - GY);
+      ctx.fillStyle = '#4ade80';
+      ctx.fillRect(430, GY, 520, 2);
+      for (const p of s.pipes) {
+        ctx.fillStyle = '#1c2942';
+        ctx.fillRect(p.x, 150, 100, p.gapY - p.gapH / 2 - 150);
+        ctx.fillRect(p.x, p.gapY + p.gapH / 2, 100, GY - (p.gapY + p.gapH / 2));
+        ctx.fillStyle = accent;
+        ctx.fillRect(p.x - 5, p.gapY - p.gapH / 2 - 20, 110, 20);
+        ctx.fillRect(p.x - 5, p.gapY + p.gapH / 2, 110, 20);
+      }
+      s.blob.render(ctx);
+      s.puffs.draw(ctx);
+    },
+  };
+}
+
 const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   beat: demoBeat,
   surv: demoSurv,
@@ -1389,6 +1573,8 @@ const BUILDERS: Record<string, (accent: string) => DemoImpl> = {
   bubble: demoBubble,
   sort: demoSort,
   path: demoPath,
+  frog: demoFrog,
+  flap: demoFlap,
 };
 
 export class Demo {
