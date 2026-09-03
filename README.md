@@ -102,8 +102,10 @@ bandeau de vignettes pour naviguer (`← →`). Une indication de transition app
 Réglages (⚙, Sélect ou Échap depuis le menu, ou item « Réglages » de la pause) :
 volumes général / musique / effets avec sliders, muet, plein écran, vibrations
 manette. L'entrée « Options visuelles » ouvre une sous-vue dédiée à la résolution
-(`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160) et aux filtres CRT
-et bruit avec intensités réglables.
+(`AUTO`, 1280×720, 1600×900, 1920×1080, 2560×1440, 3840×2160), aux effets WebGL
+(lentille / phosphore) et aux filtres CRT / grain, chacun avec une intensité
+réglable. Si WebGL est actif, CRT et grain passent dans le shader pour éviter
+le double-traitement.
 
 Validation musicale : la route `/music-test` permet d'écouter les références
 déterministes Shooter, Survival et Fish, de mettre le transport en pause, de

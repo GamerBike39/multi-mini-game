@@ -324,12 +324,12 @@ export class Settings {
     const rows: SettingRow[] = this.page === 'visuals'
       ? [
         { label: 'Résolution', kind: 'choice', value: this.eng.resolutionLabel, hint: '← → pour choisir' },
-        { label: 'Effets WebGL', kind: 'toggle', on: this.eng.gpuEffects.enabled, hint: this.eng.gpuEffects.available ? 'post-process optionnel' : 'indisponible' },
+        { label: 'Effets WebGL', kind: 'toggle', on: this.eng.gpuEffects.enabled, hint: this.eng.gpuEffects.available ? 'lentille / phosphore' : 'indisponible' },
         { label: 'Intensité WebGL', kind: 'slider', key: 'gpu' },
-        { label: 'Filtre CRT', kind: 'toggle', on: this.eng.screenFilters.crt.enabled },
+        { label: 'Filtre CRT', kind: 'toggle', on: this.eng.screenFilters.crt.enabled, hint: 'scanlines de borne' },
         { label: 'Intensité CRT', kind: 'slider', key: 'crt' },
-        { label: 'Filtre bruit', kind: 'toggle', on: this.eng.screenFilters.noise.enabled },
-        { label: 'Intensité bruit', kind: 'slider', key: 'noise' },
+        { label: 'Filtre grain', kind: 'toggle', on: this.eng.screenFilters.noise.enabled, hint: 'film, pas neige' },
+        { label: 'Intensité grain', kind: 'slider', key: 'noise' },
       ]
       : [
         { label: 'Volume général', kind: 'slider', key: 'master' },

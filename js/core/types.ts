@@ -51,7 +51,7 @@ export interface RenderPresenter {
   readonly available: boolean;
   readonly active: boolean;
   resize(width: number, height: number): void;
-  present(source: CanvasImageSource, time: number, intensity?: number, legacyCrt?: boolean, legacyNoise?: boolean): void;
+  present(source: CanvasImageSource, time: number, intensity?: number, crt?: number, noise?: number): void;
   enable(enabled: boolean): void;
   dispose(): void;
 }
